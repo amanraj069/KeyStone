@@ -21,6 +21,7 @@ export const INGEST_QUEUE = 'ingest';
 /** BullMQ job names. */
 export const FULL_JOB = 'full';
 export const REPLAY_JOB = 'replay';
+export const EXTRACT_JOB = 'extract';
 
 /** How many finished jobs BullMQ keeps for GET /ingest/jobs/:id. */
 export const KEEP_FINISHED_JOBS = 50;

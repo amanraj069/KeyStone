@@ -13,7 +13,8 @@
     "capability-check": "tsx scripts/capability-check.ts",
     "worker": "node dist/worker.js",
     "llm-check": "tsx scripts/llm-check.ts",
-    "extract-sample": "tsx scripts/extract-sample.ts"
+    "extract-sample": "tsx scripts/extract-sample.ts",
+    "extract": "tsx scripts/extract.ts"
   },
   "dependencies": {
     "@google/genai": "2.25.0",

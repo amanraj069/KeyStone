@@ -61,6 +61,14 @@ export const EnvSchema = z
     // At most this many LLM requests in flight at once.
     LLM_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
 
+    // LLM extraction budget: refuse to start above this many planned calls (unless force).
+    EXTRACT_MAX_CALLS: z.coerce.number().int().positive().default(4000),
+    // Optional: only extract artifacts authored by these departments (comma separated).
+    EXTRACT_DEPTS: z
+      .string()
+      .default('')
+      .transform((raw) => raw.split(',').map((d) => d.trim()).filter((d) => d.length > 0)),
+
     // Memory guard for ingestion stages; both below the container's 4 GB limit.
     MEMORY_WARN_MB: z.coerce.number().int().positive().default(3000),
     MEMORY_MAX_MB: z.coerce.number().int().positive().default(3600),

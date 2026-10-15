@@ -1,13 +1,14 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { FullIngestRequestSchema, type GraphCounts, ReplayRequestSchema } from '@keystone/shared';
+import { ExtractRequestSchema, FullIngestRequestSchema, ReplayRequestSchema } from '@keystone/shared';
 import { type Job, Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
-import { FULL_JOB, INGEST_SETTINGS, type IngestSettings, REPLAY_JOB } from './ingest.constants';
+import { ExtractService } from '../extract/extract.service';
+import { EXTRACT_JOB, FULL_JOB, INGEST_SETTINGS, type IngestSettings, REPLAY_JOB } from './ingest.constants';
 import { IngestService } from './ingest.service';
 import { bullConnection } from './redis-connection';
 
 /**
- * The consumer side: a BullMQ worker that runs ingest jobs one at a time
+ * The consumer side: a BullMQ worker that runs ingest and extract jobs one at a time
  * (concurrency 1, so two jobs never write the same graph at once).
  * Started inside the API when INGEST_WORKER_INLINE=true, otherwise by worker.ts.
  */
@@ -19,6 +20,7 @@ export class IngestWorker implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly ingest: IngestService,
+    private readonly extract: ExtractService,
     @Inject(INGEST_SETTINGS) private readonly settings: IngestSettings,
   ) {}
 
@@ -39,7 +41,7 @@ export class IngestWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Validates the job data again (it crossed Redis) and runs the matching ingest. */
-  async process(job: Job): Promise<GraphCounts> {
+  async process(job: Job): Promise<object> {
     const report = (progress: object) => job.updateProgress(progress);
     if (job.name === FULL_JOB) {
       const request = FullIngestRequestSchema.parse(job.data);
@@ -49,7 +51,13 @@ export class IngestWorker implements OnModuleInit, OnModuleDestroy {
       const request = ReplayRequestSchema.parse(job.data);
       return this.ingest.runReplay(request.graph, request, report);
     }
-    throw new Error(`Unknown ingest job "${job.name}"`);
+    if (job.name === EXTRACT_JOB) {
+      const request = ExtractRequestSchema.parse(job.data);
+      const summary = await this.extract.run(request, report);
+      // The job result is stored in Redis, so keep it small.
+      return { selected: summary.selected, llmCalls: summary.llmCalls + summary.linkCalls, failures: summary.failures.length };
+    }
+    throw new Error(`Unknown job "${job.name}"`);
   }
 
   async onModuleDestroy(): Promise<void> {

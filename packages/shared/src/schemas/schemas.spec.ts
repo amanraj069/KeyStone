@@ -1,4 +1,4 @@
-import { ActionSchema, ApiErrorSchema, ArtifactSchema, PersonSchema } from '../index';
+import { ActionSchema, ApiErrorSchema, ArtifactSchema, IngestGraphSchema, PersonSchema } from '../index';
 
 describe('shared schemas', () => {
   it('accepts a valid person', () => {
@@ -21,5 +21,14 @@ describe('shared schemas', () => {
   it('accepts the ApiError shape', () => {
     const err = { statusCode: 404, error: 'NOT_FOUND', message: 'nope', path: '/x', timestamp: new Date().toISOString() };
     expect(ApiErrorSchema.parse(err)).toEqual(err);
+  });
+
+  it('allows ingestion only into apex or apex_replay* graphs', () => {
+    for (const ok of ['apex', 'apex_replay', 'apex_replaytest', 'apex_replay_2']) {
+      expect(IngestGraphSchema.safeParse(ok).success).toBe(true);
+    }
+    for (const bad of ['keystone_health', 'apex_proj', 'apex_backup', 'test_x', 'apex_replay; DROP', 'apex_replayX']) {
+      expect(IngestGraphSchema.safeParse(bad).success).toBe(false);
+    }
   });
 });

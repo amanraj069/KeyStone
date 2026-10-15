@@ -4,6 +4,7 @@ import { firstValueFrom, toArray } from 'rxjs';
 import { validateEnv } from '../src/config/env.schema';
 import type { IngestSettings } from '../src/ingest/ingest.constants';
 import { IngestQueue } from '../src/ingest/ingest.queue';
+import type { ExtractService } from '../src/extract/extract.service';
 import type { IngestService } from '../src/ingest/ingest.service';
 import { IngestWorker } from '../src/ingest/ingest.worker';
 
@@ -42,7 +43,7 @@ describe('ingest queue, worker and progress stream', () => {
   } as unknown as IngestService;
 
   const queue = new IngestQueue(settings);
-  const worker = new IngestWorker(fakeIngest, settings);
+  const worker = new IngestWorker(fakeIngest, {} as unknown as ExtractService, settings);
 
   beforeAll(() => worker.start());
   afterAll(async () => {

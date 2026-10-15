@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
 import { AppConfigModule } from './config/app-config.module';
 import { GraphModule } from './graph/graph.module';
-import { IngestModule } from './ingest/ingest.module';
+import { TextStoreModule } from './ingest/text-store.module';
+import { JobsModule } from './jobs/jobs.module';
 import { LlmModule } from './llm/llm.module';
 
-/** Everything the standalone ingest worker needs: config, FalkorDB, ingestion. No HTTP. */
+/** Everything the standalone worker needs: config, FalkorDB, LLM, ingest and extract jobs. No HTTP. */
 @Module({
-  imports: [AppConfigModule, GraphModule, IngestModule, LlmModule],
+  imports: [AppConfigModule, GraphModule, LlmModule, TextStoreModule, JobsModule],
 })
 export class WorkerModule {}

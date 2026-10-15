@@ -1,5 +1,6 @@
 import { Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import {
+  type ExtractRequest,
   type FullIngestRequest,
   type IngestEvent,
   type IngestJob,
@@ -9,7 +10,7 @@ import {
 import { type Job, Queue, QueueEvents } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { Observable } from 'rxjs';
-import { FULL_JOB, INGEST_SETTINGS, type IngestSettings, KEEP_FINISHED_JOBS, REPLAY_JOB } from './ingest.constants';
+import { EXTRACT_JOB, FULL_JOB, INGEST_SETTINGS, type IngestSettings, KEEP_FINISHED_JOBS, REPLAY_JOB } from './ingest.constants';
 import { bullConnection } from './redis-connection';
 
 /**
@@ -45,6 +46,10 @@ export class IngestQueue implements OnModuleDestroy {
 
   async addReplay(request: ReplayRequest): Promise<IngestJob> {
     return this.describe(await this.queue.add(REPLAY_JOB, request));
+  }
+
+  async addExtract(request: ExtractRequest): Promise<IngestJob> {
+    return this.describe(await this.queue.add(EXTRACT_JOB, request));
   }
 
   async getJob(jobId: string): Promise<IngestJob> {
@@ -104,7 +109,7 @@ export class IngestQueue implements OnModuleDestroy {
     const progress = IngestProgressSchema.safeParse(job.progress);
     return {
       jobId: String(job.id),
-      name: job.name === REPLAY_JOB ? 'replay' : 'full',
+      name: job.name === REPLAY_JOB ? 'replay' : job.name === EXTRACT_JOB ? 'extract' : 'full',
       state: await job.getState(),
       progress: progress.success ? progress.data : null,
       failedReason: job.failedReason ?? null,
