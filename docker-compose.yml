@@ -1,0 +1,50 @@
+# Local development stack: FalkorDB (graph) + Redis (BullMQ queues).
+# Usage: cp .env.example .env  (set FALKOR_PASSWORD), then `docker compose up -d`.
+# Compose reads FALKOR_PASSWORD from the .env file next to this file.
+
+name: keystone
+
+services:
+  falkordb:
+    # Pinned to an exact tag: never `latest`, so every machine runs the same engine.
+    image: falkordb/falkordb:v4.22.1
+    container_name: keystone-falkordb
+    restart: unless-stopped
+    ports:
+      # Redis protocol; the API connects here. Host port follows FALKOR_PORT so it can
+      # move off 6379 if another Redis already runs on this machine.
+      - "${FALKOR_PORT:-6379}:6379"
+      - "3000:3000" # FalkorDB Browser UI (local dev only)
+    environment:
+      # run.sh passes REDIS_ARGS straight to redis-server.
+      REDIS_ARGS: "--requirepass ${FALKOR_PASSWORD:?Set FALKOR_PASSWORD in .env}"
+      # Used only by the healthcheck below.
+      FALKOR_PASSWORD: ${FALKOR_PASSWORD}
+    volumes:
+      # The image stores RDB snapshots in FALKORDB_DATA_PATH=/var/lib/falkordb/data.
+      - falkordb_data:/var/lib/falkordb/data
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$FALKOR_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    # Separate Redis for BullMQ. FalkorDB is never used as a queue.
+    image: redis:7-alpine
+    container_name: keystone-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379" # host 6380 so it never collides with FalkorDB on 6379
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  falkordb_data:
+  redis_data:
