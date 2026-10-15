@@ -13,6 +13,7 @@
     "lint": "pnpm -r lint",
     "capability-check": "pnpm --filter @keystone/api capability-check",
     "llm-check": "pnpm --filter @keystone/api llm-check",
-    "extract": "pnpm --filter @keystone/api extract"
+    "extract": "pnpm --filter @keystone/api extract",
+    "embed": "pnpm --filter @keystone/api embed"
   }
 }

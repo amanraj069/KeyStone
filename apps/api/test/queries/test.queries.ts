@@ -68,3 +68,25 @@ export const PEOPLE_SUMMARY = `
   RETURN p.name AS name, d.name AS dept, p.firstDay AS firstDay, p.lastSeenDay AS lastSeenDay, p.active AS active
   ORDER BY name
 `;
+
+/**
+ * Retrieval fixture: A -REFERENCES-> B -REFERENCES-> D (so D is 2 hops from A),
+ * C is unlinked; Ada wrote A. Days: A 5, B 2, C 1, D 3.
+ */
+export const RETRIEVAL_FIXTURE = `
+  CREATE (ada:Person {name: 'Ada'}),
+    (a:Artifact:Page {id: 'A', title: 'TitanDB runbook', type: 'confluence', day: 5}),
+    (b:Artifact:Ticket {id: 'B', title: 'TitanDB backup bug', type: 'jira', day: 2}),
+    (c:Artifact:Thread {id: 'C', title: 'Lunch plans', type: 'slack', day: 1}),
+    (d:Artifact:Email {id: 'D', title: 'Vendor reply', type: 'email', day: 3}),
+    (ada)-[:AUTHORED {day: 5}]->(a),
+    (a)-[:REFERENCES {kind: 'jira'}]->(b),
+    (b)-[:REFERENCES {kind: 'source_email'}]->(d)
+`;
+
+/** Chunk nodes with their artifact, and whether any chunk carries text (it must not). */
+export const CHUNK_SUMMARY = `
+  MATCH (c:Chunk)-[:PART_OF]->(a:Artifact)
+  RETURN count(c) AS chunks, count(DISTINCT a) AS artifacts,
+         sum(CASE WHEN c.text IS NULL THEN 0 ELSE 1 END) AS withText
+`;
