@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Secrets: only .env.example is committed
+.env
+.env.*
+!.env.example
+
+# Local data (OrgForge files, TextStore, caches)
+data/
+
+# Test coverage
+coverage/
+
+# Python
+__pycache__/
+.venv/
+
+# OS / editor noise
+.DS_Store
+*.log
+
+# Agent briefs are kept local, not committed
+AGENTS.md
+CLAUDE.md
+AI_USAGE.md
