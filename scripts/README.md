@@ -69,6 +69,15 @@ content stays: `causal_chain`, `sprint_number`, `status`, `title`, `root_cause`
 The script prints every facts key with its count and verdict; `stats.md` lists
 what was stripped.
 
+**Simulator text scrubbed.** Some document text carried answer-key labels:
+incident titles and bodies ended with annotations such as
+`[TitanDB, legacy auth service undocumented]` (a knowledge-gap label) and
+`[recurrence of ENG-112]` (a recurrence label). `SIMULATOR_ANNOTATION` cuts them
+out of every title and body. Three rows (`PR-101`, `PR-111`, `PR-117`) were not
+documents at all, just a `gap_areas: ...` record naming departure domains;
+`SIMULATOR_RECORD_BODY` moves them to the answer key. A self-check fails if any
+annotation or record body remains.
+
 **Tags allowlist.** Tags pass through `KEPT_TAGS` (built from `TAG_DECISIONS`,
 each tag with a one-line reason). A tag survives only if it says what a
 document is or where it came from: channel or doc type (`slack`, `jira`),
