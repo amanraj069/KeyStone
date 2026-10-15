@@ -40,6 +40,7 @@ FalkorDB Browser.
 | `pnpm --filter @keystone/api test:int` | Integration tests against the running FalkorDB |
 | `pnpm lint` | ESLint everywhere |
 | `pnpm capability-check` | PASS/FAIL for every FalkorDB feature Keystone needs |
+| `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
 | `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
 
@@ -75,6 +76,23 @@ Every answer is Zod-validated and cached (`DATA_DIR/cache/extract/<doc_id>.json`
 | `pnpm extract [--force] [--refresh]` | Full run (stops above `EXTRACT_MAX_CALLS` unless `--force`) |
 | `POST /extract/run` `{"dryRun":false,"force":false}` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
 
+## Retrieval (Stage 6)
+
+`pnpm embed` splits every artifact body (from the TextStore) into chunks of about
+800 characters with 100 characters of overlap (title first, at most 6 per
+artifact; fewer if memory would pass `MEMORY_WARN_MB`), stores the chunk text in
+the TextStore, embeds it (cached, `EMBED_DIM` 768) and writes
+`(:Chunk {id, artifactId, model, embedding})-[:PART_OF]->(:Artifact)`. No text in the graph.
+`pnpm embed --dry-run` prints chunk counts, the memory estimate and cost without calling anything.
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /search?q=&k=[&asOfDay=]` | Hybrid: nearest chunks from the vector index, plus each artifact's REFERENCES neighbours (2 hops) and authors from the graph |
+| `GET /search/vector-only?q=&k=` | Baseline for benchmarks: the same vectors and k, no graph expansion |
+
+FalkorDB's vector `score` is a cosine **distance** (0 = identical), so results are
+ordered ascending; responses also carry `similarity = 1 - distance`.
+
 ## Ingestion (Stage 4)
 
 Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
@@ -102,7 +120,8 @@ Every query lives in a `queries/` file as an exported constant.
 | `apps/api/src/graph/queries/schema.queries.ts` | `PERSON_NAME_INDEX`, `ARTIFACT_ID_INDEX`, `ARTIFACT_DAY_INDEX`, `SYSTEM_NAME_INDEX`, `DECISION_ID_INDEX`, `ACTION_ID_INDEX`, `CHUNK_EMBEDDING_VECTOR_INDEX` (via `chunkEmbeddingVectorIndex(EMBED_DIM)`), `LIST_INDEXES` | Index DDL run by `SchemaService.ensureSchema`; `LIST_INDEXES` returns label, properties, index types |
 | `apps/api/src/ingest/queries/ingest.queries.ts` | `MERGE_DEPTS`, `MERGE_PEOPLE`, `MERGE_{TICKET,PAGE,THREAD,PR,EMAIL,MEETING,ALERT,RECORD}_ARTIFACTS`, `MERGE_AUTHORED`, `MERGE_REVIEWED`, `MERGE_ASSIGNED`, `MERGE_REFERENCES`, `MERGE_FIXES`, `UPDATE_PERSON_ACTIVITY`, `GRAPH_COUNTS` | Deterministic ingestion (all MERGE, safe to rerun); `GRAPH_COUNTS` returns people/artifacts/edges for the progress stream |
 | `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures |
-| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY` | Integration tests only, against `test/fixtures/mini-company.cypher` |
+| `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
+| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY` | Integration tests only, against `test/fixtures/mini-company.cypher` |
 | `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |
 
 ## AI usage
