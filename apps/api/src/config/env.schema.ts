@@ -43,8 +43,17 @@ export const EnvSchema = z
     S3_BUCKET: optionalText,
     DATA_DIR: z.string().min(1).default('./data'),
 
+    // Ingestion. In development the API process also runs the BullMQ worker;
+    // in production a separate `worker` container does (dist/worker.js).
+    INGEST_WORKER_INLINE: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    // When set, POST /ingest/* requires the header `x-admin-token: <value>`.
+    ADMIN_TOKEN: optionalText,
+
     // HTTP.
-    WEB_ORIGIN: z.url().default('http://localhost:3001'),
+    WEB_ORIGIN: z.url().default('http://localhost:3000'),
     API_BASE_URL: z.url().default('http://localhost:4000'),
   })
   .refine((env) => env.MEMORY_WARN_MB < env.MEMORY_MAX_MB, {

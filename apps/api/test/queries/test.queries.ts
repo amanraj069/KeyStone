@@ -45,3 +45,26 @@ export const CROSS_DEPT_COLLABORATORS = `
   WHERE a.dept <> b.dept
   RETURN a.name AS person, collect(DISTINCT b.name) AS partners ORDER BY person
 `;
+
+/** People connected to Ticket, Page and Thread artifacts: what FalkorDB Browser should show after ingest. */
+export const PEOPLE_TO_TICKETS_PAGES_THREADS = `
+  MATCH (p:Person)-[r:AUTHORED|REVIEWED|ASSIGNED]->(a:Artifact)
+  WHERE a:Ticket OR a:Page OR a:Thread
+  RETURN p.name AS person, type(r) AS rel, a.id AS artifact
+  ORDER BY person, artifact
+`;
+
+/** Every Artifact -> Artifact link with its type and kind. */
+export const ARTIFACT_LINKS = `
+  MATCH (a:Artifact)-[r:REFERENCES|FIXES]->(b:Artifact)
+  RETURN a.id AS from, type(r) AS rel, r.kind AS kind, b.id AS to
+  ORDER BY from, to
+`;
+
+/** Each person's department edge and activity days. */
+export const PEOPLE_SUMMARY = `
+  MATCH (p:Person)
+  OPTIONAL MATCH (p)-[:MEMBER_OF]->(d:Dept)
+  RETURN p.name AS name, d.name AS dept, p.firstDay AS firstDay, p.lastSeenDay AS lastSeenDay, p.active AS active
+  ORDER BY name
+`;

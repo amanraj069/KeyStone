@@ -44,6 +44,7 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      INGEST_WORKER_INLINE: "false" # jobs run in the worker container
       FALKOR_HOST: falkordb
       FALKOR_PORT: "6379"
       REDIS_URL: redis://redis:6379
@@ -55,7 +56,7 @@ services:
     build:
       context: .
       dockerfile: apps/api/Dockerfile # same image as api, different command
-    command: ["node", "dist/worker.js"] # TODO Stage 14: BullMQ worker entrypoint
+    command: ["node", "dist/worker.js"] # BullMQ ingest worker (apps/api/src/worker.ts)
     restart: unless-stopped
     env_file: .env
     environment:

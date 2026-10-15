@@ -8,3 +8,4 @@ export * from './schemas/decision';
 export * from './schemas/action';
 export * from './schemas/api-error';
 export * from './schemas/health';
+export * from './schemas/ingest';

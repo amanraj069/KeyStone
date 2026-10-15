@@ -10,7 +10,8 @@
     "test": "jest",
     "test:int": "jest --config jest.int.config.js --runInBand",
     "lint": "eslint src test scripts",
-    "capability-check": "tsx scripts/capability-check.ts"
+    "capability-check": "tsx scripts/capability-check.ts",
+    "worker": "node dist/worker.js"
   },
   "dependencies": {
     "@keystone/shared": "workspace:*",
@@ -18,6 +19,7 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.2.7",
     "@nestjs/platform-express": "^11.2.7",
+    "bullmq": "^5.81.5",
     "falkordb": "6.8.0",
     "ioredis": "^5.11.1",
     "reflect-metadata": "^0.2.2",
