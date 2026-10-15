@@ -1,0 +1,5 @@
+# SKELETON: completed in Stage 14. Replace the host with the real API domain.
+# Caddy gets HTTPS certificates automatically and proxies to the api container.
+api.example.com {
+	reverse_proxy api:4000
+}
