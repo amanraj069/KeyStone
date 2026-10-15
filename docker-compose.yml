@@ -14,7 +14,9 @@ services:
       # Redis protocol; the API connects here. Host port follows FALKOR_PORT so it can
       # move off 6379 if another Redis already runs on this machine.
       - "${FALKOR_PORT:-6379}:6379"
-      - "3000:3000" # FalkorDB Browser UI (local dev only)
+      # FalkorDB Browser UI (local dev only). It listens on 3000 inside the container;
+      # the host side defaults to 3100 so the Keystone web app keeps localhost:3000.
+      - "${FALKOR_BROWSER_PORT:-3100}:3000"
     environment:
       # run.sh passes REDIS_ARGS straight to redis-server.
       REDIS_ARGS: "--requirepass ${FALKOR_PASSWORD:?Set FALKOR_PASSWORD in .env}"

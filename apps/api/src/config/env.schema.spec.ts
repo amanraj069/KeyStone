@@ -13,12 +13,31 @@ describe('validateEnv', () => {
     expect(env.MEMORY_MAX_MB).toBe(3600);
     expect(env.TEXT_STORE).toBe('local');
     expect(env.GEMINI_API_KEYS).toEqual([]);
+    expect(env.USE_OPENAI).toBe(false);
+    expect(env.OPENAI_MODEL).toBe('gpt-5-nano');
+    expect(env.LLM_CACHE_ONLY).toBe(false);
     expect(isAbsolute(env.DATA_DIR)).toBe(true);
   });
 
   it('splits GEMINI_API_KEYS on commas and drops blanks', () => {
     const env = validateEnv({ ...minimal, GEMINI_API_KEYS: ' k1, k2 ,,k3 ' });
     expect(env.GEMINI_API_KEYS).toEqual(['k1', 'k2', 'k3']);
+  });
+
+  it.each([
+    ['yes', true],
+    ['YES', true],
+    ['true', true],
+    ['1', true],
+    ['no', false],
+    ['false', false],
+    ['', false],
+  ])('reads USE_OPENAI=%p as %p', (raw, expected) => {
+    expect(validateEnv({ ...minimal, USE_OPENAI: raw }).USE_OPENAI).toBe(expected);
+  });
+
+  it('rejects an unclear USE_OPENAI value', () => {
+    expect(() => validateEnv({ ...minimal, USE_OPENAI: 'maybe' })).toThrow(/USE_OPENAI/);
   });
 
   it('requires FALKOR_PASSWORD', () => {

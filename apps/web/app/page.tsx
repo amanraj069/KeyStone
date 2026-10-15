@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { HealthStatus } from "@/components/health-status";
 
 export default function HomePage() {
@@ -10,6 +11,9 @@ export default function HomePage() {
         </p>
       </header>
       <HealthStatus />
+      <Link href="/ingest" className="text-sm underline underline-offset-4">
+        Ingestion and day-by-day replay →
+      </Link>
     </main>
   );
 }

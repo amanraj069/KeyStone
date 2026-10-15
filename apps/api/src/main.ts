@@ -5,7 +5,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import type { Env } from './config/env.schema';
 
-/** 4000, because the FalkorDB Browser already uses 3000 and the web app 3001. */
+/** 4000, so it stays clear of the web app (3000) and the FalkorDB Browser (3100). */
 const API_PORT = 4000;
 
 async function bootstrap(): Promise<void> {

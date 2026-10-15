@@ -166,6 +166,42 @@ UNICODE_PUNCTUATION = str.maketrans({
 })
 
 SPRINT_PATTERN = re.compile(r"sprint\s*#?\s*(\d+)", re.IGNORECASE)
+
+# Simulator annotations the generator appended to incident titles and bodies,
+# e.g. "[TitanDB, legacy auth service undocumented]" (a knowledge-gap label) and
+# "[recurrence of ENG-112]" (a recurrence label). They are answer-key data that
+# leaked into document text, so they are scrubbed from title and body.
+SIMULATOR_ANNOTATION = re.compile(r"\s*\[[^\[\]]*\bundocumented\]|\s*\[recurrence of [A-Z]+-\d+\]")
+
+# A few rows are not documents at all: their whole body is a simulator
+# knowledge-gap record ("gap_areas: ..."). They are moved to the answer key.
+SIMULATOR_RECORD_BODY = re.compile(r"^\s*gap_areas\s*:")
+
+# PR bodies written as the simulator's reviewer-audit record. Rewritten to the
+# neutral facts they contain (who submitted which PR, who reviewed it); the
+# expertise, fit and gap labels are answer-key data and are dropped.
+PR_AUDIT_BODY = re.compile(
+    r"^Knowledge gap detected via reviewer audit: (?P<author>.+?) \(expertise: [^)]*\) "
+    r"submitted PR '(?P<title>.+)' with fit=\w+, gap=\w+\. Reviewed by (?P<reviewer>.+?)\.\s*$",
+    re.DOTALL,
+)
+
+# Confluence pages that kept the generator's internal metadata block
+# ("metadata": {"author_domain_fit": ..., "gap_classification": ..., ...}).
+PAGE_METADATA_BLOCK = re.compile(r',?\s*"metadata"\s*:\s*\{[^{}]*?"author_domain_fit"[^{}]*\}', re.DOTALL)
+
+# Pages that kept a "Self-Audit (internal - not part of the doc)" section.
+PAGE_SELF_AUDIT = re.compile(
+    r"#+\s*Self.Audit[^\n]*\n(?:\*(?:Topics beyond|Hedged claims|Deferred or incomplete)[^\n]*\n?)+",
+    re.IGNORECASE,
+)
+
+# Anything still matching this after scrubbing is ground truth in document text.
+GROUND_TRUTH_TEXT = re.compile(
+    r"author_domain_fit|gap_classification|topics_beyond_author_expertise|topics beyond author expertise"
+    r"|knowledge gap detected via reviewer audit|fit=\w+, gap=\w+",
+    re.IGNORECASE,
+)
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
@@ -321,6 +357,49 @@ def strip_ground_truth(artifacts: pd.DataFrame) -> tuple[pd.DataFrame, Counter[s
     artifacts["facts"] = artifacts["facts"].map(strip)
     print(f"\nStripped {sum(removed.values())} ground-truth values ({len(removed)} keys) from artifact facts")
     return artifacts, removed
+
+
+def scrub_simulator_text(artifacts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    """
+    Remove answer-key text that leaked into documents:
+      - rows whose body is a simulator record move to the answer key;
+      - simulator annotations are cut out of every title and body.
+    Returns (kept artifacts, rows moved to the answer key, summary).
+    """
+    is_record = artifacts["body"].map(lambda body: bool(SIMULATOR_RECORD_BODY.match(body or "")))
+    moved = artifacts[is_record].copy()
+    kept = artifacts[~is_record].copy()
+
+    counts: Counter[str] = Counter()
+
+    def scrub(text: Any, field: str) -> Any:
+        if not isinstance(text, str):
+            return text
+        cleaned, n = SIMULATOR_ANNOTATION.subn("", text)
+        counts[field] += n
+        return cleaned
+
+    def scrub_body(text: Any) -> Any:
+        if not isinstance(text, str):
+            return text
+        audit = PR_AUDIT_BODY.match(text)
+        if audit:
+            counts["pr_audit"] += 1
+            text = f"{audit['author']} submitted PR '{audit['title']}'. Reviewed by {audit['reviewer']}."
+        text, n = PAGE_METADATA_BLOCK.subn("", text)
+        counts["metadata"] += n
+        text, n = PAGE_SELF_AUDIT.subn("", text)
+        counts["self_audit"] += n
+        return scrub(text, "body")
+
+    kept["title"] = kept["title"].map(lambda t: scrub(t, "title"))
+    kept["body"] = kept["body"].map(scrub_body)
+    summary = {"moved": sorted(moved["doc_id"]), "titles": counts["title"], "bodies": counts["body"],
+               "pr_audit": counts["pr_audit"], "metadata": counts["metadata"], "self_audit": counts["self_audit"]}
+    print(f"\nSimulator text: moved {len(moved)} record rows to the answer key {summary['moved']}; "
+          f"scrubbed {counts['title']} title and {counts['body']} body annotations; rewrote {counts['pr_audit']} "
+          f"PR audit bodies; removed {counts['metadata']} page metadata blocks and {counts['self_audit']} self-audit sections")
+    return kept, moved, summary
 
 
 # ---------------------------------------------------------------- tags
@@ -711,6 +790,7 @@ def write_stats(
     stripped: Counter[str],
     calendar: dict[str, Any],
     remap: dict[str, Any],
+    scrubbed: dict[str, Any],
     path: Path,
 ) -> None:
     """Summary of the corpus. Actor and department figures come from artifacts only."""
@@ -738,6 +818,10 @@ def write_stats(
         f"- Simulated period: day {calendar['firstDay']} = **{calendar['firstDate']}** to "
         f"day {calendar['lastDay']} = **{calendar['lastDate']}** (business days only)",
         f"- Distinct actors in artifacts: **{len(actors)}**",
+        f"- Simulator records moved to the answer key: **{len(scrubbed['moved'])}** {scrubbed['moved']}; "
+        f"annotations scrubbed: **{scrubbed['titles']}** titles, **{scrubbed['bodies']}** bodies; "
+        f"PR audit bodies rewritten: **{scrubbed['pr_audit']}**; page metadata blocks removed: "
+        f"**{scrubbed['metadata']}**; self-audit sections removed: **{scrubbed['self_audit']}**",
         f"- Weekend dates mapped to the previous business day: **{len(remap['nearest_weekend'])}**",
         f"- Post-simulation dates treated as no date (kept as `rawDate`): "
         f"**{len(remap['post_sim'])}** {remap['post_sim']}",
@@ -847,6 +931,13 @@ def self_check() -> None:
     report_check(not inconsistent, "every artifact with a date has a day consistent with calendar.json "
                                    "(expected disagreements: 0)", inconsistent)
 
+    # 4a. No simulator annotation or simulator-record body left in any document.
+    annotated = [row["doc_id"] for row in artifacts
+                 if SIMULATOR_ANNOTATION.search(row["title"] or "") or SIMULATOR_ANNOTATION.search(row["body"] or "")
+                 or SIMULATOR_RECORD_BODY.match(row["body"] or "")
+                 or GROUND_TRUTH_TEXT.search(row["title"] or "") or GROUND_TRUTH_TEXT.search(row["body"] or "")]
+    report_check(not annotated, "no simulator annotations, record bodies or audit text remain in artifact text", annotated)
+
     # 4. No answer-key row (anything with a doc_id under answer_key/, raw/ excluded) is an artifact.
     answer_ids: set[str] = set()
     for path in sorted(ANSWER_KEY_DIR.glob("*.jsonl")):
@@ -900,6 +991,8 @@ def main() -> None:
 
     print_facts_inventory(facts_key_inventory(artifact_frame))
     artifact_frame, stripped = strip_ground_truth(artifact_frame)
+    artifact_frame, moved_records, scrubbed = scrub_simulator_text(artifact_frame)
+    answer_key = pd.concat([answer_key, moved_records.drop(columns=["source_category"])], ignore_index=True)
 
     # From here on each artifact is a plain dict, so the day rules read row by row.
     artifacts = frame_records(artifact_frame)
@@ -941,7 +1034,7 @@ def main() -> None:
     write_json(people, ANSWER_KEY_DIR / "departures.json")
     write_jsonl(events, ANSWER_KEY_DIR / "gap_events.jsonl")
 
-    write_stats(df, artifacts, tag_report, inference, stripped, calendar, remap, DATA_DIR / "stats.md")
+    write_stats(df, artifacts, tag_report, inference, stripped, calendar, remap, scrubbed, DATA_DIR / "stats.md")
     print_departures(people)
     self_check()
 

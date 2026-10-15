@@ -2,6 +2,18 @@ import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { findRepoRoot } from './repo-root';
 
+/** yes/no flags: accepts yes/no, true/false, 1/0 in any case; empty means the default. */
+function yesNoFlag(defaultValue: 'yes' | 'no') {
+  return z
+    .string()
+    .trim()
+    .toLowerCase()
+    .transform((value) => (value === '' ? defaultValue : value))
+    .pipe(z.enum(['yes', 'no', 'true', 'false', '1', '0']))
+    .transform((value) => ['yes', 'true', '1'].includes(value))
+    .default(defaultValue === 'yes');
+}
+
 /** `KEY=` in a .env file gives an empty string; treat that as "not set". */
 const optionalText = z
   .string()
@@ -23,7 +35,16 @@ export const EnvSchema = z
     // Separate Redis used only by BullMQ.
     REDIS_URL: z.url().default('redis://localhost:6380'),
 
-    // Gemini. Keys are optional until the stages that call the LLM.
+    // LLM provider switch: USE_OPENAI=yes uses OpenAI, anything else uses Gemini.
+    // Keys are only checked when the LLM is first used, so the API starts without them.
+    USE_OPENAI: yesNoFlag('no'),
+    OPENAI_API_KEY: optionalText,
+    OPENAI_MODEL: z.string().min(1).default('gpt-5-nano'),
+    OPENAI_EMBED_MODEL: z.string().min(1).default('text-embedding-3-small'),
+    // GPT-5 models bill hidden reasoning as output tokens; "minimal" is the cheapest.
+    OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high']).default('minimal'),
+
+    // Gemini (the default provider).
     GEMINI_API_KEYS: z
       .string()
       .default('')
@@ -34,6 +55,20 @@ export const EnvSchema = z
     // must be a validated integer in a sane range.
     EMBED_DIM: z.coerce.number().int().min(1).max(4096).default(768),
 
+    // LLM cache: every LLM output is cached under DATA_DIR/llm-cache. With
+    // LLM_CACHE_ONLY=yes a cache miss is an error, which proves a rerun makes zero LLM calls.
+    LLM_CACHE_ONLY: yesNoFlag('no'),
+    // At most this many LLM requests in flight at once.
+    LLM_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+
+    // LLM extraction budget: refuse to start above this many planned calls (unless force).
+    EXTRACT_MAX_CALLS: z.coerce.number().int().positive().default(4000),
+    // Optional: only extract artifacts authored by these departments (comma separated).
+    EXTRACT_DEPTS: z
+      .string()
+      .default('')
+      .transform((raw) => raw.split(',').map((d) => d.trim()).filter((d) => d.length > 0)),
+
     // Memory guard for ingestion stages; both below the container's 4 GB limit.
     MEMORY_WARN_MB: z.coerce.number().int().positive().default(3000),
     MEMORY_MAX_MB: z.coerce.number().int().positive().default(3600),
@@ -43,8 +78,17 @@ export const EnvSchema = z
     S3_BUCKET: optionalText,
     DATA_DIR: z.string().min(1).default('./data'),
 
+    // Ingestion. In development the API process also runs the BullMQ worker;
+    // in production a separate `worker` container does (dist/worker.js).
+    INGEST_WORKER_INLINE: z
+      .enum(['true', 'false'])
+      .default('true')
+      .transform((value) => value === 'true'),
+    // When set, POST /ingest/* requires the header `x-admin-token: <value>`.
+    ADMIN_TOKEN: optionalText,
+
     // HTTP.
-    WEB_ORIGIN: z.url().default('http://localhost:3001'),
+    WEB_ORIGIN: z.url().default('http://localhost:3000'),
     API_BASE_URL: z.url().default('http://localhost:4000'),
   })
   .refine((env) => env.MEMORY_WARN_MB < env.MEMORY_MAX_MB, {
