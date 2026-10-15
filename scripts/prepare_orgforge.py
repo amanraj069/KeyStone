@@ -176,6 +176,32 @@ SIMULATOR_ANNOTATION = re.compile(r"\s*\[[^\[\]]*\bundocumented\]|\s*\[recurrenc
 # A few rows are not documents at all: their whole body is a simulator
 # knowledge-gap record ("gap_areas: ..."). They are moved to the answer key.
 SIMULATOR_RECORD_BODY = re.compile(r"^\s*gap_areas\s*:")
+
+# PR bodies written as the simulator's reviewer-audit record. Rewritten to the
+# neutral facts they contain (who submitted which PR, who reviewed it); the
+# expertise, fit and gap labels are answer-key data and are dropped.
+PR_AUDIT_BODY = re.compile(
+    r"^Knowledge gap detected via reviewer audit: (?P<author>.+?) \(expertise: [^)]*\) "
+    r"submitted PR '(?P<title>.+)' with fit=\w+, gap=\w+\. Reviewed by (?P<reviewer>.+?)\.\s*$",
+    re.DOTALL,
+)
+
+# Confluence pages that kept the generator's internal metadata block
+# ("metadata": {"author_domain_fit": ..., "gap_classification": ..., ...}).
+PAGE_METADATA_BLOCK = re.compile(r',?\s*"metadata"\s*:\s*\{[^{}]*?"author_domain_fit"[^{}]*\}', re.DOTALL)
+
+# Pages that kept a "Self-Audit (internal - not part of the doc)" section.
+PAGE_SELF_AUDIT = re.compile(
+    r"#+\s*Self.Audit[^\n]*\n(?:\*(?:Topics beyond|Hedged claims|Deferred or incomplete)[^\n]*\n?)+",
+    re.IGNORECASE,
+)
+
+# Anything still matching this after scrubbing is ground truth in document text.
+GROUND_TRUTH_TEXT = re.compile(
+    r"author_domain_fit|gap_classification|topics_beyond_author_expertise|topics beyond author expertise"
+    r"|knowledge gap detected via reviewer audit|fit=\w+, gap=\w+",
+    re.IGNORECASE,
+)
 WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 
@@ -353,11 +379,26 @@ def scrub_simulator_text(artifacts: pd.DataFrame) -> tuple[pd.DataFrame, pd.Data
         counts[field] += n
         return cleaned
 
+    def scrub_body(text: Any) -> Any:
+        if not isinstance(text, str):
+            return text
+        audit = PR_AUDIT_BODY.match(text)
+        if audit:
+            counts["pr_audit"] += 1
+            text = f"{audit['author']} submitted PR '{audit['title']}'. Reviewed by {audit['reviewer']}."
+        text, n = PAGE_METADATA_BLOCK.subn("", text)
+        counts["metadata"] += n
+        text, n = PAGE_SELF_AUDIT.subn("", text)
+        counts["self_audit"] += n
+        return scrub(text, "body")
+
     kept["title"] = kept["title"].map(lambda t: scrub(t, "title"))
-    kept["body"] = kept["body"].map(lambda b: scrub(b, "body"))
-    summary = {"moved": sorted(moved["doc_id"]), "titles": counts["title"], "bodies": counts["body"]}
+    kept["body"] = kept["body"].map(scrub_body)
+    summary = {"moved": sorted(moved["doc_id"]), "titles": counts["title"], "bodies": counts["body"],
+               "pr_audit": counts["pr_audit"], "metadata": counts["metadata"], "self_audit": counts["self_audit"]}
     print(f"\nSimulator text: moved {len(moved)} record rows to the answer key {summary['moved']}; "
-          f"scrubbed {counts['title']} title and {counts['body']} body annotations")
+          f"scrubbed {counts['title']} title and {counts['body']} body annotations; rewrote {counts['pr_audit']} "
+          f"PR audit bodies; removed {counts['metadata']} page metadata blocks and {counts['self_audit']} self-audit sections")
     return kept, moved, summary
 
 
@@ -778,7 +819,9 @@ def write_stats(
         f"day {calendar['lastDay']} = **{calendar['lastDate']}** (business days only)",
         f"- Distinct actors in artifacts: **{len(actors)}**",
         f"- Simulator records moved to the answer key: **{len(scrubbed['moved'])}** {scrubbed['moved']}; "
-        f"annotations scrubbed: **{scrubbed['titles']}** titles, **{scrubbed['bodies']}** bodies",
+        f"annotations scrubbed: **{scrubbed['titles']}** titles, **{scrubbed['bodies']}** bodies; "
+        f"PR audit bodies rewritten: **{scrubbed['pr_audit']}**; page metadata blocks removed: "
+        f"**{scrubbed['metadata']}**; self-audit sections removed: **{scrubbed['self_audit']}**",
         f"- Weekend dates mapped to the previous business day: **{len(remap['nearest_weekend'])}**",
         f"- Post-simulation dates treated as no date (kept as `rawDate`): "
         f"**{len(remap['post_sim'])}** {remap['post_sim']}",
@@ -891,8 +934,9 @@ def self_check() -> None:
     # 4a. No simulator annotation or simulator-record body left in any document.
     annotated = [row["doc_id"] for row in artifacts
                  if SIMULATOR_ANNOTATION.search(row["title"] or "") or SIMULATOR_ANNOTATION.search(row["body"] or "")
-                 or SIMULATOR_RECORD_BODY.match(row["body"] or "")]
-    report_check(not annotated, "no simulator annotations or record bodies remain in artifact text", annotated)
+                 or SIMULATOR_RECORD_BODY.match(row["body"] or "")
+                 or GROUND_TRUTH_TEXT.search(row["title"] or "") or GROUND_TRUTH_TEXT.search(row["body"] or "")]
+    report_check(not annotated, "no simulator annotations, record bodies or audit text remain in artifact text", annotated)
 
     # 4. No answer-key row (anything with a doc_id under answer_key/, raw/ excluded) is an artifact.
     answer_ids: set[str] = set()
