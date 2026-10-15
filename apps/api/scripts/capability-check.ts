@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
+import { falkorSettingsFromEnv } from '../src/graph/falkor-settings';
 import { GraphService } from '../src/graph/graph.service';
 import * as Q from './queries/capability-check.queries';
 
@@ -39,7 +40,7 @@ type Scored = { name: string; score: number };
 async function main(): Promise<void> {
   loadDotenv({ path: join(findRepoRoot(), '.env'), quiet: true });
   const env = validateEnv(process.env);
-  const graph = new GraphService({ host: env.FALKOR_HOST, port: env.FALKOR_PORT, password: env.FALKOR_PASSWORD });
+  const graph = new GraphService(falkorSettingsFromEnv(env));
   await graph.connect(5);
 
   const name = `capcheck_${randomBytes(4).toString('hex')}`;

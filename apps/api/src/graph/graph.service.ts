@@ -9,13 +9,33 @@ import {
 import { FalkorDB, type FalkorDBOptions, type Graph } from 'falkordb';
 import type { MemoryReport } from '@keystone/shared';
 import { backoffDelay, sleep } from './backoff';
-import { FALKOR_SETTINGS, type FalkorSettings, SLOW_QUERY_MS } from './graph.constants';
+import { toBatches } from './batch';
+import { DEFAULT_BATCH_SIZE, FALKOR_SETTINGS, type FalkorSettings, SLOW_QUERY_MS } from './graph.constants';
+import { mapRows } from './result-mapper';
 
 /**
  * Parameter map for a Cypher query, e.g. { name: 'Ada' } for `$name`.
  * The falkordb package does not export this type, so we read it off Graph.query.
  */
 export type QueryParams = NonNullable<NonNullable<Parameters<Graph['query']>[1]>['params']>;
+
+/** One row for batchWrite: a map of values the query reads as `row.<key>`. */
+export type BatchRow = QueryParams;
+
+/** What batchWrite did, for logs and tests. */
+export interface BatchWriteResult {
+  rows: number;
+  batches: number;
+  ms: number;
+}
+
+/** Thrown by assertMemoryBudget when FalkorDB uses more memory than MEMORY_MAX_MB. */
+export class MemoryBudgetExceededError extends Error {
+  constructor(stageName: string, usedMb: number, maxMb: number) {
+    super(`Memory budget exceeded during "${stageName}": FalkorDB uses ${usedMb} MB, limit is ${maxMb} MB`);
+    this.name = 'MemoryBudgetExceededError';
+  }
+}
 
 /** The raw node-redis connection underneath the falkordb client. */
 type RawConnection = Awaited<FalkorDB['connection']>;
@@ -45,6 +65,9 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(GraphService.name);
   private db: FalkorDB | null = null;
   private shuttingDown = false;
+  // Resolves the first time a connection succeeds (see whenConnected).
+  private markConnected!: () => void;
+  private readonly firstConnection = new Promise<void>((resolve) => (this.markConnected = resolve));
 
   constructor(@Inject(FALKOR_SETTINGS) private readonly settings: FalkorSettings) {}
 
@@ -73,6 +96,7 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
       try {
         this.db = await this.openConnection();
         this.logger.log(`Connected to FalkorDB at ${this.settings.host}:${this.settings.port}`);
+        this.markConnected();
         return;
       } catch (error) {
         const delay = backoffDelay(attempt);
@@ -85,16 +109,52 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
     throw new Error(`Could not connect to FalkorDB at ${this.settings.host}:${this.settings.port}`);
   }
 
-  /** Runs a read-write Cypher query and returns its rows. */
+  /** Resolves once the first connection has been made (waits through retries). */
+  whenConnected(): Promise<void> {
+    return this.firstConnection;
+  }
+
+  /**
+   * Runs a read-write Cypher query and returns its rows as plain objects
+   * (nodes, edges and paths converted by result-mapper).
+   */
   async query<T>(graphName: string, cypher: string, params: QueryParams = {}): Promise<T[]> {
     const graph = (await this.requireDb()).selectGraph(graphName);
-    return this.timed('query', graphName, cypher, async () => (await graph.query<T>(cypher, { params })).data ?? []);
+    const reply = await this.timed('query', graphName, cypher, () => graph.query(cypher, { params }));
+    return mapRows<T>(reply.data ?? []);
   }
 
   /** Runs a read-only Cypher query (GRAPH.RO_QUERY); FalkorDB rejects any write. */
   async roQuery<T>(graphName: string, cypher: string, params: QueryParams = {}): Promise<T[]> {
     const graph = (await this.requireDb()).selectGraph(graphName);
-    return this.timed('roQuery', graphName, cypher, async () => (await graph.roQuery<T>(cypher, { params })).data ?? []);
+    const reply = await this.timed('roQuery', graphName, cypher, () => graph.roQuery(cypher, { params }));
+    return mapRows<T>(reply.data ?? []);
+  }
+
+  /**
+   * Writes many rows with one UNWIND query per batch. All ingestion uses this.
+   * The query must start with `UNWIND $rows AS row` and read values as `row.x`,
+   * e.g. `UNWIND $rows AS row MERGE (p:Person {name: row.name})`.
+   */
+  async batchWrite(
+    graphName: string,
+    cypher: string,
+    rows: readonly BatchRow[],
+    batchSize = DEFAULT_BATCH_SIZE,
+  ): Promise<BatchWriteResult> {
+    if (!/^\s*UNWIND\s+\$rows\s+AS\s+row\b/i.test(cypher)) {
+      throw new Error('batchWrite queries must start with "UNWIND $rows AS row"');
+    }
+    const batches = toBatches(rows, batchSize);
+    const started = performance.now();
+    for (const [index, batch] of batches.entries()) {
+      await this.query(graphName, cypher, { rows: batch });
+      this.logger.debug(`batchWrite [${graphName}] batch ${index + 1}/${batches.length}: ${batch.length} rows`);
+    }
+    const ms = Math.round(performance.now() - started);
+    const perSecond = ms > 0 ? Math.round((rows.length * 1000) / ms) : rows.length;
+    this.logger.log(`batchWrite [${graphName}] ${rows.length} rows in ${batches.length} batches, ${ms} ms (${perSecond} rows/s)`);
+    return { rows: rows.length, batches: batches.length, ms };
   }
 
   /** GRAPH.COPY: duplicates `src` into a new graph `dst` inside FalkorDB. */
@@ -127,12 +187,35 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
 
     const info = String(await connection.sendCommand(['INFO', 'memory']));
     const usedMemoryHuman = readInfoField(info, 'used_memory_human');
+    const usedBytes = Number(readInfoField(info, 'used_memory'));
+    const usedMemoryMb = Number.isFinite(usedBytes) ? Math.round((usedBytes / 1024 / 1024) * 10) / 10 : null;
 
     const graphNames = await db.list();
     const graphs = await Promise.all(
       graphNames.map(async (graph) => ({ graph, totalMb: await graphMemoryMb(connection, graph) })),
     );
-    return { usedMemoryHuman, graphs };
+    return { usedMemoryHuman, usedMemoryMb, graphs };
+  }
+
+  /**
+   * Call between heavy stages (ingestion, projections, simulations). Logs the
+   * memory report, warns above MEMORY_WARN_MB and throws above MEMORY_MAX_MB,
+   * so we stop before the container's 4 GB limit kills FalkorDB.
+   */
+  async assertMemoryBudget(stageName: string): Promise<MemoryReport> {
+    const report = await this.memoryReport();
+    const used = report.usedMemoryMb;
+    const graphs = report.graphs.map((g) => `${g.graph}=${g.totalMb ?? '?'}MB`).join(', ');
+    this.logger.log(`Memory after "${stageName}": ${report.usedMemoryHuman ?? '?'} used; graphs: ${graphs || 'none'}`);
+
+    if (used === null) {
+      this.logger.warn(`Memory after "${stageName}": could not read used_memory; budget not checked`);
+    } else if (used > this.settings.memoryMaxMb) {
+      throw new MemoryBudgetExceededError(stageName, used, this.settings.memoryMaxMb);
+    } else if (used > this.settings.memoryWarnMb) {
+      this.logger.warn(`Memory after "${stageName}": ${used} MB is above MEMORY_WARN_MB (${this.settings.memoryWarnMb})`);
+    }
+    return report;
   }
 
   /** Creates the falkordb client. Throws if the first connection attempt fails. */
