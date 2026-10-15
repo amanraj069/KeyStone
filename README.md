@@ -40,7 +40,18 @@ FalkorDB Browser.
 | `pnpm --filter @keystone/api test:int` | Integration tests against the running FalkorDB |
 | `pnpm lint` | ESLint everywhere |
 | `pnpm capability-check` | PASS/FAIL for every FalkorDB feature Keystone needs |
+| `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
 | `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
+
+## LLM provider
+
+All LLM use goes through `LlmService` (`apps/api/src/llm/`): OpenAI when
+`USE_OPENAI=yes` (key `OPENAI_API_KEY`, default models `gpt-5-nano` and
+`text-embedding-3-small`), otherwise Gemini (`GEMINI_API_KEYS`, comma separated).
+Every answer is validated with Zod and cached in `DATA_DIR/llm-cache`, so a
+repeated request costs no LLM call; `LLM_CACHE_ONLY=yes` makes a cache miss an
+error. Embeddings are shortened to `EMBED_DIM` (768) on both providers. Check the
+setup with `pnpm llm-check` after adding a key.
 
 ## Ingestion (Stage 4)
 

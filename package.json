@@ -11,6 +11,7 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "lint": "pnpm -r lint",
-    "capability-check": "pnpm --filter @keystone/api capability-check"
+    "capability-check": "pnpm --filter @keystone/api capability-check",
+    "llm-check": "pnpm --filter @keystone/api llm-check"
   }
 }

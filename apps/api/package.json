@@ -11,9 +11,12 @@
     "test:int": "jest --config jest.int.config.js --runInBand",
     "lint": "eslint src test scripts",
     "capability-check": "tsx scripts/capability-check.ts",
-    "worker": "node dist/worker.js"
+    "worker": "node dist/worker.js",
+    "llm-check": "tsx scripts/llm-check.ts",
+    "extract-sample": "tsx scripts/extract-sample.ts"
   },
   "dependencies": {
+    "@google/genai": "2.25.0",
     "@keystone/shared": "workspace:*",
     "@nestjs/common": "^11.2.7",
     "@nestjs/config": "^4.0.4",
@@ -22,6 +25,7 @@
     "bullmq": "^5.81.5",
     "falkordb": "6.8.0",
     "ioredis": "^5.11.1",
+    "openai": "7.25.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.6.7"
