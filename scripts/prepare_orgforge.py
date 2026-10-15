@@ -7,7 +7,7 @@ Usage (from the repo root):
 
 Outputs (see scripts/README.md):
     data/artifacts.jsonl                 the ONLY file the product may load
-    data/calendar.json                   simulation day -> date and weekday
+    data/calendar.json                   simulation day -> date and weekday (business days)
     data/stats.md                        human-readable summary
     data/answer_key/sim_events.jsonl     benchmark answer key, never loaded
     data/answer_key/questions.jsonl      evaluation questions, never loaded
@@ -25,7 +25,7 @@ import json
 import re
 import shutil
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +77,87 @@ STRIPPED_FACTS_KEYS = frozenset({
 })
 
 DEPARTURE_DOC_TYPES = frozenset({"employee_departed", "knowledge_gap_detected"})
+
+# SINGLE SOURCE OF TRUTH for artifact tags: an allowlist.
+# A tag is kept only if it says what a document is or where it came from
+# (channel, doc type, direction, department, sender, work type). Tags that
+# encode simulator state, lifecycle or outcomes are dropped, and so is any tag
+# not listed here. Each entry: tag -> (keep?, one-line reason).
+TAG_DECISIONS: dict[str, tuple[bool, str]] = {
+    # Channel or document type.
+    "slack": (True, "channel / doc type"),
+    "email": (True, "channel / doc type"),
+    "confluence": (True, "channel / doc type"),
+    "jira": (True, "channel / doc type"),
+    "zoom": (True, "channel / doc type"),
+    "transcript": (True, "doc type (meeting transcript)"),
+    "datadog": (True, "source system of the alert"),
+    "alert": (True, "doc type"),
+    "invoice": (True, "doc type"),
+    "zendesk": (True, "source system of the ticket"),
+    "nps": (True, "doc type (survey)"),
+    "salesforce": (True, "source system of the record"),
+    # Direction and business area.
+    "inbound": (True, "message direction"),
+    "outbound": (True, "message direction"),
+    "vendor": (True, "counterparty type"),
+    "customer": (True, "counterparty type"),
+    "sales": (True, "business area"),
+    "billing": (True, "business area"),
+    "support": (True, "business area"),
+    "hr": (True, "business area"),
+    # Departments.
+    "engineering": (True, "department"),
+    "engineering_backend": (True, "department"),
+    "engineering_mobile": (True, "department"),
+    "design": (True, "department"),
+    "product": (True, "department"),
+    "qa_support": (True, "department"),
+    "hr_ops": (True, "department"),
+    "sales_marketing": (True, "department"),
+    # Kind of email / record.
+    "vendor_ack": (True, "email kind"),
+    "general_inquiry": (True, "email kind"),
+    "customer_reply": (True, "email kind"),
+    "feature_request": (True, "email kind"),
+    "question": (True, "email / ticket kind"),
+    "offer_letter": (True, "email kind"),
+    "touchpoint": (True, "CRM record kind"),
+    # Work type, as written on the document.
+    "sprint_backlog": (True, "work type"),
+    "design_discussion": (True, "meeting kind"),
+    "pr_review": (True, "work type"),
+    "postmortem": (True, "doc kind"),
+    "incident": (True, "doc kind"),
+    "P1": (True, "severity written on the incident itself"),
+    "detractor": (True, "NPS bucket shown on the survey"),
+    "passive": (True, "NPS bucket shown on the survey"),
+    # External contacts an email came from (same as its from_addr).
+    "ethan": (True, "sender (external contact)"),
+    "yara": (True, "sender (external contact)"),
+    "nora": (True, "sender (external contact)"),
+    "mona": (True, "sender (external contact)"),
+    "lena": (True, "sender (external contact)"),
+    "arun": (True, "sender (external contact)"),
+    "ravi": (True, "sender (external contact)"),
+    "nisha": (True, "sender (external contact)"),
+    "isabel": (True, "sender (external contact)"),
+    # Simulator state, lifecycle and outcomes: dropped.
+    "causal_chain": (False, "simulator provenance link"),
+    "knowledge_gap": (False, "simulator gap detection"),
+    "reviewer_audit": (False, "simulator audit of the PR"),
+    "recurrence": (False, "simulator recurrence outcome"),
+    "departed_employee": (False, "simulator departure state"),
+    "async_question": (False, "sim_event type name; only on knowledge-gap records"),
+    "documentation": (False, "only on a simulator knowledge-gap record"),
+    "escalation": (False, "ticket lifecycle outcome"),
+    "orphaned_domain": (False, "simulator ownership state"),
+    "genesis": (False, "simulator pre-history marker"),
+    "lifecycle": (False, "simulator lifecycle marker"),
+    "": (False, "empty string, not a tag"),
+}
+KEPT_TAGS = frozenset(tag for tag, (keep, _) in TAG_DECISIONS.items() if keep)
+UNKNOWN_TAG_REASON = "not in TAG_DECISIONS (unknown tags default to drop)"
 
 #: Unicode dashes and spaces seen in timestamps and titles -> plain ASCII.
 UNICODE_PUNCTUATION = str.maketrans({
@@ -242,10 +323,188 @@ def strip_ground_truth(artifacts: pd.DataFrame) -> tuple[pd.DataFrame, Counter[s
     return artifacts, removed
 
 
+# ---------------------------------------------------------------- tags
+
+
+def tag_inventory(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every distinct tag with its count, two example doc_ids, and the keep/drop verdict."""
+    counts: Counter[str] = Counter()
+    examples: dict[str, list[str]] = {}
+    for row in records:
+        for tag in row["tags"]:
+            counts[tag] += 1
+            examples.setdefault(tag, [])
+            if len(examples[tag]) < 2:
+                examples[tag].append(row["doc_id"])
+
+    report = []
+    for tag, count in counts.most_common():
+        keep, reason = TAG_DECISIONS.get(tag, (False, UNKNOWN_TAG_REASON))
+        report.append({"tag": tag, "count": count, "examples": examples[tag], "keep": keep, "reason": reason})
+    return report
+
+
+def print_tag_report(report: list[dict[str, Any]]) -> None:
+    print(f"\nTags in artifacts ({len(report)} distinct), classification BEFORE writing:")
+    print(f"  {'verdict':<7} {'count':>5}  {'tag':<20} {'reason':<52} examples")
+    for t in report:
+        verdict = "keep" if t["keep"] else "DROP"
+        print(f"  {verdict:<7} {t['count']:>5}  {t['tag']!r:<20} {t['reason']:<52} {', '.join(t['examples'])}")
+
+
+def filter_tags(records: list[dict[str, Any]]) -> None:
+    """Keep only tags in KEPT_TAGS (in place)."""
+    for row in records:
+        row["tags"] = [tag for tag in row["tags"] if tag in KEPT_TAGS]
+
+
+# ---------------------------------------------------------------- calendar
+
+
+def row_date(date_value: Any, timestamp_utc: Any) -> date | None:
+    """
+    The calendar date of a row: the `date` column, or else the date part of the
+    timestamp. The `date` column wins because it always agrees with `day` on
+    day >= 1 rows, while timestamps often run a few days later.
+    """
+    text = clean_text(date_value)
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        pass
+    if isinstance(timestamp_utc, pd.Timestamp) and not pd.isna(timestamp_utc):
+        return timestamp_utc.date()
+    if isinstance(timestamp_utc, str) and timestamp_utc:
+        return date.fromisoformat(timestamp_utc[:10])
+    return None
+
+
+def add_business_days(start: date, count: int) -> date:
+    """`count` weekdays after `start` (count may be 0)."""
+    current = start
+    while count > 0:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            count -= 1
+    return current
+
+
+def build_calendar(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    day -> date -> weekday, from trustworthy rows only: artifacts with day >= 1
+    that have a date. Majority date per day; conflicts are printed. Missing days
+    are filled by business-day arithmetic, and every known day must agree with
+    that arithmetic or the script stops.
+    """
+    votes: dict[int, Counter[date]] = {}
+    for row in records:
+        if isinstance(row["day"], int) and row["day"] >= 1 and row["date_value"] is not None:
+            votes.setdefault(row["day"], Counter())[row["date_value"]] += 1
+
+    anchors: dict[int, date] = {}
+    for day in sorted(votes):
+        anchors[day] = votes[day].most_common(1)[0][0]
+        if len(votes[day]) > 1:
+            print(f"  calendar conflict on day {day}: "
+                  f"{ {d.isoformat(): n for d, n in votes[day].most_common()} } -> majority {anchors[day]}")
+
+    first_day, last_day = min(anchors), max(anchors)
+    first_date = anchors[first_day]
+    days, mismatches = [], []
+    for day in range(first_day, last_day + 1):
+        expected = add_business_days(first_date, day - first_day)
+        if day in anchors and anchors[day] != expected:
+            mismatches.append(f"day {day}: data says {anchors[day]}, business days say {expected}")
+        days.append({
+            "day": day,
+            "date": expected.isoformat(),
+            "weekday": WEEKDAYS[expected.weekday()],
+            "source": "artifacts" if day in anchors else "filled",
+        })
+    if mismatches:
+        print("\n".join(f"  CALENDAR MISMATCH {m}" for m in mismatches))
+        raise SystemExit("Calendar anchors disagree with business-day arithmetic; stopping.")
+
+    filled = [d["day"] for d in days if d["source"] == "filled"]
+    print(f"\nCalendar: day {first_day} = {days[0]['date']} ({days[0]['weekday']}) .. day {last_day} = "
+          f"{days[-1]['date']} ({days[-1]['weekday']}); {len(anchors)} days from data, {len(filled)} filled {filled}")
+    return {
+        "source": "artifacts.jsonl rows with day >= 1 and a date (majority per day); gaps filled by business days",
+        "note": "Day numbers are business days (weekends skipped). Convert only through this file.",
+        "firstDay": first_day,
+        "lastDay": last_day,
+        "firstDate": days[0]["date"],
+        "lastDate": days[-1]["date"],
+        "days": days,
+    }
+
+
+class CalendarIndex:
+    """Fast lookups over calendar.json: date -> day and day -> date."""
+
+    def __init__(self, calendar: dict[str, Any]):
+        self.first_date = date.fromisoformat(calendar["firstDate"])
+        self.last_date = date.fromisoformat(calendar["lastDate"])
+        self.day_by_date = {date.fromisoformat(d["date"]): d["day"] for d in calendar["days"]}
+        self.date_by_day = {d["day"]: date.fromisoformat(d["date"]) for d in calendar["days"]}
+
+    def nearest_previous_day(self, when: date) -> int:
+        """The calendar day on or before `when` (weekends -> Friday, after the end -> last day)."""
+        return max(day for d, day in self.day_by_date.items() if d <= when)
+
+
+# ---------------------------------------------------------------- day remapping
+
+
+def remap_day_zero(records: list[dict[str, Any]], cal: CalendarIndex) -> dict[str, Any]:
+    """
+    Most Slack and Confluence rows sit at day 0 but carry real dates. Move each
+    one to its calendar day. Rows with day >= 1 are only checked, never changed.
+    Returns a summary for stats.md.
+    """
+    nearest_weekend, nearest_after_end, mismatches = [], [], []
+    for row in records:
+        when = row["date_value"]
+        if when is None:
+            continue  # the rows with no date at all; handled by infer_days()
+        if row["day"] == 0:
+            if when < cal.first_date:
+                row["dayInferred"] = "pre-sim"  # a document older than the simulation keeps day 0
+            elif when in cal.day_by_date:
+                set_inferred_day(row, cal.day_by_date[when], "calendar")
+            else:
+                set_inferred_day(row, cal.nearest_previous_day(when), "calendar-nearest")
+                (nearest_after_end if when > cal.last_date else nearest_weekend).append(row["doc_id"])
+        elif isinstance(row["day"], int) and row["day"] >= 1 and cal.date_by_day.get(row["day"]) != when:
+            mismatches.append(row)
+
+    if mismatches:
+        print(f"\n{len(mismatches)} genuine day >= 1 rows disagree with the calendar (left unchanged):")
+        for row in mismatches:
+            print(f"  {row['doc_id']:<16} {row['doc_type']:<12} day {row['day']} "
+                  f"(= {cal.date_by_day.get(row['day'])}) but date {row['date_value']}")
+    print(f"calendar-nearest mappings: {len(nearest_weekend)} weekend, "
+          f"{len(nearest_after_end)} after the last simulated date {nearest_after_end}")
+    return {
+        "nearest_weekend": nearest_weekend,
+        "nearest_after_end": nearest_after_end,
+        "genuine_mismatches": [r["doc_id"] for r in mismatches],
+    }
+
+
+def set_inferred_day(row: dict[str, Any], day: int | None, how: str, source: str | None = None) -> None:
+    """Record a corrected day, remembering that the dataset said day 0."""
+    row["originalDay"] = row["day"]
+    row["day"] = day
+    row["dayInferred"] = how
+    if source is not None:
+        row["inferredFrom"] = source
+
+
 # ---------------------------------------------------------------- day inference
 
 
-def linked_ids(row: pd.Series) -> set[str]:
+def linked_ids(row: dict[str, Any]) -> set[str]:
     """doc_ids this artifact points at, via artifact_ids values or facts.causal_chain."""
     targets: set[str] = set()
     for value in row["artifact_ids"].values():
@@ -263,7 +522,7 @@ def flatten_strings(value: Any) -> list[str]:
     return []
 
 
-def sprint_number_of(row: pd.Series) -> int | None:
+def sprint_number_of(row: dict[str, Any]) -> int | None:
     """Sprint number from facts.sprint_number or from the title ("Sprint #4"). Body is not used."""
     if isinstance(row["facts"].get("sprint_number"), int):
         return row["facts"]["sprint_number"]
@@ -271,109 +530,69 @@ def sprint_number_of(row: pd.Series) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def sprint_last_days(dated: pd.DataFrame) -> dict[int, tuple[int, int]]:
+def sprint_last_days(records: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
     """For each sprint number: (last day of any jira ticket in it, ticket count)."""
-    jira = dated[dated["doc_type"] == "jira"]
     sprints: dict[int, list[int]] = {}
-    for _, row in jira.iterrows():
+    for row in records:
         number = row["facts"].get("sprint_number")
-        if isinstance(number, int):
-            sprints.setdefault(number, []).append(int(row["day"]))
+        if row["doc_type"] == "jira" and isinstance(number, int) and isinstance(row["day"], int):
+            sprints.setdefault(number, []).append(row["day"])
     return {number: (max(days), len(days)) for number, days in sprints.items()}
 
 
-def infer_days(artifacts: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, Any]]]:
+def infer_days(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Rows without a timestamp have an unreliable `day: 0`. Re-derive their day
-    using ONLY other artifacts (never the answer key):
-      1. links: artifacts it links to, or that link to it (artifact_ids,
-         facts.causal_chain); take the earliest linked day.
-      2. retros: sprint number in title/facts -> last day of that sprint's jira tickets.
+    Rows with no date and no timestamp have a meaningless `day: 0`. Re-derive
+    their day from the (already corrected) days of OTHER artifacts only:
+      1. link: artifacts it links to or that link to it (artifact_ids,
+         facts.causal_chain); the earliest linked day wins.
+      2. sprint: sprint number in title/facts -> last day of that sprint's jira tickets.
       3. otherwise day: null, dayUnknown: true.
-    Returns (dated rows, undated rows with their result, report table).
+    Updates rows in place and returns a report table.
     """
-    undated_mask = artifacts["timestamp_utc"].isna()
-    dated = artifacts[~undated_mask]
-    undated = artifacts[undated_mask].copy()
+    undated = [row for row in records if row["date_value"] is None]
+    undated_ids = {row["doc_id"] for row in undated}
+    day_by_id = {row["doc_id"]: row["day"] for row in records
+                 if row["doc_id"] not in undated_ids and isinstance(row["day"], int)}
+    links_by_id = {row["doc_id"]: linked_ids(row) for row in records}
+    sprints = sprint_last_days(records)
 
-    day_by_id = dict(zip(dated["doc_id"], dated["day"].astype(int)))
-    links_by_id = {row["doc_id"]: linked_ids(row) for _, row in artifacts.iterrows()}
-    sprints = sprint_last_days(dated)
-
-    results: list[dict[str, Any]] = []
-    for index, row in undated.iterrows():
+    results = []
+    for row in sorted(undated, key=lambda r: r["doc_id"]):
         doc_id = row["doc_id"]
-        outgoing = links_by_id[doc_id]
         incoming = {other for other, targets in links_by_id.items() if doc_id in targets}
-        candidates = sorted((day_by_id[d], d) for d in outgoing | incoming if d in day_by_id)
+        candidates = sorted((day_by_id[d], d) for d in links_by_id[doc_id] | incoming if d in day_by_id)
 
         if candidates:
-            day, source = candidates[0]  # earliest linked day
-            inferred_from = source
+            day, source = candidates[0]
+            set_inferred_day(row, day, "link", source)
         elif (sprint := sprint_number_of(row)) is not None and sprint in sprints:
             day, tickets = sprints[sprint]
-            inferred_from = f"sprint {sprint}: last day of its {tickets} jira tickets"
+            set_inferred_day(row, day, "sprint", f"sprint {sprint}: last day of its {tickets} jira tickets")
         else:
-            day, inferred_from = None, None
-
-        undated.at[index, "day"] = day
-        undated.at[index, "dayInferred"] = day is not None
-        undated.at[index, "inferredFrom"] = inferred_from
-        undated.at[index, "dayUnknown"] = day is None
-        results.append({"doc_id": doc_id, "doc_type": row["doc_type"], "day": day, "inferredFrom": inferred_from})
-
-    undated["day"] = undated["day"].astype("object")  # keeps None instead of NaN
-    return dated, undated.sort_values("doc_id"), results
+            row["originalDay"] = row["day"]
+            row["day"] = None
+            row["dayUnknown"] = True
+        results.append({"doc_id": doc_id, "doc_type": row["doc_type"], "day": row["day"],
+                        "inferredFrom": row.get("inferredFrom")})
+    return results
 
 
 def print_inference_table(results: list[dict[str, Any]]) -> None:
-    print(f"\nDay inference for {len(results)} artifacts without a timestamp:")
+    print(f"\nDay inference for {len(results)} artifacts with no date or timestamp:")
     print(f"  {'doc_id':<16} {'doc_type':<14} {'day':>5}  inferred from")
     for r in results:
         day = "null" if r["day"] is None else str(r["day"])
         print(f"  {r['doc_id']:<16} {r['doc_type']:<14} {day:>5}  {r['inferredFrom'] or 'dayUnknown: no link, no sprint number'}")
 
 
-# ---------------------------------------------------------------- calendar
-
-
-def build_calendar(dated: pd.DataFrame) -> dict[str, Any]:
-    """
-    day -> date -> weekday, from artifact rows only. Days are business days.
-    Day 0 is excluded: it is a catch-all bucket whose rows carry dates from the
-    whole period. For each day the most common date wins; outliers are counted.
-    """
-    rows = dated[dated["day"] >= 1]
-    days: list[dict[str, Any]] = []
-    outliers = 0
-    for day, group in rows.groupby("day"):
-        dates = Counter(clean_text(d) for d in group["date"])
-        chosen, votes = dates.most_common(1)[0]
-        outliers += len(group) - votes
-        weekday = date.fromisoformat(chosen).weekday()
-        days.append({"day": int(day), "date": chosen, "weekday": WEEKDAYS[weekday]})
-
-    check_calendar(days)
-    print(f"\nCalendar: days {days[0]['day']}..{days[-1]['day']} = {days[0]['date']}..{days[-1]['date']} "
-          f"({outliers} rows had a date different from their day's majority date)")
-    return {
-        "source": "artifacts.jsonl (majority date per day); day 0 excluded",
-        "note": "Day numbers are business days (weekends skipped).",
-        "days": days,
-    }
-
-
-def check_calendar(days: list[dict[str, Any]]) -> None:
-    """Every day present, dates strictly increasing, no weekends."""
-    numbers = [d["day"] for d in days]
-    if numbers != list(range(numbers[0], numbers[-1] + 1)):
-        raise SystemExit(f"Calendar has missing days: {numbers}")
-    dates = [d["date"] for d in days]
-    if dates != sorted(set(dates)):
-        raise SystemExit("Calendar dates are not strictly increasing")
-    weekend = [d for d in days if d["weekday"] in ("Saturday", "Sunday")]
-    if weekend:
-        raise SystemExit(f"Calendar contains weekend days: {weekend}")
+def sort_artifacts(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """By (day, timestamp, doc_id); rows without a timestamp last within their day; dayUnknown last."""
+    def key(row: dict[str, Any]) -> tuple[Any, ...]:
+        stamp = row["timestamp_utc"]
+        has_stamp = isinstance(stamp, pd.Timestamp) and not pd.isna(stamp)
+        return (row["day"] is None, row["day"] or 0, not has_stamp, stamp.value if has_stamp else 0, row["doc_id"])
+    return sorted(records, key=key)
 
 
 # ---------------------------------------------------------------- departures
@@ -459,17 +678,13 @@ def write_jsonl(records: list[dict[str, Any]], path: Path) -> None:
     print(f"  wrote {path.relative_to(REPO_ROOT)} ({len(records)} rows)")
 
 
-def frame_records(df: pd.DataFrame, optional: tuple[str, ...] = ()) -> list[dict[str, Any]]:
-    """DataFrame -> dicts. Columns in `optional` are left out of rows where they are missing."""
+def frame_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """DataFrame -> dicts, with missing scalars (NaN, NaT) turned into None."""
     records = []
     for record in df.to_dict(orient="records"):
         clean = {}
         for key, value in record.items():
-            if is_missing(value):
-                if key in optional:
-                    continue
-                value = None
-            clean[key] = value
+            clean[key] = None if is_missing(value) else value
         records.append(clean)
     return records
 
@@ -481,20 +696,25 @@ def write_json(data: Any, path: Path) -> None:
 
 def write_stats(
     df: pd.DataFrame,
-    artifacts: pd.DataFrame,
+    artifacts: list[dict[str, Any]],
+    tag_report: list[dict[str, Any]],
     inference: list[dict[str, Any]],
     stripped: Counter[str],
     calendar: dict[str, Any],
+    remap: dict[str, Any],
     path: Path,
 ) -> None:
     """Summary of the corpus. Actor and department figures come from artifacts only."""
     categories = df["category"].fillna("(none)").value_counts()
-    doc_types = artifacts["doc_type"].value_counts()
-    actors = sorted({actor for row in artifacts["actors"] for actor in row})
-    depts = sorted({d for d in artifacts["dept"].dropna() if str(d).strip()})
-    known_days = [int(d) for d in artifacts["day"] if not is_missing(d)]
-    recovered = int(artifacts["source_category"].isna().sum())
-    first, last = calendar["days"][0], calendar["days"][-1]
+    doc_types = Counter(row["doc_type"] for row in artifacts)
+    actors = sorted({actor for row in artifacts for actor in row["actors"]})
+    depts = sorted({row["dept"] for row in artifacts if row["dept"] and str(row["dept"]).strip()})
+    recovered = sum(row["source_category"] is None for row in artifacts)
+    per_day = Counter(row["day"] for row in artifacts)
+    inferred = Counter(row.get("dayInferred", "(none: genuine day)") for row in artifacts)
+    unknown = sum(row.get("dayUnknown") is True for row in artifacts)
+    date_by_day = {d["day"]: d["date"] for d in calendar["days"]}
+    widest = max(per_day[d] for d in range(0, calendar["lastDay"] + 1)) or 1
 
     lines = [
         "# OrgForge corpus stats",
@@ -502,17 +722,16 @@ def write_stats(
         f"Generated by `scripts/prepare_orgforge.py` from `{REPO_ID}`.",
         "",
         f"- Total rows: **{len(df)}**",
-        f"- Artifacts written: **{len(artifacts)}** "
-        f"({len(artifacts) - recovered} with category `artifact` + {recovered} recovered "
-        f"`{', '.join(sorted(RECOVERED_ARTIFACT_DOC_TYPES))}`)",
-        f"- Day range, all rows: **{df['day'].min()} to {df['day'].max()}**",
-        f"- Day range, artifacts: **{min(known_days)} to {max(known_days)}**",
-        f"- Calendar: day {first['day']} = {first['date']} ({first['weekday']}) "
-        f"to day {last['day']} = {last['date']} ({last['weekday']}), business days only",
+        f"- Artifacts written: **{len(artifacts)}** ({len(artifacts) - recovered} with category `artifact` "
+        f"+ {recovered} recovered `{', '.join(sorted(RECOVERED_ARTIFACT_DOC_TYPES))}`)",
+        f"- Simulated period: day {calendar['firstDay']} = **{calendar['firstDate']}** to "
+        f"day {calendar['lastDay']} = **{calendar['lastDate']}** (business days only)",
         f"- Distinct actors in artifacts: **{len(actors)}**",
-        f"- Artifacts with no timestamp: **{len(inference)}** "
-        f"({sum(r['day'] is not None for r in inference)} day inferred, "
-        f"{sum(r['day'] is None for r in inference)} dayUnknown)",
+        f"- Weekend dates mapped to the previous business day: **{len(remap['nearest_weekend'])}**; "
+        f"dates after the last simulated date mapped to day {calendar['lastDay']}: "
+        f"**{len(remap['nearest_after_end'])}** {remap['nearest_after_end']}",
+        f"- Genuine day >= 1 rows whose date disagrees with the calendar (left unchanged): "
+        f"**{len(remap['genuine_mismatches'])}**",
         "",
         "## Rows by category",
         "",
@@ -524,14 +743,36 @@ def write_stats(
         "",
         "| doc_type | Rows |",
         "| --- | ---: |",
-        *[f"| {t} | {n} |" for t, n in doc_types.items()],
+        *[f"| {t} | {n} |" for t, n in doc_types.most_common()],
         "",
-        "## Inferred days",
+        "## Artifacts by dayInferred",
+        "",
+        "| dayInferred | Rows |",
+        "| --- | ---: |",
+        *[f"| {k} | {n} |" for k, n in inferred.most_common()],
+        f"| (dayUnknown) | {unknown} |",
+        "",
+        "## Artifacts per day",
+        "",
+        "| Day | Date | Artifacts | |",
+        "| ---: | --- | ---: | --- |",
+        *[f"| {d} | {date_by_day.get(d, '-')} | {per_day[d]} | {'#' * round(40 * per_day[d] / widest)} |"
+          for d in range(0, calendar["lastDay"] + 1)],
+        f"| null | - | {per_day[None]} | (dayUnknown) |",
+        "",
+        "## Rows with no date or timestamp",
         "",
         "| doc_id | doc_type | day | inferred from |",
         "| --- | --- | ---: | --- |",
         *[f"| {r['doc_id']} | {r['doc_type']} | {'null' if r['day'] is None else r['day']} | "
           f"{r['inferredFrom'] or 'dayUnknown'} |" for r in inference],
+        "",
+        "## Tags (allowlist `KEPT_TAGS`)",
+        "",
+        "| Tag | Count | Verdict | Reason |",
+        "| --- | ---: | --- | --- |",
+        *[f"| `{t['tag']}` | {t['count']} | {'keep' if t['keep'] else '**drop**'} | {t['reason']} |"
+          for t in tag_report],
         "",
         "## Ground-truth keys stripped from artifact facts",
         "",
@@ -563,9 +804,41 @@ def self_check() -> None:
     """Re-read the written files and assert the safety rules. Exits non-zero on failure."""
     print("\nSelf-check (re-reading written files):")
     artifacts = read_jsonl(DATA_DIR / "artifacts.jsonl")
+    cal = CalendarIndex(json.loads((DATA_DIR / "calendar.json").read_text(encoding="utf-8")))
     artifact_ids = {row["doc_id"] for row in artifacts}
 
-    # 1. No answer-key row (anything with a doc_id under answer_key/, raw/ excluded) is an artifact.
+    # 1. Tags come only from the allowlist.
+    bad_tags = sorted({tag for row in artifacts for tag in row["tags"] if tag not in KEPT_TAGS})
+    report_check(not bad_tags, "no tag outside KEPT_TAGS appears in artifacts.jsonl", bad_tags)
+
+    # 2. Day 0 only for documents older than the simulation.
+    bad_zero = [row["doc_id"] for row in artifacts if row["day"] == 0 and not (
+        row.get("dayInferred") == "pre-sim"
+        or ("dayInferred" not in row and (d := row_date(row["date"], row["timestamp_utc"])) and d < cal.first_date)
+    )]
+    report_check(not bad_zero, "no artifact has day 0 unless it pre-dates the simulation", bad_zero)
+
+    # 3. Day agrees with calendar.json for every dated row. Genuine day >= 1 rows that
+    #    disagree are left unchanged by design (rule 3) and are listed, not failed.
+    inconsistent, left_unchanged = [], []
+    for row in artifacts:
+        when = row_date(row["date"], row["timestamp_utc"])
+        if when is None:
+            continue
+        if when < cal.first_date:
+            expected = 0
+        elif when in cal.day_by_date:
+            expected = cal.day_by_date[when]
+        else:
+            expected = cal.nearest_previous_day(when)
+        if row["day"] != expected:
+            genuine = "dayInferred" not in row and isinstance(row["day"], int) and row["day"] >= 1
+            (left_unchanged if genuine else inconsistent).append(row["doc_id"])
+    report_check(not inconsistent, f"every artifact with a date has a day consistent with calendar.json "
+                                   f"({len(left_unchanged)} genuine day>=1 rows left unchanged by rule: "
+                                   f"{', '.join(left_unchanged)})", inconsistent)
+
+    # 4. No answer-key row (anything with a doc_id under answer_key/, raw/ excluded) is an artifact.
     answer_ids: set[str] = set()
     for path in sorted(ANSWER_KEY_DIR.glob("*.jsonl")):
         answer_ids.update(row["doc_id"] for row in read_jsonl(path) if "doc_id" in row)
@@ -573,11 +846,11 @@ def self_check() -> None:
     report_check(not overlap, f"no doc_id shared between artifacts.jsonl and answer_key/*.jsonl "
                               f"({len(artifact_ids)} vs {len(answer_ids)} ids)", overlap)
 
-    # 2. No stripped facts key survived.
+    # 5. No stripped facts key survived.
     leftovers = sorted({key for row in artifacts for key in row["facts"] if key in STRIPPED_FACTS_KEYS})
     report_check(not leftovers, "no stripped facts key remains in artifacts.jsonl", leftovers)
 
-    # 3. Every artifact has an integer day, or is explicitly marked dayUnknown.
+    # 6. Every artifact has an integer day, or is explicitly marked dayUnknown.
     bad_days = [row["doc_id"] for row in artifacts
                 if not (isinstance(row["day"], int) or row.get("dayUnknown") is True)]
     report_check(not bad_days, "every artifact has an integer day or dayUnknown: true", bad_days)
@@ -613,26 +886,37 @@ def main() -> None:
     df["timestamp_utc"] = df["timestamp"].map(parse_timestamp)
 
     report_categories(df)
-    artifacts, answer_key = split_artifacts(df)
-    artifacts = dedupe_latest(artifacts)
+    artifact_frame, answer_key = split_artifacts(df)
+    artifact_frame = dedupe_latest(artifact_frame)
 
-    print_facts_inventory(facts_key_inventory(artifacts))
-    artifacts, stripped = strip_ground_truth(artifacts)
+    print_facts_inventory(facts_key_inventory(artifact_frame))
+    artifact_frame, stripped = strip_ground_truth(artifact_frame)
 
-    dated, undated, inference = infer_days(artifacts)
+    # From here on each artifact is a plain dict, so the day rules read row by row.
+    artifacts = frame_records(artifact_frame)
+    for row in artifacts:
+        row["day"] = int(row["day"])
+        row["date_value"] = row_date(row["date"], row["timestamp_utc"])  # working field, not written
+
+    # 1. Tags allowlist.
+    tag_report = tag_inventory(artifacts)
+    print_tag_report(tag_report)
+    filter_tags(artifacts)
+
+    # 2. Calendar from trustworthy rows. 3. Remap day 0. 4. Infer the undated rows.
+    calendar = build_calendar(artifacts)
+    remap = remap_day_zero(artifacts, CalendarIndex(calendar))
+    inference = infer_days(artifacts)
     print_inference_table(inference)
-    calendar = build_calendar(dated)
 
-    # Dated rows sorted by time (doc_id breaks ties); undated rows go at the end.
-    dated = dated.sort_values(["timestamp_utc", "doc_id"], kind="stable")
-    artifacts = pd.concat([dated, undated], ignore_index=True)
-    # Mixing ints with None makes pandas store days as floats (11.0); force real ints.
-    artifacts["day"] = pd.Series([None if is_missing(d) else int(d) for d in artifacts["day"]], dtype="object")
+    # 5. Sort by (day, timestamp), dayUnknown last.
+    artifacts = sort_artifacts(artifacts)
+    for row in artifacts:
+        del row["date_value"]
     answer_key = answer_key.sort_values(["timestamp_utc", "doc_id"], na_position="last", kind="stable")
 
     print("\nWriting:")
-    write_jsonl(frame_records(artifacts, optional=("dayInferred", "inferredFrom", "dayUnknown")),
-                DATA_DIR / "artifacts.jsonl")
+    write_jsonl(artifacts, DATA_DIR / "artifacts.jsonl")
     write_json(calendar, DATA_DIR / "calendar.json")
     write_jsonl(frame_records(answer_key), ANSWER_KEY_DIR / "sim_events.jsonl")
 
@@ -648,7 +932,7 @@ def main() -> None:
     write_json(people, ANSWER_KEY_DIR / "departures.json")
     write_jsonl(events, ANSWER_KEY_DIR / "gap_events.jsonl")
 
-    write_stats(df, artifacts, inference, stripped, calendar, DATA_DIR / "stats.md")
+    write_stats(df, artifacts, tag_report, inference, stripped, calendar, remap, DATA_DIR / "stats.md")
     print_departures(people)
     self_check()
 
