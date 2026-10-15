@@ -14,10 +14,10 @@ simulates "what if this person leaves", and proposes actions a human approves.
 | Path | What it is |
 | --- | --- |
 | `apps/api` | NestJS 11 API (port 4000). The only thing that talks to FalkorDB. |
-| `apps/web` | Next.js 15 web app (port 3001). |
+| `apps/web` | Next.js 15 web app (port 3000). |
 | `packages/shared` | Zod schemas and types shared by both apps. |
 | `scripts/` | Python data prep. |
-| `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3000) and Redis for BullMQ (6380). |
+| `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3100) and Redis for BullMQ (6380). |
 | `docker-compose.prod.yml` | Production stack (completed in Stage 14). |
 
 ## Quick start
@@ -26,10 +26,10 @@ simulates "what if this person leaves", and proposes actions a human approves.
 cp .env.example .env          # then set FALKOR_PASSWORD
 docker compose up -d          # FalkorDB + Redis
 pnpm install
-pnpm dev                      # API on :4000, web on :3001
+pnpm dev                      # API on :4000, web on :3000
 ```
 
-Open http://localhost:3001 for the status page, http://localhost:3000 for the
+Open http://localhost:3000 for the status page, http://localhost:3100 for the
 FalkorDB Browser.
 
 | Command | What it does |
