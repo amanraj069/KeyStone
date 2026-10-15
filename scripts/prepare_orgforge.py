@@ -361,22 +361,17 @@ def filter_tags(records: list[dict[str, Any]]) -> None:
 # ---------------------------------------------------------------- calendar
 
 
-def row_date(date_value: Any, timestamp_utc: Any) -> date | None:
+def row_date(date_value: Any) -> date | None:
     """
-    The calendar date of a row: the `date` column, or else the date part of the
-    timestamp. The `date` column wins because it always agrees with `day` on
-    day >= 1 rows, while timestamps often run a few days later.
+    The calendar date of a row, from the `date` column ONLY. It always agrees
+    with `day` on genuine day >= 1 rows, while timestamps and Slack doc_ids can
+    run 1-12 days later, so timestamps are used only to order rows within a day.
+    (Every artifact that has a timestamp also has a date.)
     """
-    text = clean_text(date_value)
     try:
-        return date.fromisoformat(text)
+        return date.fromisoformat(clean_text(date_value))
     except ValueError:
-        pass
-    if isinstance(timestamp_utc, pd.Timestamp) and not pd.isna(timestamp_utc):
-        return timestamp_utc.date()
-    if isinstance(timestamp_utc, str) and timestamp_utc:
-        return date.fromisoformat(timestamp_utc[:10])
-    return None
+        return None
 
 
 def add_business_days(start: date, count: int) -> date:
@@ -391,14 +386,17 @@ def add_business_days(start: date, count: int) -> date:
 
 def build_calendar(records: list[dict[str, Any]]) -> dict[str, Any]:
     """
-    day -> date -> weekday, from trustworthy rows only: artifacts with day >= 1
-    that have a date. Majority date per day; conflicts are printed. Missing days
+    day -> date -> weekday, from trustworthy rows only: genuine artifacts with
+    day >= 1 that have a date. Recovered rows (RECOVERED_ARTIFACT_DOC_TYPES) are
+    excluded because their days are placeholders. Majority date per day;
+    conflicts are printed. Missing days
     are filled by business-day arithmetic, and every known day must agree with
     that arithmetic or the script stops.
     """
     votes: dict[int, Counter[date]] = {}
     for row in records:
-        if isinstance(row["day"], int) and row["day"] >= 1 and row["date_value"] is not None:
+        trustworthy = row["source_category"] is not None  # not a recovered row
+        if trustworthy and isinstance(row["day"], int) and row["day"] >= 1 and row["date_value"] is not None:
             votes.setdefault(row["day"], Counter())[row["date_value"]] += 1
 
     anchors: dict[int, date] = {}
@@ -429,7 +427,8 @@ def build_calendar(records: list[dict[str, Any]]) -> dict[str, Any]:
     print(f"\nCalendar: day {first_day} = {days[0]['date']} ({days[0]['weekday']}) .. day {last_day} = "
           f"{days[-1]['date']} ({days[-1]['weekday']}); {len(anchors)} days from data, {len(filled)} filled {filled}")
     return {
-        "source": "artifacts.jsonl rows with day >= 1 and a date (majority per day); gaps filled by business days",
+        "source": "genuine artifacts.jsonl rows with day >= 1 and a date (majority per day); "
+                  "gaps filled by business days",
         "note": "Day numbers are business days (weekends skipped). Convert only through this file.",
         "firstDay": first_day,
         "lastDay": last_day,
@@ -449,51 +448,60 @@ class CalendarIndex:
         self.date_by_day = {d["day"]: date.fromisoformat(d["date"]) for d in calendar["days"]}
 
     def nearest_previous_day(self, when: date) -> int:
-        """The calendar day on or before `when` (weekends -> Friday, after the end -> last day)."""
+        """The calendar day just before a weekend date (Saturday/Sunday -> Friday)."""
         return max(day for d, day in self.day_by_date.items() if d <= when)
 
 
 # ---------------------------------------------------------------- day remapping
 
 
-def remap_day_zero(records: list[dict[str, Any]], cal: CalendarIndex) -> dict[str, Any]:
+def remap_days(records: list[dict[str, Any]], cal: CalendarIndex) -> dict[str, Any]:
     """
-    Most Slack and Confluence rows sit at day 0 but carry real dates. Move each
-    one to its calendar day. Rows with day >= 1 are only checked, never changed.
+    Fix days the dataset got wrong, using each row's date and the calendar:
+      - date after the last simulated date: that is the dataset's generation
+        date, not a document date. Keep it as rawDate, clear `date`, and let
+        infer_days() place the row like any other undated row.
+      - day 0 (most Slack and Confluence rows) and recovered rows (placeholder
+        days such as 30): move to the date's calendar day, dayInferred "calendar".
+        A weekend date goes to the previous business day ("calendar-nearest");
+        a date before the simulation keeps day 0 ("pre-sim").
+      - genuine day >= 1 rows are only checked, never changed.
     Returns a summary for stats.md.
     """
-    nearest_weekend, nearest_after_end, mismatches = [], [], []
+    post_sim, weekend, mismatches = [], [], []
     for row in records:
         when = row["date_value"]
         if when is None:
-            continue  # the rows with no date at all; handled by infer_days()
-        if row["day"] == 0:
-            if when < cal.first_date:
-                row["dayInferred"] = "pre-sim"  # a document older than the simulation keeps day 0
-            elif when in cal.day_by_date:
-                set_inferred_day(row, cal.day_by_date[when], "calendar")
-            else:
-                set_inferred_day(row, cal.nearest_previous_day(when), "calendar-nearest")
-                (nearest_after_end if when > cal.last_date else nearest_weekend).append(row["doc_id"])
-        elif isinstance(row["day"], int) and row["day"] >= 1 and cal.date_by_day.get(row["day"]) != when:
-            mismatches.append(row)
+            continue  # no date at all; handled by infer_days()
+        if when > cal.last_date:
+            row["rawDate"] = row["date"]
+            row["date"] = None
+            row["date_value"] = None
+            post_sim.append(row["doc_id"])
+            continue
+        needs_remap = row["day"] == 0 or row["source_category"] is None
+        if not needs_remap:
+            if cal.date_by_day.get(row["day"]) != when:
+                mismatches.append(row)
+        elif when < cal.first_date:
+            row["dayInferred"] = "pre-sim"  # a document older than the simulation keeps day 0
+        elif when in cal.day_by_date:
+            set_inferred_day(row, cal.day_by_date[when], "calendar")
+        else:
+            set_inferred_day(row, cal.nearest_previous_day(when), "calendar-nearest")
+            weekend.append(row["doc_id"])
 
-    if mismatches:
-        print(f"\n{len(mismatches)} genuine day >= 1 rows disagree with the calendar (left unchanged):")
-        for row in mismatches:
-            print(f"  {row['doc_id']:<16} {row['doc_type']:<12} day {row['day']} "
-                  f"(= {cal.date_by_day.get(row['day'])}) but date {row['date_value']}")
-    print(f"calendar-nearest mappings: {len(nearest_weekend)} weekend, "
-          f"{len(nearest_after_end)} after the last simulated date {nearest_after_end}")
-    return {
-        "nearest_weekend": nearest_weekend,
-        "nearest_after_end": nearest_after_end,
-        "genuine_mismatches": [r["doc_id"] for r in mismatches],
-    }
+    for row in mismatches:
+        print(f"  MISMATCH {row['doc_id']:<16} {row['doc_type']:<12} day {row['day']} "
+              f"(= {cal.date_by_day.get(row['day'])}) but date {row['date_value']}")
+    print(f"\nRemap: {len(post_sim)} post-simulation dates cleared {post_sim}; "
+          f"{len(weekend)} weekend dates -> previous business day; "
+          f"{len(mismatches)} genuine rows disagree with the calendar")
+    return {"post_sim": post_sim, "nearest_weekend": weekend, "genuine_mismatches": [r["doc_id"] for r in mismatches]}
 
 
 def set_inferred_day(row: dict[str, Any], day: int | None, how: str, source: str | None = None) -> None:
-    """Record a corrected day, remembering that the dataset said day 0."""
+    """Record a corrected day, remembering the day the dataset gave (originalDay)."""
     row["originalDay"] = row["day"]
     row["day"] = day
     row["dayInferred"] = how
@@ -542,7 +550,8 @@ def sprint_last_days(records: list[dict[str, Any]]) -> dict[int, tuple[int, int]
 
 def infer_days(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Rows with no date and no timestamp have a meaningless `day: 0`. Re-derive
+    Rows with no usable date (none at all, or a post-simulation date cleared
+    by remap_days) have a meaningless day. Re-derive
     their day from the (already corrected) days of OTHER artifacts only:
       1. link: artifacts it links to or that link to it (artifact_ids,
          facts.causal_chain); the earliest linked day wins.
@@ -579,7 +588,7 @@ def infer_days(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def print_inference_table(results: list[dict[str, Any]]) -> None:
-    print(f"\nDay inference for {len(results)} artifacts with no date or timestamp:")
+    print(f"\nDay inference for {len(results)} artifacts with no usable date:")
     print(f"  {'doc_id':<16} {'doc_type':<14} {'day':>5}  inferred from")
     for r in results:
         day = "null" if r["day"] is None else str(r["day"])
@@ -711,8 +720,10 @@ def write_stats(
     depts = sorted({row["dept"] for row in artifacts if row["dept"] and str(row["dept"]).strip()})
     recovered = sum(row["source_category"] is None for row in artifacts)
     per_day = Counter(row["day"] for row in artifacts)
-    inferred = Counter(row.get("dayInferred", "(none: genuine day)") for row in artifacts)
-    unknown = sum(row.get("dayUnknown") is True for row in artifacts)
+    inferred = Counter(
+        row.get("dayInferred") or ("(dayUnknown)" if row.get("dayUnknown") else "(none: genuine day)")
+        for row in artifacts
+    )
     date_by_day = {d["day"]: d["date"] for d in calendar["days"]}
     widest = max(per_day[d] for d in range(0, calendar["lastDay"] + 1)) or 1
 
@@ -727,9 +738,9 @@ def write_stats(
         f"- Simulated period: day {calendar['firstDay']} = **{calendar['firstDate']}** to "
         f"day {calendar['lastDay']} = **{calendar['lastDate']}** (business days only)",
         f"- Distinct actors in artifacts: **{len(actors)}**",
-        f"- Weekend dates mapped to the previous business day: **{len(remap['nearest_weekend'])}**; "
-        f"dates after the last simulated date mapped to day {calendar['lastDay']}: "
-        f"**{len(remap['nearest_after_end'])}** {remap['nearest_after_end']}",
+        f"- Weekend dates mapped to the previous business day: **{len(remap['nearest_weekend'])}**",
+        f"- Post-simulation dates treated as no date (kept as `rawDate`): "
+        f"**{len(remap['post_sim'])}** {remap['post_sim']}",
         f"- Genuine day >= 1 rows whose date disagrees with the calendar (left unchanged): "
         f"**{len(remap['genuine_mismatches'])}**",
         "",
@@ -750,7 +761,6 @@ def write_stats(
         "| dayInferred | Rows |",
         "| --- | ---: |",
         *[f"| {k} | {n} |" for k, n in inferred.most_common()],
-        f"| (dayUnknown) | {unknown} |",
         "",
         "## Artifacts per day",
         "",
@@ -760,7 +770,7 @@ def write_stats(
           for d in range(0, calendar["lastDay"] + 1)],
         f"| null | - | {per_day[None]} | (dayUnknown) |",
         "",
-        "## Rows with no date or timestamp",
+        "## Rows with no usable date",
         "",
         "| doc_id | doc_type | day | inferred from |",
         "| --- | --- | ---: | --- |",
@@ -814,29 +824,28 @@ def self_check() -> None:
     # 2. Day 0 only for documents older than the simulation.
     bad_zero = [row["doc_id"] for row in artifacts if row["day"] == 0 and not (
         row.get("dayInferred") == "pre-sim"
-        or ("dayInferred" not in row and (d := row_date(row["date"], row["timestamp_utc"])) and d < cal.first_date)
+        or ("dayInferred" not in row and (d := row_date(row["date"])) and d < cal.first_date)
     )]
     report_check(not bad_zero, "no artifact has day 0 unless it pre-dates the simulation", bad_zero)
 
-    # 3. Day agrees with calendar.json for every dated row. Genuine day >= 1 rows that
-    #    disagree are left unchanged by design (rule 3) and are listed, not failed.
-    inconsistent, left_unchanged = [], []
+    # 3. Day agrees with calendar.json for every row that has a date. No exceptions.
+    inconsistent = []
     for row in artifacts:
-        when = row_date(row["date"], row["timestamp_utc"])
+        when = row_date(row["date"])
         if when is None:
             continue
         if when < cal.first_date:
             expected = 0
         elif when in cal.day_by_date:
             expected = cal.day_by_date[when]
-        else:
+        elif when.weekday() >= 5 and when < cal.last_date:
             expected = cal.nearest_previous_day(when)
+        else:
+            expected = None  # a post-simulation date must have been cleared into rawDate
         if row["day"] != expected:
-            genuine = "dayInferred" not in row and isinstance(row["day"], int) and row["day"] >= 1
-            (left_unchanged if genuine else inconsistent).append(row["doc_id"])
-    report_check(not inconsistent, f"every artifact with a date has a day consistent with calendar.json "
-                                   f"({len(left_unchanged)} genuine day>=1 rows left unchanged by rule: "
-                                   f"{', '.join(left_unchanged)})", inconsistent)
+            inconsistent.append(f"{row['doc_id']} (day {row['day']}, date {when})")
+    report_check(not inconsistent, "every artifact with a date has a day consistent with calendar.json "
+                                   "(expected disagreements: 0)", inconsistent)
 
     # 4. No answer-key row (anything with a doc_id under answer_key/, raw/ excluded) is an artifact.
     answer_ids: set[str] = set()
@@ -896,16 +905,16 @@ def main() -> None:
     artifacts = frame_records(artifact_frame)
     for row in artifacts:
         row["day"] = int(row["day"])
-        row["date_value"] = row_date(row["date"], row["timestamp_utc"])  # working field, not written
+        row["date_value"] = row_date(row["date"])  # working field, not written
 
     # 1. Tags allowlist.
     tag_report = tag_inventory(artifacts)
     print_tag_report(tag_report)
     filter_tags(artifacts)
 
-    # 2. Calendar from trustworthy rows. 3. Remap day 0. 4. Infer the undated rows.
+    # 2. Calendar from trustworthy rows. 3. Remap wrong days. 4. Infer the undated rows.
     calendar = build_calendar(artifacts)
-    remap = remap_day_zero(artifacts, CalendarIndex(calendar))
+    remap = remap_days(artifacts, CalendarIndex(calendar))
     inference = infer_days(artifacts)
     print_inference_table(inference)
 

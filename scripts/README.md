@@ -79,20 +79,24 @@ direction (`inbound`), department (`hr_ops`), sender (`nora`) or work type
 tag not listed is dropped by default. The script prints the full keep/drop
 table before writing; `stats.md` keeps a copy.
 
-**Day 0 remapped through the calendar.** The dataset puts most Slack and
-Confluence rows at `day: 0` even though they carry real dates. Each row's date
-is its `date` column (or, if empty, the date part of its timestamp). Then:
+**Days remapped through the calendar.** The `date` column is the source of
+truth for `day`; timestamps (and Slack doc_ids) can run 1-12 days later and
+only order rows within a day. The dataset puts most Slack and Confluence rows at
+`day: 0`, and the recovered invoices and NPS surveys on a placeholder day 30,
+even though they carry real dates. So:
 
 | Case | Result |
 | --- | --- |
-| day 0, date is a simulated business day | `day` = that day, `dayInferred: "calendar"`, `originalDay: 0` |
-| day 0, date before the first simulated date | stays day 0, `dayInferred: "pre-sim"` |
-| day 0, date on a weekend or after the last simulated date | previous calendar day, `dayInferred: "calendar-nearest"` |
-| genuine day >= 1 | checked against the calendar; mismatches printed, never changed |
+| date after the last simulated date (the dataset's generation date) | treated as no date: kept as `rawDate`, `date` cleared, row goes through the inference below |
+| day 0 or recovered row, date is a simulated business day | `day` = that day, `dayInferred: "calendar"`, `originalDay` = old day |
+| day 0 or recovered row, date before the first simulated date | stays day 0, `dayInferred: "pre-sim"` |
+| day 0 or recovered row, date on a weekend | previous business day, `dayInferred: "calendar-nearest"` |
+| genuine day >= 1 | checked against the calendar; any mismatch fails the self-check |
 
-**Rows with no date at all.** 17 artifacts (12 Datadog alerts, 5 sprint
-retros) have neither a date nor a timestamp. After the remap, their day is
-re-derived **only from other artifacts' corrected days**:
+**Rows with no usable date.** 19 artifacts: 12 Datadog alerts and 5 sprint
+retros with neither date nor timestamp, plus 2 rows whose only date was
+post-simulation (`CONF-RETRO-001`, `NPS-85B237FD`). Their day is re-derived
+**only from other artifacts' corrected days**:
 
 1. `link`: an artifact it links to, or that links to it, via `artifact_ids` or
    `facts.causal_chain`; the earliest linked day wins (an alert fires before or
@@ -102,7 +106,7 @@ re-derived **only from other artifacts' corrected days**:
 3. Otherwise `day: null` and `dayUnknown: true`.
 
 These rows carry `dayInferred` (`"link"` or `"sprint"`), `inferredFrom` (a
-`doc_id` or the sprint rule) and `originalDay: 0`.
+`doc_id` or the sprint rule) and `originalDay`.
 
 **Order.** `artifacts.jsonl` is sorted by (day, timestamp, doc_id); rows without
 a timestamp come last within their day, and `dayUnknown` rows come last overall.
@@ -113,7 +117,7 @@ seconds, and the odd Unicode hyphen; `timestamp_utc` normalises them all.
 ### Calendar
 
 `data/calendar.json` is built only from trustworthy rows: artifacts with a
-genuine day >= 1 and a date. For each day the majority date wins (conflicts are
+genuine day >= 1 and a date (recovered rows are excluded, their days are placeholders). For each day the majority date wins (conflicts are
 printed). Missing days would be filled by business-day arithmetic, and every
 day that has data must agree with that arithmetic or the script stops. It
 records `firstDay`/`firstDate` and `lastDay`/`lastDate`.
@@ -129,7 +133,7 @@ The script ends by re-reading what it wrote and fails loudly unless:
 - no tag outside `KEPT_TAGS` appears in `artifacts.jsonl`;
 - no artifact has day 0 unless it pre-dates the simulation;
 - every artifact with a date has a day consistent with `calendar.json`
-  (genuine day >= 1 rows that disagree are listed, as rule 3 leaves them unchanged);
+  (expected disagreements: 0);
 - no `doc_id` is in both `artifacts.jsonl` and `answer_key/*.jsonl`;
 - no `STRIPPED_FACTS_KEYS` key remains in artifact `facts`;
 - every artifact has an integer day or `dayUnknown: true`.
