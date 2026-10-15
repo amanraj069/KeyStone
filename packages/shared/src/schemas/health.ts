@@ -13,6 +13,8 @@ export const GraphMemorySchema = z.object({
 export const MemoryReportSchema = z.object({
   // used_memory_human from INFO memory, e.g. "3.21M".
   usedMemoryHuman: z.string().nullable(),
+  // used_memory from INFO memory, converted from bytes to MB (for budgets).
+  usedMemoryMb: z.number().nullable(),
   graphs: z.array(GraphMemorySchema),
 });
 export type MemoryReport = z.infer<typeof MemoryReportSchema>;

@@ -7,5 +7,7 @@ module.exports = {
   roots: ['<rootDir>/test'],
   testRegex: '\\.int-spec\\.ts$',
   setupFiles: ['<rootDir>/test/load-env.ts'],
+  // Deletes any leftover test_* graphs after the whole suite.
+  globalTeardown: '<rootDir>/test/global-teardown.ts',
   testTimeout: 20000,
 };

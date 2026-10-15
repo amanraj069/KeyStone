@@ -3,7 +3,7 @@ import type { RedisService } from '../redis/redis.service';
 import { HealthController } from './health.controller';
 
 describe('HealthController', () => {
-  const memory = { usedMemoryHuman: '1.00M', graphs: [] };
+  const memory = { usedMemoryHuman: '1.00M', usedMemoryMb: 1, graphs: [] };
 
   function makeController(graph: Partial<GraphService>, redis: Partial<RedisService>) {
     return new HealthController(graph as GraphService, redis as RedisService);

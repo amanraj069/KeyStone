@@ -30,7 +30,13 @@ export const EnvSchema = z
       .transform((raw) => raw.split(',').map((key) => key.trim()).filter((key) => key.length > 0)),
     GEMINI_MODEL: z.string().min(1).default('gemini-2.5-flash'),
     GEMINI_EMBED_MODEL: z.string().min(1).default('gemini-embedding-001'),
-    EMBED_DIM: z.coerce.number().int().positive().default(768),
+    // Interpolated into the vector index DDL (it cannot be a parameter), so it
+    // must be a validated integer in a sane range.
+    EMBED_DIM: z.coerce.number().int().min(1).max(4096).default(768),
+
+    // Memory guard for ingestion stages; both below the container's 4 GB limit.
+    MEMORY_WARN_MB: z.coerce.number().int().positive().default(3000),
+    MEMORY_MAX_MB: z.coerce.number().int().positive().default(3600),
 
     // TextStore: where artifact bodies and chunk text live (never in the graph).
     TEXT_STORE: z.enum(['local', 's3']).default('local'),
@@ -40,6 +46,10 @@ export const EnvSchema = z
     // HTTP.
     WEB_ORIGIN: z.url().default('http://localhost:3001'),
     API_BASE_URL: z.url().default('http://localhost:4000'),
+  })
+  .refine((env) => env.MEMORY_WARN_MB < env.MEMORY_MAX_MB, {
+    message: 'MEMORY_WARN_MB must be lower than MEMORY_MAX_MB',
+    path: ['MEMORY_WARN_MB'],
   })
   .refine((env) => env.TEXT_STORE !== 's3' || env.S3_BUCKET !== undefined, {
     message: 'S3_BUCKET is required when TEXT_STORE=s3',
