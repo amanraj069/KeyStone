@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { CatalogService } from '../catalog/catalog.service';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import { MIN_KNOWS_SCORE } from './analytics.constants';
@@ -19,6 +20,8 @@ export interface RefreshSummary {
   asOfDay: number;
   knows: number;
   collab: number;
+  systems: number;
+  coreSystems: number;
   distribution: ScoreDistribution;
   ms: number;
 }
@@ -31,7 +34,10 @@ export interface RefreshSummary {
 export class ExpertiseService {
   private readonly logger = new Logger(ExpertiseService.name);
 
-  constructor(private readonly graph: GraphService) {}
+  constructor(
+    private readonly graph: GraphService,
+    private readonly catalog: CatalogService,
+  ) {}
 
   async refresh(options: { graph?: string; asOfDay?: number } = {}): Promise<RefreshSummary> {
     const started = performance.now();
@@ -53,6 +59,8 @@ export class ExpertiseService {
       asOfDay,
       knows: counts?.knows ?? 0,
       collab: counts?.collab ?? 0,
+      systems: catalog.systems,
+      coreSystems: catalog.core,
       distribution: distribution ?? { n: 0, min: null, p25: null, median: null, p75: null, p90: null, max: null },
       ms: Math.round(performance.now() - started),
     };

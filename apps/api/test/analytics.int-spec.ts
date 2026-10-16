@@ -1,9 +1,8 @@
 import { DONE_STATUSES } from '../src/analytics/analytics.constants';
 import { AnalyticsService } from '../src/analytics/analytics.service';
-import { ExpertiseService } from '../src/analytics/expertise.service';
 import * as Q from '../src/analytics/queries/analytics.queries';
 import { ProjectionService } from '../src/projection/projection.service';
-import { useFixtureGraph } from './graph-test-utils';
+import { fixtureExpertise, useFixtureGraph } from './graph-test-utils';
 
 /**
  * Stage 7 on the mini-company fixture (test/fixtures/mini-company.cypher):
@@ -18,7 +17,7 @@ describe('Stage 7 analytics on the fixture graph', () => {
   let analytics: AnalyticsService;
 
   beforeAll(async () => {
-    const expertise = new ExpertiseService(fx.graph);
+    const expertise = fixtureExpertise(fx.graph);
     const refreshed = await expertise.refresh({ graph: fx.name, asOfDay: 12 });
     // 10 person-system pairs and 6 collaborating pairs, as designed (P-2 has day null and is skipped).
     expect(refreshed).toMatchObject({ asOfDay: 12, knows: 10, collab: 6 });
@@ -54,7 +53,9 @@ describe('Stage 7 analytics on the fixture graph', () => {
     expect(bySystem.LegacyAuth).toMatchObject({ experts: 0, riskLevel: 'orphaned', names: [] });
     expect(bySystem.PaymentsAPI).toMatchObject({ experts: 1, riskLevel: 'critical', names: ['Ada'] });
     expect(bySystem.PaymentsAPI.evidence[0]).toEqual(expect.arrayContaining(['P-1', 'TH-1']));
-    expect(bySystem.TitanDB.riskLevel).toBe('ok');
+    // Expert rule: score >= minScore and >= 25% of the top. Ada leads TitanDB (~9.2), Ben has ~4.9,
+    // Dev only owns T-4 (~0.97 < 2.3), so TitanDB has two experts.
+    expect(bySystem.TitanDB).toMatchObject({ experts: 2, riskLevel: 'watch', names: ['Ada', 'Ben'] });
     expect(rows[0].experts).toBe(0); // ordered by experts ascending
   });
 
@@ -118,7 +119,7 @@ describe('Stage 7 analytics on the fixture graph', () => {
     const summary = await analytics.summary(0.05, fx.name, projection());
     expect(summary).toMatchObject({
       people: { active: 4, inactive: 1 },
-      systems: { orphaned: 1, critical: 1, watch: 0, ok: 2 },
+      systems: { orphaned: 1, critical: 1, watch: 1, ok: 1 }, // TitanDB: watch (see the bus factor test)
       staleDocs: 1,
       openTickets: 2,
     });

@@ -39,7 +39,7 @@ type Row = BatchRow;
 const READ_PAGE = 5000;
 
 /**
- * Builds the small people-and-systems graph (Person, System, KNOWS, COLLAB) that
+ * Builds the small people-and-systems graph (Person, core System, KNOWS, COLLAB) that
  * what-if simulations and benchmarks copy, so they copy a few thousand nodes
  * instead of the whole company. FalkorDB does every aggregation; TypeScript only
  * moves the result rows from one graph to the other.
@@ -61,7 +61,7 @@ export class ProjectionService {
 
     // 1. Read from the source graph. "As of" projections recompute KNOWS and COLLAB read-only.
     const people = await this.readAll(pageSize, source, asOfDay === null ? Q.ACTIVE_PEOPLE : Q.ACTIVE_PEOPLE_AS_OF, { asOfDay });
-    const systems = await this.readAll(pageSize, source, Q.ALL_SYSTEMS);
+    const systems = await this.readAll(pageSize, source, Q.CORE_SYSTEMS);
     const knows =
       asOfDay === null
         ? await this.readAll(pageSize, source, Q.ACTIVE_KNOWS)

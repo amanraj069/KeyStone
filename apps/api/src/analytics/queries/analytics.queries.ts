@@ -94,12 +94,19 @@ export const PERSON_EXISTS = 'MATCH (p:Person {name:$person}) RETURN p.name AS n
 /**
  * K4. Bus factor for every system: active experts at or above $minScore.
  * CHANGE: adds `collect(k.evidence) AS evidence` (one evidence list per expert, in
- * the same order as names) so the response can cite sources, as the stage requires.
+ * the same order as names) so the response can cite sources.
+ * CHANGE: core systems only (WHERE s.core = true). Most extracted systems are
+ * named once or twice; counting them as "orphaned" buried the real risks.
+ * CHANGE: an expert also needs at least $topShare of the system's top score among
+ * active people (MIN_EXPERT_SCORE / EXPERT_SHARE_OF_TOP in analytics.constants.ts).
  */
 export const K4_BUS_FACTOR = `
   MATCH (s:System)
+  WHERE s.core = true
+  OPTIONAL MATCH (s)<-[kt:KNOWS]-(:Person {active:true})
+  WITH s, max(kt.score) AS top
   OPTIONAL MATCH (s)<-[k:KNOWS]-(p:Person {active:true})
-  WHERE k.score >= $minScore
+  WHERE k.score >= $minScore AND k.score >= $topShare * top
   WITH s, count(p) AS experts, collect(p.name) AS names, collect(k.evidence) AS evidence
   RETURN s.name AS system, experts, names, evidence
   ORDER BY experts ASC
@@ -108,11 +115,15 @@ export const K4_BUS_FACTOR = `
 /**
  * Systems per risk level for the dashboard (same rule as K4: 0 orphaned,
  * 1 critical, 2 watch, 3+ ok), counted in FalkorDB rather than in TypeScript.
+ * Core systems only, same expert rule as K4.
  */
 export const RISK_LEVEL_COUNTS = `
   MATCH (s:System)
+  WHERE s.core = true
+  OPTIONAL MATCH (s)<-[kt:KNOWS]-(:Person {active:true})
+  WITH s, max(kt.score) AS top
   OPTIONAL MATCH (s)<-[k:KNOWS]-(p:Person {active:true})
-  WHERE k.score >= $minScore
+  WHERE k.score >= $minScore AND k.score >= $topShare * top
   WITH s, count(p) AS experts
   RETURN sum(CASE WHEN experts = 0 THEN 1 ELSE 0 END) AS orphaned,
          sum(CASE WHEN experts = 1 THEN 1 ELSE 0 END) AS critical,
@@ -125,12 +136,17 @@ export const RISK_LEVEL_COUNTS = `
 /**
  * K5. Systems the leaver knows, and how many active backups each has.
  * CHANGE: adds `k.evidence AS evidence` (the leaver's evidence for the system) for citations.
+ * CHANGE: core systems only (s.core = true), and the same expert rule as K4 for
+ * the leaver and the backups ($minScore and $topShare of the system's top score).
  */
 export const K5_DEPARTURE_SYSTEMS = `
   MATCH (leaver:Person {name:$person})-[k:KNOWS]->(s:System)
-  WHERE k.score >= $minScore
+  WHERE k.score >= $minScore AND s.core = true
+  OPTIONAL MATCH (s)<-[kt:KNOWS]-(:Person {active:true})
+  WITH leaver, k, s, max(kt.score) AS top
+  WHERE k.score >= $topShare * top
   OPTIONAL MATCH (s)<-[k2:KNOWS]-(other:Person {active:true})
-  WHERE other <> leaver AND k2.score >= $minScore
+  WHERE other <> leaver AND k2.score >= $minScore AND k2.score >= $topShare * top
   WITH s, k, count(other) AS backups, collect(other.name) AS backupNames
   RETURN s.name AS system, k.score AS leaverScore, backups, backupNames, k.evidence AS evidence
   ORDER BY backups ASC, leaverScore DESC
@@ -144,6 +160,13 @@ export const K5_DEPARTURE_SYSTEMS = `
  * tickets, so a missing status counts as open ('unknown'), and the comparison is
  * case-insensitive (the data has "To Do"; the test fixture uses "done").
  * Pass $doneStatuses in lower case.
+ * CHANGE: owner fit = sum(k.score * s.idf) instead of sum(k.score). idf
+ * (log(totalArtifacts / (1 + mentionCount)), set by the expertise refresh) makes a
+ * niche system the ticket names count more than one named everywhere, so the
+ * same three generalists no longer top every ticket.
+ * CHANGE: workload penalty, fit / (1 + openTicketsAssigned / 5): someone already
+ * holding 5 open tickets needs twice the fit. Added because, even weighted by idf,
+ * three people took 76% of all suggestions (rule: add it above 40%).
  * CHANGE: also returns ownerEvidence, one list of artifact ids per suggested
  * owner (same order), so a suggestion can be cited. A ticket with no candidate
  * gives cand = null; mapping its evidence to null keeps both lists empty.
@@ -151,9 +174,13 @@ export const K5_DEPARTURE_SYSTEMS = `
 export const K6_DEPARTURE_TICKETS = `
   MATCH (:Person {name:$person})-[asg:ASSIGNED]->(t:Ticket)
   WHERE NOT toLower(coalesce(t.status, asg.status, 'unknown')) IN $doneStatuses
-  OPTIONAL MATCH (t)-[:MENTIONS]->(:System)<-[k:KNOWS]-(cand:Person {active:true})
+  OPTIONAL MATCH (t)-[:MENTIONS]->(s:System)<-[k:KNOWS]-(cand:Person {active:true})
   WHERE cand.name <> $person
-  WITH t, cand, sum(k.score) AS fit, collect(k.evidence) AS evidenceLists
+  WITH t, cand, sum(k.score * s.idf) AS rawFit, collect(k.evidence) AS evidenceLists
+  OPTIONAL MATCH (cand)-[held:ASSIGNED]->(busy:Ticket)
+  WHERE NOT toLower(coalesce(busy.status, held.status, 'unknown')) IN $doneStatuses
+  WITH t, cand, rawFit, evidenceLists, count(busy) AS openTickets
+  WITH t, cand, rawFit / (1 + openTickets / 5.0) AS fit, evidenceLists
   WITH t, cand, fit,
        CASE WHEN cand IS NULL THEN NULL
             ELSE reduce(ids = [], e IN evidenceLists | ids + e)[0..3] END AS evidence

@@ -46,6 +46,8 @@ FalkorDB Browser.
 | `pnpm capability-check` | PASS/FAIL for every FalkorDB feature Keystone needs |
 | `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
 | `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
+| `pnpm reingest-roles` | Rewrite person-artifact role edges from `artifacts.jsonl` (no reset), then refresh expertise |
+| `pnpm systems report` | System catalog: distribution by mentions and authors, top 50, core counts |
 | `pnpm expertise [--as-of N]` | Recompute KNOWS + COLLAB on apex, rebuild `apex_proj`, print the KNOWS score distribution |
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
 | `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
@@ -82,6 +84,22 @@ Every answer is Zod-validated and cached (`DATA_DIR/cache/extract/<doc_id>.json`
 | `pnpm extract --limit 50` | Trial on 50 artifacts spread across types |
 | `pnpm extract [--force] [--refresh]` | Full run (stops above `EXTRACT_MAX_CALLS` unless `--force`) |
 | `POST /extract/run` `{"dryRun":false,"force":false}` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
+
+### System catalog
+
+Extraction names many systems once or twice. The catalog (`apps/api/src/catalog/`)
+writes `mentionCount`, `authorCount`, `core` and `idf` onto every System (refreshed
+with expertise). A system is **core** when at least `CORE_MIN_MENTIONS` (5) artifacts
+mention it, written by at least 2 people; bus factor, departure impact and `apex_proj`
+use core systems only, while every system stays in `apex` for search and citations.
+`idf = log(totalArtifacts / (1 + mentionCount))` makes niche systems count more when
+suggesting ticket owners.
+
+| Command | What it does |
+| --- | --- |
+| `pnpm systems merge [--dry-run]` | Merge names that differ only by case, punctuation, version or a generic last word ("service", "system", "api"); records them in `aliases.json` |
+| `pnpm systems propose` | One cached LLM call proposing merge groups for the 300 most mentioned systems (saved for review, not applied) |
+| `pnpm systems apply-proposals` | Apply the reviewed proposals |
 
 ## Retrieval
 
@@ -124,7 +142,7 @@ calls, then refreshes expertise as of that day.
 | `GET /analytics/summary?minScore=` | People, systems by risk level, stale docs, open tickets, memory | both |
 
 Every response that states a fact carries the artifact ids it came from. Default
-`minScore` is 1.0 (see the comment on `DEFAULT_MIN_SCORE` in `analytics.constants.ts`).
+`minScore` overrides the expert floor (default `MIN_EXPERT_SCORE` 0.4, see "How the graph is built").
 FalkorDB returns at most `RESULTSET_SIZE` rows (10,000 by default); `GraphService` throws
 when a result reaches it, and the projection reads page with `SKIP/LIMIT`.
 

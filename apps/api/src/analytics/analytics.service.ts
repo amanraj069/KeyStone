@@ -3,7 +3,7 @@ import type { MemoryReport } from '@keystone/shared';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import type { GraphPath } from '../graph/result-mapper';
-import { DEFAULT_MIN_SCORE, DONE_STATUSES, PROJECTION_GRAPH, type RiskLevel, riskLevel } from './analytics.constants';
+import { DONE_STATUSES, EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE, PROJECTION_GRAPH, type RiskLevel, riskLevel } from './analytics.constants';
 import { type GraphView, pathsToGraphView } from './graph-view';
 import * as Q from './queries/analytics.queries';
 
@@ -109,9 +109,9 @@ export class AnalyticsService {
   }
 
   /** K4: experts per system with a risk level (0 orphaned, 1 critical, 2 watch, 3+ ok). */
-  async busFactor(minScore = DEFAULT_MIN_SCORE, graphName = PROJECTION_GRAPH): Promise<BusFactorRow[]> {
+  async busFactor(minScore = MIN_EXPERT_SCORE, graphName = PROJECTION_GRAPH, topShare = EXPERT_SHARE_OF_TOP): Promise<BusFactorRow[]> {
     await this.requireGraph(graphName);
-    const rows = await this.graph.roQuery<Omit<BusFactorRow, 'riskLevel'>>(graphName, Q.K4_BUS_FACTOR, { minScore });
+    const rows = await this.graph.roQuery<Omit<BusFactorRow, 'riskLevel'>>(graphName, Q.K4_BUS_FACTOR, { minScore, topShare });
     return rows.map((row) => ({ ...row, riskLevel: riskLevel(row.experts) }));
   }
 
@@ -130,12 +130,17 @@ export class AnalyticsService {
   }
 
   /** K5 + K6 + K7: what is lost if this person leaves. */
-  async departureImpact(person: string, minScore = DEFAULT_MIN_SCORE, graphName = APEX_GRAPH): Promise<DepartureImpact> {
+  async departureImpact(
+    person: string,
+    minScore = MIN_EXPERT_SCORE,
+    graphName = APEX_GRAPH,
+    topShare = EXPERT_SHARE_OF_TOP,
+  ): Promise<DepartureImpact> {
     const [who] = await this.graph.roQuery<{ name: string; dept: string | null }>(graphName, Q.PERSON_EXISTS, { person });
     if (!who) throw new NotFoundException(`No person named "${person}"`);
 
     const [systems, openTickets, unsharedPages] = await Promise.all([
-      this.graph.roQuery<DepartureImpact['systems'][number]>(graphName, Q.K5_DEPARTURE_SYSTEMS, { person, minScore }),
+      this.graph.roQuery<DepartureImpact['systems'][number]>(graphName, Q.K5_DEPARTURE_SYSTEMS, { person, minScore, topShare }),
       this.graph.roQuery<DepartureImpact['openTickets'][number]>(graphName, Q.K6_DEPARTURE_TICKETS, {
         person,
         doneStatuses: DONE_STATUSES,
@@ -165,11 +170,16 @@ export class AnalyticsService {
   }
 
   /** Dashboard counts: people, systems by risk level, stale docs, open tickets, memory. */
-  async summary(minScore = DEFAULT_MIN_SCORE, graphName = APEX_GRAPH, projectionGraph = PROJECTION_GRAPH): Promise<AnalyticsSummary> {
+  async summary(
+    minScore = MIN_EXPERT_SCORE,
+    graphName = APEX_GRAPH,
+    projectionGraph = PROJECTION_GRAPH,
+    topShare = EXPERT_SHARE_OF_TOP,
+  ): Promise<AnalyticsSummary> {
     await this.requireGraph(projectionGraph);
     const [[people], [risk], [stale], [open], memory] = await Promise.all([
       this.graph.roQuery<{ active: number; inactive: number }>(graphName, Q.PEOPLE_COUNTS),
-      this.graph.roQuery<Record<RiskLevel, number>>(projectionGraph, Q.RISK_LEVEL_COUNTS, { minScore }),
+      this.graph.roQuery<Record<RiskLevel, number>>(projectionGraph, Q.RISK_LEVEL_COUNTS, { minScore, topShare }),
       this.graph.roQuery<{ stale: number }>(graphName, Q.STALE_DOCS_COUNT),
       this.graph.roQuery<{ open: number }>(graphName, Q.OPEN_TICKETS_COUNT, { doneStatuses: DONE_STATUSES }),
       this.graph.memoryReport(),

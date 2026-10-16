@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { ExpertiseService } from '../src/analytics/expertise.service';
+import { type CatalogSettings } from '../src/catalog/catalog.constants';
+import { CatalogService } from '../src/catalog/catalog.service';
 import { validateEnv } from '../src/config/env.schema';
 import { falkorSettingsFromEnv } from '../src/graph/falkor-settings';
 import { GraphService } from '../src/graph/graph.service';
@@ -51,4 +54,16 @@ export function useFixtureGraph(fixture = 'mini-company'): FixtureGraph {
   });
 
   return handle;
+}
+
+/**
+ * Core rule for the mini-company fixture: every system with one mention and one
+ * author is core, so the fixture's four systems all take part in bus factor and
+ * departure impact. (The real default, 5 mentions by 2 people, is tested separately.)
+ */
+export const FIXTURE_CATALOG: CatalogSettings = { coreMinMentions: 1, coreMinAuthors: 1 };
+
+/** ExpertiseService for tests, with its CatalogService. */
+export function fixtureExpertise(graph: GraphService, settings: CatalogSettings = FIXTURE_CATALOG): ExpertiseService {
+  return new ExpertiseService(graph, new CatalogService(graph, settings));
 }

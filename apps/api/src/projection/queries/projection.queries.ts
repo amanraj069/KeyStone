@@ -24,12 +24,21 @@ export const ACTIVE_PEOPLE_AS_OF = `
   ORDER BY name SKIP $skip LIMIT $limit
 `;
 
-/** Every system ({name}); systems with no expert stay in, they are the orphaned ones. */
-export const ALL_SYSTEMS = 'MATCH (s:System) RETURN s.name AS name ORDER BY name SKIP $skip LIMIT $limit';
+/**
+ * Core systems ({name}); core systems with no expert stay in, they are the orphaned
+ * ones. Non-core systems stay in apex only (retrieval and citations).
+ */
+export const CORE_SYSTEMS = `
+  MATCH (s:System)
+  WHERE s.core = true
+  RETURN s.name AS name
+  ORDER BY name SKIP $skip LIMIT $limit
+`;
 
-/** Materialised KNOWS edges of active people ({person, system, score, lastDay, evidence}). */
+/** Materialised KNOWS edges of active people to core systems ({person, system, score, lastDay, evidence}). */
 export const ACTIVE_KNOWS = `
   MATCH (p:Person {active: true})-[k:KNOWS]->(s:System)
+  WHERE s.core = true
   RETURN p.name AS person, s.name AS system, k.score AS score, k.lastDay AS lastDay, k.evidence AS evidence
   ORDER BY person, system SKIP $skip LIMIT $limit
 `;
@@ -96,10 +105,10 @@ export const WRITE_PEOPLE = `
   CREATE (:Person {name: row.name, dept: row.dept, active: row.active})
 `;
 
-/** Systems ({name}). */
+/** Core systems ({name}); core is stored so K4's WHERE s.core = true works on the projection too. */
 export const WRITE_SYSTEMS = `
   UNWIND $rows AS row
-  CREATE (:System {name: row.name})
+  CREATE (:System {name: row.name, core: true})
 `;
 
 /** KNOWS edges ({person, system, score, lastDay, evidence}). */

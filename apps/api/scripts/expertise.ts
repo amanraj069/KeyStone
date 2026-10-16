@@ -9,8 +9,10 @@
 import 'reflect-metadata';
 import { config as loadDotenv } from 'dotenv';
 import { join } from 'node:path';
-import { PROJECTION_GRAPH } from '../src/analytics/analytics.constants';
+import { EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE, PROJECTION_GRAPH } from '../src/analytics/analytics.constants';
 import { ExpertiseService } from '../src/analytics/expertise.service';
+import { CORE_MIN_AUTHORS } from '../src/catalog/catalog.constants';
+import { CatalogService } from '../src/catalog/catalog.service';
 import { RISK_LEVEL_COUNTS } from '../src/analytics/queries/analytics.queries';
 import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
@@ -25,21 +27,28 @@ async function main(): Promise<void> {
   try {
     const index = process.argv.indexOf('--as-of');
     const asOfDay = index >= 0 ? Number(process.argv[index + 1]) : undefined;
-    const refreshed = await new ExpertiseService(graph).refresh({ asOfDay });
+    const env = validateEnv(process.env);
+    const catalog = new CatalogService(graph, { coreMinMentions: env.CORE_MIN_MENTIONS, coreMinAuthors: CORE_MIN_AUTHORS });
+    const refreshed = await new ExpertiseService(graph, catalog).refresh({ asOfDay });
     const projected = await new ProjectionService(graph).rebuild();
 
     const d = refreshed.distribution;
     const fmt = (x: number | null) => (x === null ? '-' : x.toFixed(2));
-    console.log(`\nKNOWS ${refreshed.knows}, COLLAB ${refreshed.collab} as of day ${refreshed.asOfDay} (${refreshed.ms} ms)`);
+    console.log(`\nKNOWS ${refreshed.knows}, COLLAB ${refreshed.collab} as of day ${refreshed.asOfDay} (${refreshed.ms} ms); ` +
+      `${refreshed.coreSystems} core of ${refreshed.systems} systems`);
     console.log(`KNOWS score: min ${fmt(d.min)}, p25 ${fmt(d.p25)}, median ${fmt(d.median)}, p75 ${fmt(d.p75)}, p90 ${fmt(d.p90)}, max ${fmt(d.max)}`);
     console.log(
       `apex_proj: ${projected.people} people, ${projected.systems} systems, ${projected.knows} KNOWS, ` +
         `${projected.collab} COLLAB (pairs with weight >= ${projected.collabMinWeight}, both directions); ` +
         `${projected.targetMb} MB vs apex ${projected.sourceMb} MB (${projected.ms} ms)`,
     );
-    for (const minScore of [0.5, 1, 2]) {
-      const [risk] = await graph.roQuery<Record<string, number>>(PROJECTION_GRAPH, RISK_LEVEL_COUNTS, { minScore });
-      console.log(`minScore ${minScore}: ${JSON.stringify(risk)}`);
+    // Bus factor on core systems with the expert rule (see MIN_EXPERT_SCORE), and with other floors for comparison.
+    for (const minScore of [MIN_EXPERT_SCORE, 1, 2]) {
+      const [risk] = await graph.roQuery<Record<string, number>>(PROJECTION_GRAPH, RISK_LEVEL_COUNTS, {
+        minScore,
+        topShare: EXPERT_SHARE_OF_TOP,
+      });
+      console.log(`expert = score >= ${minScore} and >= ${EXPERT_SHARE_OF_TOP} x top: ${JSON.stringify(risk)}`);
     }
   } finally {
     await graph.onModuleDestroy();

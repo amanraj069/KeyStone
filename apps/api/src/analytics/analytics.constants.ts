@@ -5,20 +5,21 @@ export const PROJECTION_GRAPH = 'apex_proj';
 export const MIN_KNOWS_SCORE = 0.05;
 
 /**
- * Default minScore for "is an expert" (bus factor, departure impact).
+ * Who counts as an expert on a core system (bus factor, departure impact).
+ * Rule, fixed before looking at outcomes (and never at the answer key):
  *
- * KNOWS score scale (K2): one artifact authored today = 3.0, reviewed today = 2.0,
- * a ticket owned today = 1.0, each decaying with a 30-day time constant.
- * Distribution on apex as of day 60 (11,716 edges, `pnpm expertise`): min 0.14,
- * p25 0.82, median 1.54, p75 2.90, p90 12.4, max 968.
+ *   score >= MIN_EXPERT_SCORE  AND  score >= EXPERT_SHARE_OF_TOP x the system's top score
  *
- * 1.0 = "authored something about it in the last ~33 days, reviewed something in
- * the last ~21 days, or owns a current ticket on it". It keeps the stronger ~2/3
- * of KNOWS edges and drops one-off mentions from months ago (below p25 0.85 sits
- * mostly a single old message). 0.5 would count people who touched a system once
- * two months ago; 2.0 would drop half of all real expertise.
+ * MIN_EXPERT_SCORE is the median (p50) KNOWS score on core systems, rounded:
+ * 0.41 on apex as of day 60 (3,295 edges; p25 0.14, p75 2.38, p90 7.9, max 168),
+ * so 0.4. KNOWS scale (K2): authored today 3.0, reviewed 2.0, owns a ticket 1.0,
+ * took part in a conversation 0.125-0.5, each decaying with a 30-day time constant.
+ * The relative part makes "expert" mean "close to the people who know it best":
+ * on TitanDB (top 100) it takes 25, on a small system (top 2) it takes 0.5.
+ * The ?minScore= query parameter overrides the floor only.
  */
-export const DEFAULT_MIN_SCORE = 1.0;
+export const MIN_EXPERT_SCORE = 0.4;
+export const EXPERT_SHARE_OF_TOP = 0.25;
 
 /**
  * Ticket statuses that mean "done", compared lower-case (K6). The corpus only has
