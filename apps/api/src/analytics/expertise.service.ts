@@ -55,6 +55,7 @@ export class ExpertiseService {
     await this.graph.query(graphName, Q.DELETE_COLLAB);
     await this.graph.query(graphName, Q.K8A_MATERIALISE_COLLAB);
 
+    await this.graph.query(graphName, Q.STAMP_EXPERTISE, { refreshedAt: Date.now(), asOfDay });
     const [counts] = await this.graph.roQuery<{ knows: number; collab: number }>(graphName, Q.EXPERTISE_COUNTS);
     const [distribution] = await this.graph.roQuery<ScoreDistribution>(graphName, Q.KNOWS_SCORE_DISTRIBUTION);
     const summary: RefreshSummary = {

@@ -134,6 +134,20 @@ export const WRITE_COLLAB = `
   CREATE (a)-[:COLLAB {weight: row.weight}]->(b), (b)-[:COLLAB {weight: row.weight}]->(a)
 `;
 
+/**
+ * Marks which expertise refresh the projection was built from ($sourceRefreshedAt,
+ * epoch ms, null if the source was never stamped) and when ($builtAt).
+ */
+export const STAMP_PROJECTION = `
+  CREATE (:Meta {key: 'projection', sourceRefreshedAt: $sourceRefreshedAt, builtAt: $builtAt})
+`;
+
+/** The projection's stamp ({sourceRefreshedAt, builtAt}); no row if missing. */
+export const PROJECTION_STAMP = `
+  MATCH (m:Meta {key: 'projection'})
+  RETURN m.sourceRefreshedAt AS sourceRefreshedAt, m.builtAt AS builtAt
+`;
+
 /** Counts in the projection ({people, systems, knows, collab}). */
 export const PROJECTION_COUNTS = `
   OPTIONAL MATCH (p:Person) WITH count(p) AS people

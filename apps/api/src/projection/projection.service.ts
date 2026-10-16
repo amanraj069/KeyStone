@@ -4,6 +4,7 @@ import { COLLAB_KEEP_PERCENTILE, MIN_KNOWS_SCORE, PROJECTION_GRAPH, PROJECTION_T
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { type BatchRow, GraphService } from '../graph/graph.service';
 import { PERSON_NAME_INDEX, SYSTEM_NAME_INDEX } from '../graph/queries/schema.queries';
+import { EXPERTISE_STAMP } from '../analytics/queries/analytics.queries';
 import * as Q from './queries/projection.queries';
 
 export interface ProjectionOptions {
@@ -79,6 +80,9 @@ export class ProjectionService {
         ? await this.readAll(pageSize, source, Q.ACTIVE_COLLAB, { minWeight })
         : await this.readAll(pageSize, source, Q.COLLAB_AS_OF, { asOfDay, minWeight });
 
+    // Which expertise refresh this projection reflects (for staleness checks).
+    const [stamp] = await this.graph.roQuery<{ refreshedAt: number | null }>(source, EXPERTISE_STAMP);
+
     // 2. Rebuild the target from scratch: delete, indexes first (edge writes MATCH by name), then nodes, then edges.
     if ((await this.graph.listGraphs()).includes(targetGraph)) await this.graph.deleteGraph(targetGraph);
     await this.graph.query(targetGraph, PERSON_NAME_INDEX);
@@ -87,6 +91,7 @@ export class ProjectionService {
     await this.graph.batchWrite(targetGraph, Q.WRITE_SYSTEMS, systems);
     await this.graph.batchWrite(targetGraph, Q.WRITE_KNOWS, knows);
     await this.graph.batchWrite(targetGraph, Q.WRITE_COLLAB, collab);
+    await this.graph.query(targetGraph, Q.STAMP_PROJECTION, { sourceRefreshedAt: stamp?.refreshedAt ?? null, builtAt: Date.now() });
 
     // 3. Report: counts and memory, which should be a tiny fraction of the source.
     const [counts] = await this.graph.roQuery<{ people: number; systems: number; knows: number; collab: number }>(
@@ -110,6 +115,18 @@ export class ProjectionService {
         `${summary.targetMb ?? '?'} MB vs ${source} ${summary.sourceMb ?? '?'} MB; ${summary.ms} ms`,
     );
     return summary;
+  }
+
+  /**
+   * True when `targetGraph` exists and was built from the source's latest
+   * expertise refresh. A projection without a stamp (built by older code) is stale.
+   */
+  async isFresh(targetGraph = PROJECTION_GRAPH, sourceGraph = APEX_GRAPH): Promise<boolean> {
+    if (!(await this.graph.listGraphs()).includes(targetGraph)) return false;
+    const [built] = await this.graph.roQuery<{ sourceRefreshedAt: number | null }>(targetGraph, Q.PROJECTION_STAMP);
+    if (!built) return false;
+    const [source] = await this.graph.roQuery<{ refreshedAt: number | null }>(sourceGraph, EXPERTISE_STAMP);
+    return (source?.refreshedAt ?? null) === null || (built.sourceRefreshedAt ?? -1) >= (source?.refreshedAt ?? 0);
   }
 
   /** Reads every row of a paged query (one with SKIP $skip LIMIT $limit), page by page. */

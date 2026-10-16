@@ -81,6 +81,20 @@ export const KNOWS_SCORE_DISTRIBUTION = `
          xs[toInteger(size(xs) * 0.75)] AS p75, xs[toInteger(size(xs) * 0.9)] AS p90, xs[size(xs) - 1] AS max
 `;
 
+/**
+ * Records when expertise was last refreshed ($refreshedAt, epoch ms) and as of
+ * which day, on a small (:Meta {key: 'expertise'}) node. The what-if module
+ * compares it with the projection's stamp to know whether apex_proj is stale.
+ * No analytics query matches the Meta label.
+ */
+export const STAMP_EXPERTISE = `
+  MERGE (m:Meta {key: 'expertise'})
+  SET m.refreshedAt = $refreshedAt, m.asOfDay = $asOfDay
+`;
+
+/** When expertise was last refreshed ({refreshedAt}); no row if never. */
+export const EXPERTISE_STAMP = "MATCH (m:Meta {key: 'expertise'}) RETURN m.refreshedAt AS refreshedAt";
+
 /** Counts after a refresh ({knows, collab}). */
 export const EXPERTISE_COUNTS = `
   OPTIONAL MATCH ()-[k:KNOWS]->() WITH count(k) AS knows
