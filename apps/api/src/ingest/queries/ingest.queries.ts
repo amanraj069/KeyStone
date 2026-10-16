@@ -107,6 +107,46 @@ export const MERGE_REVIEWED = `
   SET r.day = row.day
 `;
 
+/**
+ * Person took part in a conversation (multi-person Slack thread, meeting, Salesforce
+ * opportunity) and wrote `messages` messages in it; `wrote` is false when they are only
+ * listed ({person, artifactId, day, messages, wrote}).
+ */
+export const MERGE_PARTICIPATED = `
+  UNWIND $rows AS row
+  MATCH (p:Person {name: row.person}), (a:Artifact {id: row.artifactId})
+  MERGE (p)-[r:PARTICIPATED]->(a)
+  SET r.day = row.day, r.messages = row.messages, r.wrote = row.wrote
+`;
+
+/**
+ * Removes every Person -> Artifact role edge, so roles can be rewritten from
+ * artifacts.jsonl without resetting the graph (extraction and chunks stay).
+ */
+export const DELETE_ROLE_EDGES = `
+  MATCH (:Person)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(:Artifact)
+  DELETE r
+`;
+
+/**
+ * A person announced as leaving in an artifact ({person, artifactId, departedDay}).
+ * The edge keeps the evidence; Person.departedDay is the earliest announced day.
+ */
+export const MERGE_DEPARTURES = `
+  UNWIND $rows AS row
+  MATCH (p:Person {name: row.person}), (a:Artifact {id: row.artifactId})
+  MERGE (p)-[d:DEPARTURE_ANNOUNCED_IN]->(a)
+  SET d.departedDay = row.departedDay,
+      p.departedDay = CASE WHEN p.departedDay IS NULL OR row.departedDay < p.departedDay
+                           THEN row.departedDay ELSE p.departedDay END
+`;
+
+/** Before rewriting departures: remove the evidence edges... */
+export const DELETE_DEPARTURE_EDGES = 'MATCH (:Person)-[d:DEPARTURE_ANNOUNCED_IN]->(:Artifact) DELETE d';
+
+/** ...and the departure days. */
+export const CLEAR_DEPARTED_DAYS = 'MATCH (p:Person) WHERE p.departedDay IS NOT NULL SET p.departedDay = NULL';
+
 /** Person owns / was assigned the ticket ({person, artifactId, day, status}). */
 export const MERGE_ASSIGNED = `
   UNWIND $rows AS row
@@ -134,13 +174,15 @@ export const MERGE_FIXES = `
 
 /**
  * Sets each person's firstDay and lastSeenDay from the days of their
- * AUTHORED/REVIEWED/ASSIGNED edges. Departures cannot be read from artifacts
- * (people keep appearing after they leave), so everyone stays active: true and
- * lastDay is not set by ingestion.
+ * AUTHORED/REVIEWED/ASSIGNED edges and PARTICIPATED edges where the person wrote
+ * a line (being listed on a thread or meeting is not activity). A person is active
+ * unless a departure was announced for them (departedDay, see MERGE_DEPARTURES);
+ * the expertise refresh then sets active as of its day.
  */
 export const UPDATE_PERSON_ACTIVITY = `
   MATCH (p:Person)
-  OPTIONAL MATCH (p)-[:AUTHORED|REVIEWED|ASSIGNED]->(a:Artifact)
+  OPTIONAL MATCH (p)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)
+  WHERE type(r) <> 'PARTICIPATED' OR r.wrote = true
   WITH p, min(a.day) AS firstDay, max(a.day) AS lastSeenDay
   SET p.firstDay = firstDay, p.lastSeenDay = lastSeenDay, p.active = true
 `;

@@ -1,9 +1,10 @@
 import { CLEAR_EXTRACTION } from '../src/extract/queries/extract.queries';
 import { ExtractService } from '../src/extract/extract.service';
-import { ExpertiseService } from '../src/analytics/expertise.service';
 import { ProjectionService } from '../src/projection/projection.service';
-import { useFixtureGraph } from './graph-test-utils';
-import { ALL_KNOWS, EXTRACTION_SUMMARY, GIVE_D1_A_SOURCE, PROJECTION_COLLAB_PAIRS } from './queries/test.queries';
+import { fixtureExpertise, useFixtureGraph } from './graph-test-utils';
+import { AnalyticsService } from '../src/analytics/analytics.service';
+import { MERGE_DEPARTURES } from '../src/ingest/queries/ingest.queries';
+import { ALL_KNOWS, DEPARTURES, COLLAB_WEIGHT, EVE_JOINS_MEETING, EXTRACTION_SUMMARY, GIVE_D1_A_SOURCE, KNOWS_SCORE, PROJECTION_COLLAB_PAIRS } from './queries/test.queries';
 
 /**
  * Stage 7 refresh, projection and replay queries on copies of the mini-company
@@ -27,7 +28,7 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
 
   it('refresh defaults to the last day with an artifact (LAST_ARTIFACT_DAY) and reports the KNOWS distribution', async () => {
     const graph = await copyOfFixture('last');
-    const refreshed = await new ExpertiseService(fx.graph).refresh({ graph });
+    const refreshed = await fixtureExpertise(fx.graph).refresh({ graph });
     expect(refreshed).toMatchObject({ asOfDay: 12, knows: 10, collab: 6 });
 
     const scores = (await fx.graph.roQuery<{ score: number }>(graph, ALL_KNOWS)).map((k) => k.score).sort((a, b) => a - b);
@@ -40,7 +41,7 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
 
   it('deletes KNOWS that decayed below 0.05 (DELETE_WEAK_KNOWS) and rebuilds from scratch (DELETE_ALL_KNOWS)', async () => {
     const graph = await copyOfFixture('weak');
-    const expertise = new ExpertiseService(fx.graph);
+    const expertise = fixtureExpertise(fx.graph);
     await expertise.refresh({ graph, asOfDay: 12 });
     // 200 days later every score is below 3 * 3 * e^(-188/30) < 0.05: nothing is left.
     await expect(expertise.refresh({ graph, asOfDay: 200 })).resolves.toMatchObject({ knows: 0 });
@@ -53,7 +54,7 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
 
   it('the projection summary carries its counts (PROJECTION_COUNTS) and reads page by page', async () => {
     const graph = await copyOfFixture('pages');
-    await new ExpertiseService(fx.graph).refresh({ graph, asOfDay: 12 });
+    await fixtureExpertise(fx.graph).refresh({ graph, asOfDay: 12 });
     const summary = await new ProjectionService(fx.graph).rebuild(`${graph}_proj`, { sourceGraph: graph, pageSize: 3 });
     copies.push(`${graph}_proj`);
     // Same numbers as with one page: 4 active people, 4 systems, 8 KNOWS, 4 pairs both ways.
@@ -62,7 +63,7 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
 
   it('keeps only COLLAB pairs at or above the weight percentile', async () => {
     const graph = await copyOfFixture('collab');
-    await new ExpertiseService(fx.graph).refresh({ graph, asOfDay: 12 });
+    await fixtureExpertise(fx.graph).refresh({ graph, asOfDay: 12 });
     // Ada and Ben share T-1 and PR-1 (weight 2); every other active pair shares one artifact.
     const summary = await new ProjectionService(fx.graph).rebuild(`${graph}_proj`, { sourceGraph: graph, collabPercentile: 1 });
     copies.push(`${graph}_proj`);
@@ -98,9 +99,77 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
     expect(copied).toBe(before.mentions - 1);
     expect(after).toMatchObject({ decisions: 2, superseded: 1, supersedes: 1, asserts: 1 });
 
-    const expertise = new ExpertiseService(fx.graph);
+    const expertise = fixtureExpertise(fx.graph);
     await expertise.refresh({ graph: source, asOfDay: 12 });
     await expertise.refresh({ graph: target, asOfDay: 12 });
     await expect(fx.graph.roQuery(target, ALL_KNOWS)).resolves.toEqual(await fx.graph.roQuery(source, ALL_KNOWS));
+  });
+
+  it('K2 weights: AUTHORED 3, REVIEWED 2, ASSIGNED 1, PARTICIPATED 0.5 x min(messages, 4) / 4, with decay', async () => {
+    const graph = await copyOfFixture('weights');
+    await fx.graph.query(graph, EVE_JOINS_MEETING);
+    await fixtureExpertise(fx.graph).refresh({ graph, asOfDay: 12 });
+    const score = async (person: string, system: string) =>
+      (await fx.graph.roQuery<{ score: number }>(graph, KNOWS_SCORE, { person, system }))[0].score;
+    const decay = (day: number) => Math.exp(-(12 - day) / 30);
+    // Dev on MobileApp: owns T-3 (day 5) and T-4 (day 11), spoke 6 times in M-1 (day 10, capped at 4),
+    // wrote P-3 (day 3) and PR-3 (day 12).
+    expect(await score('Dev', 'MobileApp')).toBeCloseTo(decay(5) + decay(11) + 0.5 * decay(10) + 3 * decay(3) + 3 * decay(12), 6);
+    // Eve: wrote T-3 (day 5) and said one line in M-1: 0.5 x 1/4 = 0.125.
+    expect(await score('Eve', 'MobileApp')).toBeCloseTo(3 * decay(5) + 0.125 * decay(10), 6);
+  });
+
+  it('K8a counts PARTICIPATED: a shared meeting adds to COLLAB', async () => {
+    const graph = await copyOfFixture('collab_part');
+    const expertise = fixtureExpertise(fx.graph);
+    await expertise.refresh({ graph, asOfDay: 12 });
+    await expect(fx.graph.roQuery(graph, COLLAB_WEIGHT, { a: 'Dev', b: 'Eve' })).resolves.toEqual([{ weight: 1 }]); // T-3
+    await fx.graph.query(graph, EVE_JOINS_MEETING);
+    await expertise.refresh({ graph, asOfDay: 12 });
+    await expect(fx.graph.roQuery(graph, COLLAB_WEIGHT, { a: 'Dev', b: 'Eve' })).resolves.toEqual([{ weight: 2 }]); // T-3 + M-1
+  });
+
+  it('K3b evidence paths include meetings the person took part in', async () => {
+    const graph = await copyOfFixture('evidence_part');
+    await fixtureExpertise(fx.graph).refresh({ graph, asOfDay: 12 });
+    const result = await new AnalyticsService(fx.graph).experts('MobileApp', graph);
+    expect(result.evidencePath?.person).toBe('Dev');
+    expect(result.evidencePath?.evidence).toContain('M-1');
+    expect(result.evidencePath?.edges.map((e) => e.type)).toContain('PARTICIPATED');
+  });
+
+  it('a departed person keeps their history but is not an expert or suggested owner after their day', async () => {
+    const graph = await copyOfFixture('departed');
+    // Ben's departure is announced in TH-1 (day 6) for day 11.
+    await fx.graph.batchWrite(graph, MERGE_DEPARTURES, [{ person: 'Ben', artifactId: 'TH-1', departedDay: 11 }]);
+    const expertise = fixtureExpertise(fx.graph);
+    const analytics = new AnalyticsService(fx.graph);
+
+    await expertise.refresh({ graph, asOfDay: 12 });
+    await expect(fx.graph.roQuery(graph, DEPARTURES)).resolves.toEqual([
+      { person: 'Ben', departedDay: 11, active: false, announcedIn: ['TH-1'] },
+      { person: 'Cara', departedDay: 12, active: false, announcedIn: [] },
+    ]);
+    // History stays: Ben still has KNOWS on TitanDB...
+    const knows = await fx.graph.roQuery<{ person: string; system: string }>(graph, ALL_KNOWS);
+    expect(knows.some((k) => k.person === 'Ben' && k.system === 'TitanDB')).toBe(true);
+    // ...but he is no expert any more and is never suggested as an owner.
+    const bus = await analytics.busFactor(0.05, graph, 0);
+    expect(bus.find((r) => r.system === 'TitanDB')!.names.sort()).toEqual(['Ada', 'Dev']);
+    const impact = await analytics.departureImpact('Dev', 0.05, graph);
+    expect(impact.openTickets[0].suggestedOwners).not.toContain('Ben');
+
+    // As of day 10 Ben had not left yet: active again, and in the as-of projection.
+    await expertise.refresh({ graph, asOfDay: 10 });
+    await expect(fx.graph.roQuery(graph, 'MATCH (p:Person {name: $name}) RETURN p.active AS active', { name: 'Ben' })).resolves.toEqual([{ active: true }]);
+    const projection = new ProjectionService(fx.graph);
+    const proj10 = `${graph}_p10`;
+    const proj12 = `${graph}_p12`;
+    copies.push(proj10, proj12);
+    await projection.rebuild(proj10, { sourceGraph: graph, asOfDay: 10 });
+    await projection.rebuild(proj12, { sourceGraph: graph, asOfDay: 12 });
+    const names = async (g: string) => (await fx.graph.roQuery<{ name: string }>(g, 'MATCH (p:Person) RETURN p.name AS name ORDER BY name')).map((r) => r.name);
+    expect(await names(proj10)).toEqual(['Ada', 'Ben', 'Cara', 'Dev', 'Eve']);
+    expect(await names(proj12)).toEqual(['Ada', 'Dev', 'Eve']);
   });
 });

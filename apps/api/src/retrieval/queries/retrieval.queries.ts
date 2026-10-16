@@ -42,6 +42,7 @@ export const CHUNK_MODELS = 'MATCH (c:Chunk) RETURN c.model AS model, count(c) A
  *   - Vector queries cannot take property filters, so the "as of day" filter
  *     ($asOfDay, null = no filter) is applied after the CALL.
  *   - `linked <> a` stops an artifact from listing itself through a 2-hop loop.
+ *   - authors include PARTICIPATED (the people in a thread or meeting).
  */
 export const HYBRID_SEARCH = `
   CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($q)) YIELD node, score
@@ -49,7 +50,7 @@ export const HYBRID_SEARCH = `
   WHERE $asOfDay IS NULL OR a.day <= $asOfDay
   OPTIONAL MATCH (a)-[:REFERENCES*1..2]-(linked:Artifact)
   WHERE linked <> a
-  OPTIONAL MATCH (a)<-[:AUTHORED]-(author:Person)
+  OPTIONAL MATCH (a)<-[:AUTHORED|PARTICIPATED]-(author:Person)
   RETURN node.id AS chunkId, a.id AS id, a.title AS title, a.type AS type, a.day AS day, score,
          collect(DISTINCT linked.id)[0..8] AS related, collect(DISTINCT author.name) AS authors
   ORDER BY score ASC

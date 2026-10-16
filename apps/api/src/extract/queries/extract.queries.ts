@@ -4,13 +4,15 @@
 
 /**
  * Candidate artifacts for extraction: id, extra label, title, day, authors and
- * the authors' departments. $depts = [] means "all departments".
+ * the authors' departments (people who AUTHORED it or PARTICIPATED in it: the same
+ * people who were all AUTHORED before the participation model, so cached
+ * extraction fingerprints still match). $depts = [] means "all departments".
  * Bodies are NOT here: they are read from the TextStore.
  */
 export const SELECT_CANDIDATES = `
   MATCH (a:Artifact)
   WHERE a:Page OR a:Thread OR a:PR OR a:Email OR a:Ticket OR a:Meeting
-  OPTIONAL MATCH (p:Person)-[:AUTHORED]->(a)
+  OPTIONAL MATCH (p:Person)-[:AUTHORED|PARTICIPATED]->(a)
   OPTIONAL MATCH (p)-[:MEMBER_OF]->(d:Dept)
   WITH a, collect(DISTINCT p.name) AS authors, collect(DISTINCT d.name) AS depts
   WHERE size($depts) = 0 OR any(dept IN depts WHERE dept IN $depts)

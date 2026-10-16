@@ -30,6 +30,7 @@ const MERGE_BY_ROLE = {
   AUTHORED: Q.MERGE_AUTHORED,
   REVIEWED: Q.MERGE_REVIEWED,
   ASSIGNED: Q.MERGE_ASSIGNED,
+  PARTICIPATED: Q.MERGE_PARTICIPATED,
 } as const;
 
 /** Bodies are written to the TextStore this many at a time. */
@@ -162,6 +163,28 @@ export class IngestService {
 
     await this.graph.query(graphName, Q.UPDATE_PERSON_ACTIVITY);
     return added;
+  }
+
+  /**
+   * Rewrites every Person -> Artifact role edge and every announced departure from
+   * artifacts.jsonl (after those rules change) without resetting the graph: systems,
+   * decisions and chunks stay. Returns the rows written per relationship type.
+   */
+  async rewriteRoles(graphName: string, plan?: IngestPlan): Promise<Record<string, number>> {
+    const company = plan ?? (await this.loadPlan());
+    await this.graph.query(graphName, Q.DELETE_ROLE_EDGES);
+    await this.graph.query(graphName, Q.DELETE_DEPARTURE_EDGES);
+    await this.graph.query(graphName, Q.CLEAR_DEPARTED_DAYS);
+    const written: Record<string, number> = {};
+    for (const [rel, query] of Object.entries(MERGE_BY_ROLE)) {
+      const rows = company.roles.filter((role) => role.rel === rel);
+      await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
+      written[rel] = rows.length;
+    }
+    await this.graph.batchWrite(graphName, Q.MERGE_DEPARTURES, company.departures.map((d) => ({ ...d })));
+    written.DEPARTURE_ANNOUNCED_IN = company.departures.length;
+    await this.graph.query(graphName, Q.UPDATE_PERSON_ACTIVITY);
+    return written;
   }
 
   /** {people, artifacts, edges} currently in the graph. */

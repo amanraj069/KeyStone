@@ -44,16 +44,21 @@ export const ACTIVE_KNOWS = `
 `;
 
 /**
- * KNOWS as of $asOfDay without writing anything: K2's aggregation as a
- * read-only RETURN, for people active on that day, dropping scores below $minScore.
+ * KNOWS as of $asOfDay without writing anything: K2's aggregation (same weights) as a
+ * read-only RETURN, for people active on that day and core systems (today's core
+ * flags), dropping scores below $minScore.
  */
 export const KNOWS_AS_OF = `
-  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED]->(a:Artifact)-[:MENTIONS]->(s:System)
-  WHERE a.day IS NOT NULL AND a.day <= $asOfDay
-    AND coalesce(p.firstDay, 0) <= $asOfDay AND (p.lastDay IS NULL OR p.lastDay >= $asOfDay)
+  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System)
+  WHERE a.day IS NOT NULL AND a.day <= $asOfDay AND s.core = true
+    AND coalesce(p.firstDay, 0) <= $asOfDay AND (p.departedDay IS NULL OR p.departedDay > $asOfDay)
   WITH p, s,
-       sum(CASE type(r) WHEN 'AUTHORED' THEN 3.0 WHEN 'REVIEWED' THEN 2.0 ELSE 1.0 END
-           * exp(-($asOfDay - a.day) / 30.0)) AS score,
+       sum(CASE type(r)
+             WHEN 'AUTHORED' THEN 3.0
+             WHEN 'REVIEWED' THEN 2.0
+             WHEN 'ASSIGNED' THEN 1.0
+             ELSE 0.5 * (CASE WHEN coalesce(r.messages, 1) >= 4 THEN 4 ELSE coalesce(r.messages, 1) END) / 4.0
+           END * exp(-($asOfDay - a.day) / 30.0)) AS score,
        max(a.day) AS lastDay,
        collect(a.id)[0..5] AS evidence
   WHERE score >= $minScore
@@ -77,7 +82,7 @@ export const ACTIVE_COLLAB = `
 
 /** The $percentile weight of COLLAB as of $asOfDay (same aggregation as COLLAB_AS_OF) ({weight}). */
 export const COLLAB_AS_OF_WEIGHT_PERCENTILE = `
-  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED]-(b:Person)
+  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(b:Person)
   WHERE id(a) < id(b) AND x.day IS NOT NULL AND x.day <= $asOfDay
     AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.lastDay IS NULL OR a.lastDay >= $asOfDay)
     AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.lastDay IS NULL OR b.lastDay >= $asOfDay)
@@ -87,7 +92,7 @@ export const COLLAB_AS_OF_WEIGHT_PERCENTILE = `
 
 /** COLLAB as of $asOfDay without writing: K8a's aggregation, artifacts up to that day, weight >= $minWeight. */
 export const COLLAB_AS_OF = `
-  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED]-(b:Person)
+  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(b:Person)
   WHERE id(a) < id(b) AND x.day IS NOT NULL AND x.day <= $asOfDay
     AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.lastDay IS NULL OR a.lastDay >= $asOfDay)
     AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.lastDay IS NULL OR b.lastDay >= $asOfDay)

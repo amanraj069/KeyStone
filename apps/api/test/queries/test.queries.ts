@@ -48,7 +48,7 @@ export const CROSS_DEPT_COLLABORATORS = `
 
 /** People connected to Ticket, Page and Thread artifacts: what FalkorDB Browser should show after ingest. */
 export const PEOPLE_TO_TICKETS_PAGES_THREADS = `
-  MATCH (p:Person)-[r:AUTHORED|REVIEWED|ASSIGNED]->(a:Artifact)
+  MATCH (p:Person)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)
   WHERE a:Ticket OR a:Page OR a:Thread
   RETURN p.name AS person, type(r) AS rel, a.id AS artifact
   ORDER BY person, artifact

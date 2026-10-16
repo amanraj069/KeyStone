@@ -13,7 +13,7 @@
 //   P-2 has day: null and dayUnknown: true; any "a.day <= $day" filter must skip it.
 //
 // Definitions used by the expectations below:
-//   evidence(person, system) = person AUTHORED, REVIEWED or was ASSIGNED an
+//   evidence(person, system) = person AUTHORED, REVIEWED, was ASSIGNED or PARTICIPATED in an
 //                              artifact that MENTIONS the system
 //   active expert            = active person with evidence on the system
 //   collaboration            = two people linked to the same artifact
@@ -86,7 +86,7 @@ CREATE
   (cara)-[:AUTHORED]->(p2),
   (cara)-[:AUTHORED {day: 8}]->(th2),
   (eve)-[:AUTHORED {day: 5}]->(t3),  (dev)-[:ASSIGNED {day: 5, status: 'done'}]->(t3),
-  (dev)-[:AUTHORED {day: 10}]->(m1),
+  (dev)-[:PARTICIPATED {day: 10, messages: 6}]->(m1),  // a meeting: Dev spoke 6 times (capped at 4 in K2)
   (dev)-[:AUTHORED {day: 3}]->(p3),
   (ada)-[:AUTHORED {day: 11}]->(t4), (dev)-[:ASSIGNED {day: 11, status: 'in_progress'}]->(t4),
   (dev)-[:AUTHORED {day: 12}]->(pr3), (ben)-[:REVIEWED {day: 12}]->(pr3),

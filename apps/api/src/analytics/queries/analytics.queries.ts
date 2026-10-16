@@ -10,14 +10,21 @@
  * Authoring counts 3, reviewing 2, ticket ownership 1; exponential decay with a
  * 30-day time constant (exp() passed the Stage 1 capability check, so it is kept).
  * Artifacts with day null (dayUnknown) are skipped by the WHERE.
- * Unchanged from the spec.
+ * CHANGE: PARTICIPATED (taking part in a multi-person thread or a meeting) counts
+ * 0.5 x min(messages, 4) / 4: one line 0.125, four or more lines 0.5. Before,
+ * every participant was an author (3.0), so people in many busy channels "knew"
+ * every system discussed there and topped every suggestion.
  */
 export const K2_MATERIALISE_KNOWS = `
-  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED]->(a:Artifact)-[:MENTIONS]->(s:System)
+  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System)
   WHERE a.day IS NOT NULL AND a.day <= $asOfDay
   WITH p, s,
-       sum(CASE type(r) WHEN 'AUTHORED' THEN 3.0 WHEN 'REVIEWED' THEN 2.0 ELSE 1.0 END
-           * exp(-($asOfDay - a.day) / 30.0)) AS score,
+       sum(CASE type(r)
+             WHEN 'AUTHORED' THEN 3.0
+             WHEN 'REVIEWED' THEN 2.0
+             WHEN 'ASSIGNED' THEN 1.0
+             ELSE 0.5 * (CASE WHEN coalesce(r.messages, 1) >= 4 THEN 4 ELSE coalesce(r.messages, 1) END) / 4.0
+           END * exp(-($asOfDay - a.day) / 30.0)) AS score,
        max(a.day) AS lastDay,
        collect(a.id)[0..5] AS evidence
   MERGE (p)-[k:KNOWS]->(s)
@@ -38,12 +45,13 @@ export const DELETE_COLLAB = 'MATCH ()-[c:COLLAB]->() DELETE c';
 
 /**
  * K8a. Collaboration projection: people who touched the same artifact, weighted by
- * how many they share. Unchanged from the spec. Note: it writes one edge per pair
+ * how many they share. CHANGE: PARTICIPATED counts too, so conversations still
+ * connect people after they stopped being AUTHORED. Note: it writes one edge per pair
  * (a -> b with id(a) < id(b)); the projection adds the reverse direction (see
  * ProjectionService) because FalkorDB's betweenness follows edge direction.
  */
 export const K8A_MATERIALISE_COLLAB = `
-  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED]-(b:Person)
+  MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(b:Person)
   WHERE id(a) < id(b)
   WITH a, b, count(x) AS w
   MERGE (a)-[c:COLLAB]->(b)
@@ -77,9 +85,12 @@ export const K3A_SYSTEM_EXPERTS = `
   ORDER BY score DESC LIMIT 5
 `;
 
-/** K3b. Evidence paths for one person and system: their 10 most recent artifacts about it. Unchanged. */
+/**
+ * K3b. Evidence paths for one person and system: their 10 most recent artifacts about it.
+ * CHANGE: includes PARTICIPATED (threads and meetings are evidence too).
+ */
 export const K3B_EVIDENCE_PATH = `
-  MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED]->(a:Artifact)-[:MENTIONS]->(s:System {name:$system})
+  MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System {name:$system})
   RETURN path ORDER BY a.day DESC LIMIT 10
 `;
 
@@ -220,7 +231,7 @@ export const K8B_BRIDGES = `
  * the bridges answer can cite sources.
  */
 export const BRIDGE_EVIDENCE = `
-  MATCH (p:Person {name:$person})-[:AUTHORED|ASSIGNED|REVIEWED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED]-(o:Person)
+  MATCH (p:Person {name:$person})-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(o:Person)
   WHERE o.dept IS NOT NULL AND p.dept IS NOT NULL AND o.dept <> p.dept
   WITH p, x, collect(DISTINCT o.dept) AS otherDepts
   ORDER BY x.day DESC
@@ -238,11 +249,13 @@ export const BRIDGE_EVIDENCE = `
  *    repeating the same decision up to 7 times.
  *  - Columns get explicit names (summary, day, ...) and the decision id is
  *    returned, so the API can map and cite them.
+ *  - Authors include PARTICIPATED: a decision made in a meeting or a thread is
+ *    attributed to the people who took part (they no longer have AUTHORED).
  */
 export const K10A_DECISION_TRACE = `
   MATCH (d:Decision)-[:ABOUT]->(s:System {name:$system})
   MATCH (d)-[:DECIDED_IN]->(src:Artifact)
-  OPTIONAL MATCH (src)<-[:AUTHORED]-(who:Person)
+  OPTIONAL MATCH (src)<-[:AUTHORED|PARTICIPATED]-(who:Person)
   OPTIONAL MATCH (d)-[:SUPERSEDES]->(old:Decision)
   RETURN d.id AS id, d.summary AS summary, d.day AS day, d.kind AS kind, d.status AS status,
          src.id AS source, src.type AS sourceType, collect(DISTINCT who.name) AS authors,

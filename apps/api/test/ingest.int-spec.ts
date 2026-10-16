@@ -50,8 +50,9 @@ describe('IngestService against a real FalkorDB', () => {
     expect(rows.map((r) => `${r.person} ${r.rel} ${r.artifact}`)).toEqual([
       'Ada AUTHORED CONF-1',
       'Ada ASSIGNED ENG-1',
-      'Bo AUTHORED slack_product_2026-01-02T09:00:00',
-      'Cy AUTHORED slack_product_2026-01-02T09:00:00',
+      // A two-person thread: both PARTICIPATED; single-writer threads are AUTHORED.
+      'Bo PARTICIPATED slack_product_2026-01-02T09:00:00',
+      'Cy PARTICIPATED slack_product_2026-01-02T09:00:00',
       'Cy AUTHORED slack_product_2026-01-05T09:00:00',
       'Cy AUTHORED slack_product_2026-01-06T09:00:00',
     ]);
