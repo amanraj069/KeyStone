@@ -48,6 +48,18 @@ export const ExtractRequestSchema = z.object({
 });
 export type ExtractRequest = z.infer<typeof ExtractRequestSchema>;
 
+/**
+ * POST /analytics/refresh-expertise body: recompute KNOWS (K2) and COLLAB (K8a)
+ * on a graph as of a day (default: the last day with an artifact), then rebuild
+ * its projection (apex -> apex_proj, apex_replay -> apex_proj_replay).
+ * A replay runs the same steps after every replayed day.
+ */
+export const RefreshExpertiseRequestSchema = z.object({
+  graph: IngestGraphSchema.default('apex'),
+  asOfDay: z.number().int().min(0).max(1000).optional(),
+});
+export type RefreshExpertiseRequest = z.infer<typeof RefreshExpertiseRequestSchema>;
+
 /** Node and edge totals in the target graph after a step. */
 export const GraphCountsSchema = z.object({
   people: z.number().int(),
@@ -58,7 +70,7 @@ export type GraphCounts = z.infer<typeof GraphCountsSchema>;
 
 /** One progress event, sent through BullMQ and streamed to the browser over SSE. */
 export const IngestProgressSchema = z.object({
-  kind: z.enum(['full', 'replay', 'extract']),
+  kind: z.enum(['full', 'replay', 'extract', 'refresh-expertise']),
   // Any graph name (tests write to test_* graphs); requests are limited by IngestGraphSchema.
   graph: z.string(),
   phase: z.string(),
@@ -75,7 +87,7 @@ export type IngestProgress = z.infer<typeof IngestProgressSchema>;
 /** POST /ingest/* reply and GET /ingest/jobs/:id. */
 export const IngestJobSchema = z.object({
   jobId: z.string(),
-  name: z.enum(['full', 'replay', 'extract']),
+  name: z.enum(['full', 'replay', 'extract', 'refresh-expertise']),
   state: z.string(),
   progress: IngestProgressSchema.nullable(),
   failedReason: z.string().nullable(),

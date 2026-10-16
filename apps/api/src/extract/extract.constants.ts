@@ -4,13 +4,16 @@ export const EXTRACT_CACHE = Symbol('EXTRACT_CACHE');
 
 export interface ExtractSettings {
   dataDir: string;
-  /** Only artifacts whose body is longer than this are extracted. */
+  /** Only artifacts whose body is longer than this are extracted (tickets excepted, see worthExtracting). */
   minBodyChars: number;
   /** Refuse to start if more LLM calls than this are planned (unless force). */
   maxCalls: number;
   /** Only artifacts authored by people in these departments; empty = all. */
   depts: string[];
 }
+
+/** Bodies shorter than this are not worth an LLM call (too little text to hold a decision). */
+export const MIN_BODY_CHARS = 300;
 
 /** Artifact types sent to the LLM (Meeting included: meetings are where decisions are made). */
 export const EXTRACT_LABELS = ['Page', 'Thread', 'PR', 'Email', 'Ticket', 'Meeting'] as const;

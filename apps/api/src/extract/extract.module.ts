@@ -2,11 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema';
 import { ExtractCacheService } from './extract-cache.service';
-import { EXTRACT_CACHE, EXTRACT_SETTINGS, type ExtractSettings } from './extract.constants';
+import { EXTRACT_CACHE, EXTRACT_SETTINGS, type ExtractSettings, MIN_BODY_CHARS } from './extract.constants';
 import { ExtractService } from './extract.service';
-
-/** Bodies shorter than this are not worth an LLM call (too little text to hold a decision). */
-const MIN_BODY_CHARS = 300;
 
 /** LLM extraction of systems and decisions. Runs as a BullMQ job (JobsModule) or from the CLI. */
 @Module({

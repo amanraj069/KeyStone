@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, NotFoundException, OnModuleDestroy } from '@nestjs/common';
 import {
   type ExtractRequest,
+  type RefreshExpertiseRequest,
   type FullIngestRequest,
   type IngestEvent,
   type IngestJob,
@@ -10,7 +11,16 @@ import {
 import { type Job, Queue, QueueEvents } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { Observable } from 'rxjs';
-import { EXTRACT_JOB, FULL_JOB, INGEST_SETTINGS, type IngestSettings, KEEP_FINISHED_JOBS, REPLAY_JOB } from './ingest.constants';
+import {
+  EXTRACT_JOB,
+  FULL_JOB,
+  INGEST_SETTINGS,
+  type IngestSettings,
+  KEEP_FINISHED_JOBS,
+  REFRESH_EXPERTISE_JOB,
+  REPLAY_JOB,
+} from './ingest.constants';
+import { closeWithin } from '../common/close-within';
 import { bullConnection } from './redis-connection';
 
 /**
@@ -50,6 +60,10 @@ export class IngestQueue implements OnModuleDestroy {
 
   async addExtract(request: ExtractRequest): Promise<IngestJob> {
     return this.describe(await this.queue.add(EXTRACT_JOB, request));
+  }
+
+  async addRefreshExpertise(request: RefreshExpertiseRequest): Promise<IngestJob> {
+    return this.describe(await this.queue.add(REFRESH_EXPERTISE_JOB, request));
   }
 
   async getJob(jobId: string): Promise<IngestJob> {
@@ -100,8 +114,8 @@ export class IngestQueue implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.events.close();
-    await this.queue.close();
+    await closeWithin('BullMQ queue events', this.logger, () => this.events.close());
+    await closeWithin('BullMQ queue', this.logger, () => this.queue.close());
     for (const connection of this.connections) connection.disconnect();
   }
 
@@ -109,10 +123,18 @@ export class IngestQueue implements OnModuleDestroy {
     const progress = IngestProgressSchema.safeParse(job.progress);
     return {
       jobId: String(job.id),
-      name: job.name === REPLAY_JOB ? 'replay' : job.name === EXTRACT_JOB ? 'extract' : 'full',
+      name: jobName(job.name),
       state: await job.getState(),
       progress: progress.success ? progress.data : null,
       failedReason: job.failedReason ?? null,
     };
   }
+}
+
+/** BullMQ job name -> the public job name. */
+function jobName(name: string): IngestJob['name'] {
+  if (name === REPLAY_JOB) return 'replay';
+  if (name === EXTRACT_JOB) return 'extract';
+  if (name === REFRESH_EXPERTISE_JOB) return 'refresh-expertise';
+  return 'full';
 }

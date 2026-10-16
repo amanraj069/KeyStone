@@ -12,6 +12,9 @@ import type { TextStore } from './text-store';
 /** Receives progress events; the BullMQ worker forwards them to job.updateProgress. */
 export type ProgressReporter = (progress: IngestProgress) => Promise<void>;
 
+/** Runs after each replayed day (extraction copy + expertise refresh); its counts join that day's event. */
+export type AfterDayHook = (day: number) => Promise<Record<string, number>>;
+
 const MERGE_BY_LABEL: Readonly<Record<ArtifactLabel, string>> = {
   Ticket: Q.MERGE_TICKET_ARTIFACTS,
   Page: Q.MERGE_PAGE_ARTIFACTS,
@@ -93,6 +96,7 @@ export class IngestService {
     request: Pick<ReplayRequest, 'fromDay' | 'toDay' | 'delayMs' | 'reset'>,
     report: ProgressReporter,
     plan?: IngestPlan,
+    afterDay?: AfterDayHook,
   ): Promise<GraphCounts> {
     const send = this.sender('replay', graphName, report);
     const company = plan ?? (await this.loadPlan());
@@ -107,8 +111,10 @@ export class IngestService {
     let totals: GraphCounts = await this.counts(graphName);
     for (const [index, day] of days.entries()) {
       const added = await this.writeSlice(graphName, sliceFor(company, (record) => record.day === day));
+      const extra = afterDay ? await afterDay(day) : {};
       const percent = Math.round(((index + 1) / days.length) * 100);
-      totals = await send('day', percent, day, added, `Day ${day}: +${added.artifacts} artifacts, ${added.people} people active`);
+      const expertise = 'knows' in extra ? `; expertise refreshed (${extra.knows} KNOWS)` : '';
+      totals = await send('day', percent, day, { ...added, ...extra }, `Day ${day}: +${added.artifacts} artifacts, ${added.people} people active${expertise}`);
       if (request.delayMs > 0 && index < days.length - 1) await sleep(request.delayMs);
     }
     await this.graph.assertMemoryBudget(`ingest:replay:${graphName}`);

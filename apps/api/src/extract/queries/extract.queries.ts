@@ -143,3 +143,54 @@ export const STALE_PAGES = `
   RETURN p.id AS page, p.title AS title, d.id AS decision, d.summary AS summary
   ORDER BY page LIMIT 20
 `;
+
+// ---------------------------------------------------------------- replay: copy one day's extraction from apex
+// The replay graph is built without LLM calls, so it has no systems or decisions of its own.
+// After each replayed day these read what extraction already wrote into apex for that
+// day's artifacts; the MERGE_* queries above write it into the replay graph.
+
+/** Systems mentioned by artifacts of $day, and decisions made that day ({name, aliases}). */
+export const REPLAY_SYSTEMS_FOR_DAY = `
+  MATCH (a:Artifact {day: $day})-[:MENTIONS]->(s:System)
+  RETURN DISTINCT s.name AS name, s.aliases AS aliases
+  UNION
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(:Decision)-[:ABOUT]->(s:System)
+  RETURN DISTINCT s.name AS name, s.aliases AS aliases
+`;
+
+/** MENTIONS edges of artifacts of $day ({artifactId, system, weight}). */
+export const REPLAY_MENTIONS_FOR_DAY = `
+  MATCH (a:Artifact {day: $day})-[m:MENTIONS]->(s:System)
+  RETURN a.id AS artifactId, s.name AS system, m.weight AS weight
+  ORDER BY artifactId, system
+`;
+
+/** Decisions made in artifacts of $day ({id, artifactId, summary, day, kind, confidence}). */
+export const REPLAY_DECISIONS_FOR_DAY = `
+  MATCH (d:Decision)-[:DECIDED_IN]->(a:Artifact {day: $day})
+  RETURN d.id AS id, a.id AS artifactId, d.summary AS summary, d.day AS day, d.kind AS kind, d.confidence AS confidence
+  ORDER BY id
+`;
+
+/** ABOUT edges of those decisions ({decisionId, system}). */
+export const REPLAY_ABOUT_FOR_DAY = `
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(d:Decision)-[:ABOUT]->(s:System)
+  RETURN d.id AS decisionId, s.name AS system
+  ORDER BY decisionId, system
+`;
+
+/** SUPERSEDES whose newer decision was made on $day; the older one is already replayed ({newerId, olderId}). */
+export const REPLAY_SUPERSEDES_FOR_DAY = `
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(newer:Decision)-[:SUPERSEDES]->(older:Decision)
+  RETURN newer.id AS newerId, older.id AS olderId
+`;
+
+/**
+ * ASSERTS where the page or the decision's source is from $day: whichever of
+ * the two arrives later creates the edge ({pageId, decisionId}).
+ */
+export const REPLAY_ASSERTS_FOR_DAY = `
+  MATCH (p:Page)-[:ASSERTS]->(d:Decision)-[:DECIDED_IN]->(src:Artifact)
+  WHERE p.day = $day OR src.day = $day
+  RETURN p.id AS pageId, d.id AS decisionId
+`;

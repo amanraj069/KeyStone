@@ -93,6 +93,21 @@ describe('IngestService against a real FalkorDB', () => {
     expect(events.at(-1)!.phase).toBe('done');
   });
 
+  it('runs the after-day hook once per replayed day and adds its counts to that day', async () => {
+    const events: IngestProgress[] = [];
+    const hooked: number[] = [];
+    const afterDay = async (day: number) => {
+      hooked.push(day);
+      return { knows: day * 10 };
+    };
+    await service.runReplay(replayGraph, { fromDay: 1, toDay: 3, delayMs: 0, reset: true }, async (p) => void events.push(p), undefined, afterDay);
+
+    expect(hooked).toEqual([1, 2, 3]);
+    const days = events.filter((e) => e.phase === 'day');
+    expect(days.map((e) => e.added.knows)).toEqual([10, 20, 30]);
+    expect(days[0].message).toContain('expertise refreshed (10 KNOWS)');
+  });
+
   it('stores artifact bodies in the TextStore, not the graph', async () => {
     await expect(new LocalTextStore(dataDir).get('artifacts', 'zoom_1')).resolves.toContain('**[10:00:00] Bo:**');
   });

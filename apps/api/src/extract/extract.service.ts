@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { IngestProgress } from '@keystone/shared';
-import { GraphService } from '../graph/graph.service';
+import { type BatchRow, GraphService } from '../graph/graph.service';
 import { readArtifacts } from '../ingest/artifact-record';
 import { TEXT_STORE } from '../ingest/ingest.constants';
 import { GRAPH_COUNTS } from '../ingest/queries/ingest.queries';
@@ -190,7 +190,7 @@ export class ExtractService {
     return summary;
   }
 
-  /** Selects artifacts: right type, body over minBodyChars (read from the TextStore), optional departments. */
+  /** Selects artifacts: right type, long enough body (read from the TextStore), optional departments. */
   async plan(options: Pick<ExtractRunOptions, 'graph' | 'limit' | 'depts' | 'refresh'>): Promise<{ candidates: number; items: PlannedItem[] }> {
     const depts = options.depts ?? this.settings.depts;
     const rows = await this.graph.roQuery<CandidateRow>(options.graph, Q.SELECT_CANDIDATES, { depts });
@@ -199,7 +199,7 @@ export class ExtractService {
     const items: PlannedItem[] = [];
     for (const row of rows) {
       const body = (await this.textStore.get('artifacts', row.id)) ?? '';
-      if (body.length <= this.settings.minBodyChars) continue;
+      if (!worthExtracting(row.label, body, this.settings.minBodyChars)) continue;
       const title = row.title ?? '';
       const fingerprint = sha256(
         JSON.stringify([PROMPT_VERSION, provider.provider, provider.model, sha256(body), title, row.day, row.authors]),
@@ -208,7 +208,7 @@ export class ExtractService {
     }
     const chosen = options.limit ? spreadEvenly(items, options.limit) : items;
     for (const item of chosen) item.cached = options.refresh ? null : await this.cache.get(item.id, item.fingerprint);
-    this.logger.log(`Plan: ${rows.length} candidates, ${items.length} over ${this.settings.minBodyChars} chars, ${chosen.length} selected`);
+    this.logger.log(`Plan: ${rows.length} candidates, ${items.length} worth extracting (tickets, or over ${this.settings.minBodyChars} chars), ${chosen.length} selected`);
     return { candidates: rows.length, items: chosen };
   }
 
@@ -359,6 +359,32 @@ export class ExtractService {
   }
 
   /**
+   * Replay support: copies what extraction already wrote into `sourceGraph` for
+   * the artifacts of one day (systems, mentions, decisions, links) into
+   * `targetGraph`. No LLM calls; every write is a MERGE, so replaying a day twice
+   * changes nothing. Returns how many rows of each kind were copied.
+   */
+  async replayDay(sourceGraph: string, targetGraph: string, day: number): Promise<Record<string, number>> {
+    // Rows are written into the target exactly as read (same keys as the MERGE queries expect).
+    const read = (cypher: string) => this.graph.roQuery<BatchRow>(sourceGraph, cypher, { day });
+    const systems = await read(Q.REPLAY_SYSTEMS_FOR_DAY);
+    const mentions = await read(Q.REPLAY_MENTIONS_FOR_DAY);
+    const decisions = await read(Q.REPLAY_DECISIONS_FOR_DAY);
+    const about = await read(Q.REPLAY_ABOUT_FOR_DAY);
+    const supersedes = await read(Q.REPLAY_SUPERSEDES_FOR_DAY);
+    const asserts = await read(Q.REPLAY_ASSERTS_FOR_DAY);
+
+    // Same order as a real extraction: nodes before the edges that MATCH them.
+    await this.graph.batchWrite(targetGraph, Q.MERGE_SYSTEMS, systems);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_MENTIONS, mentions);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_DECISIONS, decisions);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_ABOUT, about);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_SUPERSEDES, supersedes);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_ASSERTS, asserts);
+    return { systems: systems.length, mentions: mentions.length, decisions: decisions.length, supersedes: supersedes.length };
+  }
+
+  /**
    * Builds progress events. Graph totals are only re-counted outside the
    * 'extract' phase: nothing is written while artifacts are being extracted, and
    * with a warm cache thousands of artifacts finish at once (one count query per
@@ -377,6 +403,17 @@ export class ExtractService {
       await report({ kind: 'extract', graph: graphName, phase, percent, day: null, added, totals, message });
     };
   }
+}
+
+/**
+ * Whether an artifact's body is worth an LLM call. Tickets always are: a sprint
+ * ticket's body is just its title (~85 chars), yet the title names the systems
+ * the work touches, and without MENTIONS a ticket has no candidate new owners (K6).
+ * Everything else must be longer than minBodyChars.
+ */
+export function worthExtracting(label: string, body: string, minBodyChars: number): boolean {
+  if (label === 'Ticket') return body.trim().length > 0;
+  return body.length > minBodyChars;
 }
 
 /**

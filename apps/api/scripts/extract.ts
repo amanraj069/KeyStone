@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
 import { ExtractCacheService } from '../src/extract/extract-cache.service';
+import { MIN_BODY_CHARS } from '../src/extract/extract.constants';
 import { ExtractService } from '../src/extract/extract.service';
 import { falkorSettingsFromEnv } from '../src/graph/falkor-settings';
 import { GraphService } from '../src/graph/graph.service';
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
     graph,
     llm,
     new LocalTextStore(env.DATA_DIR),
-    { dataDir: env.DATA_DIR, minBodyChars: 300, maxCalls: env.EXTRACT_MAX_CALLS, depts: env.EXTRACT_DEPTS },
+    { dataDir: env.DATA_DIR, minBodyChars: MIN_BODY_CHARS, maxCalls: env.EXTRACT_MAX_CALLS, depts: env.EXTRACT_DEPTS },
     new ExtractCacheService(env.DATA_DIR, env.S3_BUCKET),
   );
 

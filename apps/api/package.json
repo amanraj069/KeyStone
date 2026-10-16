@@ -15,7 +15,8 @@
     "llm-check": "tsx scripts/llm-check.ts",
     "extract-sample": "tsx scripts/extract-sample.ts",
     "extract": "tsx scripts/extract.ts",
-    "embed": "tsx scripts/embed.ts"
+    "embed": "tsx scripts/embed.ts",
+    "expertise": "tsx scripts/expertise.ts"
   },
   "dependencies": {
     "@google/genai": "2.25.0",

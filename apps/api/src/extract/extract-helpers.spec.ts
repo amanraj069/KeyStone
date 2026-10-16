@@ -1,4 +1,4 @@
-import { spreadEvenly, validateLinks } from './extract.service';
+import { spreadEvenly, validateLinks, worthExtracting } from './extract.service';
 
 describe('validateLinks', () => {
   const input = {
@@ -38,5 +38,17 @@ describe('spreadEvenly', () => {
 
   it('returns everything when asked for more than there is', () => {
     expect(spreadEvenly([1, 2], 5)).toEqual([1, 2]);
+  });
+});
+
+describe('worthExtracting', () => {
+  it('extracts tickets whatever their length, but not empty ones', () => {
+    expect(worthExtracting('Ticket', 'title: upgrade EKS networking to pod ENIs', 300)).toBe(true);
+    expect(worthExtracting('Ticket', '   ', 300)).toBe(false);
+  });
+
+  it('needs more than minBodyChars for every other type', () => {
+    expect(worthExtracting('Thread', 'x'.repeat(300), 300)).toBe(false);
+    expect(worthExtracting('Thread', 'x'.repeat(301), 300)).toBe(true);
   });
 });

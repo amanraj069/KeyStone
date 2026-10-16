@@ -90,3 +90,39 @@ export const CHUNK_SUMMARY = `
   RETURN count(c) AS chunks, count(DISTINCT a) AS artifacts,
          sum(CASE WHEN c.text IS NULL THEN 0 ELSE 1 END) AS withText
 `;
+
+/**
+ * Replay test: gives D-1 a source artifact (T-1, day 3), as every real decision
+ * has one, so SUPERSEDES and ASSERTS can be replayed.
+ */
+export const GIVE_D1_A_SOURCE = `
+  MATCH (d:Decision {id: 'D-1'}), (a:Artifact {id: 'T-1'})
+  MERGE (d)-[:DECIDED_IN]->(a)
+`;
+
+/** What extraction wrote: counts of systems, mentions, decisions, links and superseded decisions. */
+export const EXTRACTION_SUMMARY = `
+  OPTIONAL MATCH (s:System) WITH count(s) AS systems
+  OPTIONAL MATCH ()-[m:MENTIONS]->() WITH systems, count(m) AS mentions
+  OPTIONAL MATCH (d:Decision) WITH systems, mentions, count(d) AS decisions,
+       sum(CASE WHEN d.status = 'superseded' THEN 1 ELSE 0 END) AS superseded
+  OPTIONAL MATCH ()-[x:SUPERSEDES]->() WITH systems, mentions, decisions, superseded, count(x) AS supersedes
+  OPTIONAL MATCH ()-[y:ASSERTS]->() WITH systems, mentions, decisions, superseded, supersedes, count(y) AS asserts
+  OPTIONAL MATCH ()-[z:ABOUT]->()
+  RETURN systems, mentions, decisions, superseded, supersedes, asserts, count(z) AS about
+`;
+
+/** KNOWS edges as {person, system, score} (to compare two graphs). */
+export const ALL_KNOWS = `
+  MATCH (p:Person)-[k:KNOWS]->(s:System)
+  RETURN p.name AS person, s.name AS system, k.score AS score
+  ORDER BY person, system
+`;
+
+/** COLLAB pairs in a projection, one row per pair ({a, b, weight}). */
+export const PROJECTION_COLLAB_PAIRS = `
+  MATCH (a:Person)-[c:COLLAB]->(b:Person)
+  WHERE a.name < b.name
+  RETURN a.name AS a, b.name AS b, c.weight AS weight
+  ORDER BY a, b
+`;

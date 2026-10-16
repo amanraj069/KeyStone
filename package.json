@@ -14,6 +14,7 @@
     "capability-check": "pnpm --filter @keystone/api capability-check",
     "llm-check": "pnpm --filter @keystone/api llm-check",
     "extract": "pnpm --filter @keystone/api extract",
-    "embed": "pnpm --filter @keystone/api embed"
+    "embed": "pnpm --filter @keystone/api embed",
+    "expertise": "pnpm --filter @keystone/api expertise"
   }
 }

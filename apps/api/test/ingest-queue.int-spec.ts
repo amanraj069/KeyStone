@@ -43,7 +43,9 @@ describe('ingest queue, worker and progress stream', () => {
   } as unknown as IngestService;
 
   const queue = new IngestQueue(settings);
-  const worker = new IngestWorker(fakeIngest, {} as unknown as ExtractService, settings);
+  // Only the replay path is exercised; the other services are never called.
+  const unused = {} as never;
+  const worker = new IngestWorker(fakeIngest, {} as unknown as ExtractService, unused, unused, unused, settings);
 
   beforeAll(() => worker.start());
   afterAll(async () => {
