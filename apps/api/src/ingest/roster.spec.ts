@@ -1,4 +1,4 @@
-import { buildRoster, speakersOf } from './roster';
+import { buildRoster, messagesBySpeaker, speakersOf } from './roster';
 import { MINI_RECORDS, record } from '../../test/ingest-records';
 
 describe('buildRoster', () => {
@@ -33,5 +33,33 @@ describe('speakersOf', () => {
   it('reads Zoom "**[time] Name:**" lines', () => {
     const meeting = record({ doc_id: 'z', doc_type: 'zoom_transcript', actors: ['Ann'], body: '**[09:00:00] Ann:** hi' });
     expect(speakersOf(meeting)).toEqual(['Ann']);
+  });
+});
+
+describe('messagesBySpeaker', () => {
+  it('counts one message per "Name:" line; continuation lines belong to the previous message', () => {
+    const thread = record({
+      doc_id: 's',
+      doc_type: 'slack',
+      actors: ['Ann', 'Bob'],
+      body: 'Ann: plan:\n1. migrate\n2. test\nBob: ok\nAnn: done\nCarol: not an actor',
+    });
+    expect([...messagesBySpeaker(thread)]).toEqual([
+      ['Ann', 2],
+      ['Bob', 1],
+    ]);
+  });
+
+  it('counts Zoom speaking turns', () => {
+    const meeting = record({
+      doc_id: 'z',
+      doc_type: 'zoom_transcript',
+      actors: ['Ann', 'Bob'],
+      body: '**[09:00:00] Ann:** hi\n\n**[09:01:00] Bob:** hey\n\n**[09:02:00] Ann:** agenda',
+    });
+    expect([...messagesBySpeaker(meeting)]).toEqual([
+      ['Ann', 2],
+      ['Bob', 1],
+    ]);
   });
 });

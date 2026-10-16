@@ -3,6 +3,7 @@ import type { GraphCounts, IngestProgress, ReplayRequest } from '@keystone/share
 import { GraphService } from '../graph/graph.service';
 import { SchemaService } from '../graph/schema.service';
 import { readArtifacts } from './artifact-record';
+import { readCalendar } from './calendar';
 import { INGEST_SETTINGS, type IngestSettings, TEXT_STORE } from './ingest.constants';
 import { buildPlan, type IngestPlan, type IngestSlice, sliceFor } from './ingest-plan';
 import type { ArtifactLabel } from './labels';
@@ -11,6 +12,9 @@ import type { TextStore } from './text-store';
 
 /** Receives progress events; the BullMQ worker forwards them to job.updateProgress. */
 export type ProgressReporter = (progress: IngestProgress) => Promise<void>;
+
+/** Runs after each replayed day (extraction copy + expertise refresh); its counts join that day's event. */
+export type AfterDayHook = (day: number) => Promise<Record<string, number>>;
 
 const MERGE_BY_LABEL: Readonly<Record<ArtifactLabel, string>> = {
   Ticket: Q.MERGE_TICKET_ARTIFACTS,
@@ -27,6 +31,7 @@ const MERGE_BY_ROLE = {
   AUTHORED: Q.MERGE_AUTHORED,
   REVIEWED: Q.MERGE_REVIEWED,
   ASSIGNED: Q.MERGE_ASSIGNED,
+  PARTICIPATED: Q.MERGE_PARTICIPATED,
 } as const;
 
 /** Bodies are written to the TextStore this many at a time. */
@@ -53,10 +58,11 @@ export class IngestService {
   /** Reads artifacts.jsonl and derives the roster, roles and links. */
   async loadPlan(): Promise<IngestPlan> {
     const records = await readArtifacts(this.settings.dataDir);
-    const plan = buildPlan(records);
+    const plan = buildPlan(records, await readCalendar(this.settings.dataDir));
     this.logger.log(
       `Plan: ${records.length} artifacts, ${plan.roster.people.length} people, ${plan.roles.length} roles, ` +
-        `${plan.references.length} references, ${plan.fixes.length} fixes, days ${plan.days[0]}..${plan.days.at(-1)}`,
+        `${plan.references.length} references, ${plan.fixes.length} fixes, ${plan.departures.length} departures, ` +
+        `days ${plan.days[0]}..${plan.days.at(-1)}`,
     );
     return plan;
   }
@@ -93,6 +99,7 @@ export class IngestService {
     request: Pick<ReplayRequest, 'fromDay' | 'toDay' | 'delayMs' | 'reset'>,
     report: ProgressReporter,
     plan?: IngestPlan,
+    afterDay?: AfterDayHook,
   ): Promise<GraphCounts> {
     const send = this.sender('replay', graphName, report);
     const company = plan ?? (await this.loadPlan());
@@ -107,8 +114,10 @@ export class IngestService {
     let totals: GraphCounts = await this.counts(graphName);
     for (const [index, day] of days.entries()) {
       const added = await this.writeSlice(graphName, sliceFor(company, (record) => record.day === day));
+      const extra = afterDay ? await afterDay(day) : {};
       const percent = Math.round(((index + 1) / days.length) * 100);
-      totals = await send('day', percent, day, added, `Day ${day}: +${added.artifacts} artifacts, ${added.people} people active`);
+      const expertise = 'knows' in extra ? `; expertise refreshed (${extra.knows} KNOWS)` : '';
+      totals = await send('day', percent, day, { ...added, ...extra }, `Day ${day}: +${added.artifacts} artifacts, ${added.people} people active${expertise}`);
       if (request.delayMs > 0 && index < days.length - 1) await sleep(request.delayMs);
     }
     await this.graph.assertMemoryBudget(`ingest:replay:${graphName}`);
@@ -126,7 +135,7 @@ export class IngestService {
     slice: IngestSlice,
     onStep?: (phase: string, percent: number, added: Record<string, number>) => Promise<unknown>,
   ): Promise<Record<string, number>> {
-    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, references: 0, fixes: 0 };
+    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, references: 0, fixes: 0, departures: 0 };
     const step = async (phase: string, percent: number) => onStep?.(phase, percent, { ...added });
 
     await this.graph.batchWrite(graphName, Q.MERGE_DEPTS, slice.depts.map((name) => ({ name })));
@@ -154,8 +163,33 @@ export class IngestService {
     added.fixes = slice.fixes.length;
     await step('links', 90);
 
+    // Departures announced in these artifacts (the person must already exist).
+    await this.graph.batchWrite(graphName, Q.MERGE_DEPARTURES, slice.departures.map((d) => ({ ...d })));
+    added.departures = slice.departures.length;
     await this.graph.query(graphName, Q.UPDATE_PERSON_ACTIVITY);
     return added;
+  }
+
+  /**
+   * Rewrites every Person -> Artifact role edge and every announced departure from
+   * artifacts.jsonl (after those rules change) without resetting the graph: systems,
+   * decisions and chunks stay. Returns the rows written per relationship type.
+   */
+  async rewriteRoles(graphName: string, plan?: IngestPlan): Promise<Record<string, number>> {
+    const company = plan ?? (await this.loadPlan());
+    await this.graph.query(graphName, Q.DELETE_ROLE_EDGES);
+    await this.graph.query(graphName, Q.DELETE_DEPARTURE_EDGES);
+    await this.graph.query(graphName, Q.CLEAR_DEPARTED_DAYS);
+    const written: Record<string, number> = {};
+    for (const [rel, query] of Object.entries(MERGE_BY_ROLE)) {
+      const rows = company.roles.filter((role) => role.rel === rel);
+      await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
+      written[rel] = rows.length;
+    }
+    await this.graph.batchWrite(graphName, Q.MERGE_DEPARTURES, company.departures.map((d) => ({ ...d })));
+    written.DEPARTURE_ANNOUNCED_IN = company.departures.length;
+    await this.graph.query(graphName, Q.UPDATE_PERSON_ACTIVITY);
+    return written;
   }
 
   /** {people, artifacts, edges} currently in the graph. */

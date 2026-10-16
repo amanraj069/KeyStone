@@ -1,4 +1,6 @@
 import type { ArtifactRecord } from './artifact-record';
+import type { Calendar } from './calendar';
+import { type DepartureRow, departuresIn } from './departures';
 import { type ArtifactLabel, labelFor } from './labels';
 import { type FixesRow, fixesFor, type ReferenceRow, referencesFor } from './links';
 import { type RoleRow, rolesFor } from './roles';
@@ -24,6 +26,7 @@ export interface IngestSlice {
   roles: RoleRow[];
   references: ReferenceRow[];
   fixes: FixesRow[];
+  departures: DepartureRow[];
 }
 
 /**
@@ -36,11 +39,13 @@ export interface IngestPlan {
   roles: RoleRow[];
   references: ReferenceRow[];
   fixes: FixesRow[];
+  /** People announced as leaving in the company's own documents. */
+  departures: DepartureRow[];
   /** Simulation days that have at least one artifact, ascending. */
   days: number[];
 }
 
-export function buildPlan(records: ArtifactRecord[]): IngestPlan {
+export function buildPlan(records: ArtifactRecord[], calendar: Calendar | null = null): IngestPlan {
   const roster = buildRoster(records);
   const knownIds = new Set(records.map((r) => r.doc_id));
   const docTypeById = new Map(records.map((r) => [r.doc_id, r.doc_type]));
@@ -50,6 +55,7 @@ export function buildPlan(records: ArtifactRecord[]): IngestPlan {
     roles: records.flatMap((r) => rolesFor(r, roster)),
     references: records.flatMap((r) => referencesFor(r, knownIds)),
     fixes: records.flatMap((r) => fixesFor(r, docTypeById)),
+    departures: records.flatMap((r) => departuresIn(r, roster, calendar)),
     days: [...new Set(records.map((r) => r.day).filter((d): d is number => d !== null))].sort((a, b) => a - b),
   };
 }
@@ -97,5 +103,6 @@ export function sliceFor(plan: IngestPlan, include: (record: ArtifactRecord) => 
     roles,
     references: plan.references.filter((ref) => ids.has(ref.from) || ids.has(ref.to)),
     fixes: plan.fixes.filter((fix) => ids.has(fix.pr) || ids.has(fix.ticket)),
+    departures: plan.departures.filter((d) => ids.has(d.artifactId)),
   };
 }

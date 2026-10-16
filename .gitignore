@@ -27,7 +27,8 @@ __pycache__/
 .DS_Store
 *.log
 
-# Agent briefs are kept local, not committed
+# Agent briefs and private development notes are kept local, not committed
+docs/development-notes.md
 AGENTS.md
 CLAUDE.md
 AI_USAGE.md

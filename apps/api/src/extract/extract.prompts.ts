@@ -79,3 +79,38 @@ export function linksPrompt(input: LinksPromptInput): string {
     ...(input.claims.length ? input.claims.map((c) => `- ${c.pageId}: ${c.claim}`) : ['(none)']),
   ].join('\n');
 }
+
+/**
+ * Targeted second pass for stale pages: same output as the links pass, but it
+ * shows when each page was written and asks for a link for every claim, also to
+ * decisions that were later replaced (that is what makes a page stale).
+ */
+export const STALE_LINKS_PROMPT_VERSION = 'links-stale-v1';
+
+export const STALE_LINKS_SYSTEM_PROMPT = [
+  'You check documentation pages against the decisions made about one technical system.',
+  'Decisions are listed oldest first with their day; page claims say what each page states, with the day the page was written.',
+  'Return {"supersedes": [{"newerId", "olderId"}], "asserts": [{"pageId", "decisionId"}]}.',
+  'asserts: for EVERY page claim, link it to the decision it restates or relies on, if one matches,',
+  'even when that decision was later replaced. A page written before a newer decision often still describes',
+  'the older behaviour: link it to the older decision.',
+  'supersedes: when a later decision replaces, reverses or changes the same aspect of an earlier one',
+  '(a new value or limit, a different tool, a dropped practice). Not when it only adds detail.',
+  'Use only the ids given. Use empty arrays when nothing applies.',
+].join('\n');
+
+export interface StaleLinksPromptInput extends LinksPromptInput {
+  claims: { pageId: string; pageDay: number | null; claim: string }[];
+}
+
+export function staleLinksPrompt(input: StaleLinksPromptInput): string {
+  return [
+    `System: ${input.system}`,
+    '',
+    'Decisions (oldest first):',
+    ...input.decisions.map((d) => `- ${d.id} (day ${d.day ?? '?'}): ${d.summary}`),
+    '',
+    'Page claims:',
+    ...input.claims.map((c) => `- ${c.pageId} (page written day ${c.pageDay ?? '?'}): ${c.claim}`),
+  ].join('\n');
+}

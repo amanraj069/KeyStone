@@ -8,6 +8,8 @@ import type { LlmTokenUsage } from './llm.types';
 export const PRICES_PER_MILLION: Readonly<Record<string, { input: number; cachedInput: number; output: number }>> = {
   'gpt-5-nano': { input: 0.05, cachedInput: 0.005, output: 0.4 },
   'gpt-5-mini': { input: 0.25, cachedInput: 0.025, output: 2.0 },
+  // Embeddings bill input tokens only.
+  'text-embedding-3-small': { input: 0.02, cachedInput: 0.02, output: 0 },
 };
 
 /** Cost of `usage` on `model`, or null if the model has no price entry. Reasoning is already inside outputTokens. */

@@ -60,11 +60,22 @@ export function parseAddress(value: unknown): { name: string; domain: string } |
 
 /** Names of the people who actually spoke in a Slack thread or Zoom transcript. */
 export function speakersOf(record: ArtifactRecord): string[] {
+  return [...messagesBySpeaker(record).keys()];
+}
+
+/**
+ * Messages per speaker in a Slack thread or Zoom transcript, in order of first
+ * message. A message is one line starting with "Name:" (Slack) or
+ * "**[hh:mm:ss] Name:**" (Zoom); lines without that prefix continue the previous
+ * message (lists, wrapped text). Only names the dataset also lists as actors count.
+ */
+export function messagesBySpeaker(record: ArtifactRecord): Map<string, number> {
   const pattern = record.doc_type === 'zoom_transcript' ? ZOOM_SPEAKER : SLACK_SPEAKER;
-  const names = new Set<string>();
-  for (const match of (record.body ?? '').matchAll(pattern)) names.add(match[1]);
-  // Only names that the dataset also lists as actors of this artifact.
-  return [...names].filter((name) => record.actors.includes(name));
+  const counts = new Map<string, number>();
+  for (const match of (record.body ?? '').matchAll(pattern)) {
+    if (record.actors.includes(match[1])) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /** The department named in a dept channel id, e.g. "slack_qa_support_2026-01-05T..." -> QA_Support. */

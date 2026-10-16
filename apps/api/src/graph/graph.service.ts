@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { FalkorDB, type FalkorDBOptions, type Graph } from 'falkordb';
 import type { MemoryReport } from '@keystone/shared';
+import { closeWithin } from '../common/close-within';
 import { backoffDelay, sleep } from './backoff';
 import { toBatches } from './batch';
 import { DEFAULT_BATCH_SIZE, FALKOR_SETTINGS, type FalkorSettings, SLOW_QUERY_MS } from './graph.constants';
@@ -27,6 +28,20 @@ export interface BatchWriteResult {
   rows: number;
   batches: number;
   ms: number;
+}
+
+/**
+ * FalkorDB returns at most RESULTSET_SIZE rows (10,000 in the image's default
+ * config) and silently drops the rest. A result that reaches the limit may be
+ * incomplete, so it is an error: page the query (ORDER BY ... SKIP $skip LIMIT $limit).
+ */
+export function assertNotTruncated(rows: number, limit: number | null, cypher: string): void {
+  if (limit !== null && limit > 0 && rows >= limit) {
+    throw new Error(
+      `Query returned ${rows} rows, FalkorDB's RESULTSET_SIZE limit, so the result may be truncated; ` +
+        `page it with SKIP/LIMIT: ${cypher.replace(/\s+/g, ' ').trim().slice(0, 120)}`,
+    );
+  }
 }
 
 /** Thrown by assertMemoryBudget when FalkorDB uses more memory than MEMORY_MAX_MB. */
@@ -66,6 +81,8 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   private db: FalkorDB | null = null;
   private shuttingDown = false;
   // Resolves the first time a connection succeeds (see whenConnected).
+  // FalkorDB's RESULTSET_SIZE, read at connect (null = unknown or unlimited).
+  private resultSetLimit: number | null = null;
   private markConnected!: () => void;
   private readonly firstConnection = new Promise<void>((resolve) => (this.markConnected = resolve));
 
@@ -81,8 +98,9 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   async onModuleDestroy(): Promise<void> {
     this.shuttingDown = true;
     if (this.db) {
-      await this.db.close();
+      const db = this.db;
       this.db = null;
+      await closeWithin('FalkorDB connection', this.logger, () => db.close());
       this.logger.log('FalkorDB connection closed');
     }
   }
@@ -95,6 +113,7 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
     for (let attempt = 0; attempt < maxAttempts && !this.shuttingDown; attempt++) {
       try {
         this.db = await this.openConnection();
+        this.resultSetLimit = await this.readResultSetLimit(this.db);
         this.logger.log(`Connected to FalkorDB at ${this.settings.host}:${this.settings.port}`);
         this.markConnected();
         return;
@@ -121,6 +140,7 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   async query<T>(graphName: string, cypher: string, params: QueryParams = {}): Promise<T[]> {
     const graph = (await this.requireDb()).selectGraph(graphName);
     const reply = await this.timed('query', graphName, cypher, () => graph.query(cypher, { params }));
+    assertNotTruncated(reply.data?.length ?? 0, this.resultSetLimit, cypher);
     return mapRows<T>(reply.data ?? []);
   }
 
@@ -128,6 +148,7 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   async roQuery<T>(graphName: string, cypher: string, params: QueryParams = {}): Promise<T[]> {
     const graph = (await this.requireDb()).selectGraph(graphName);
     const reply = await this.timed('roQuery', graphName, cypher, () => graph.roQuery(cypher, { params }));
+    assertNotTruncated(reply.data?.length ?? 0, this.resultSetLimit, cypher);
     return mapRows<T>(reply.data ?? []);
   }
 
@@ -240,6 +261,17 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
     db.on('error', (error: unknown) => this.logger.warn(`FalkorDB client error: ${describeError(error)}`));
     (await db.connection).on('ready', () => this.logger.log('FalkorDB connection ready'));
     return db;
+  }
+
+  /** GRAPH.CONFIG GET RESULTSET_SIZE -> ["RESULTSET_SIZE", 10000]; -1 or unreadable means no limit known. */
+  private async readResultSetLimit(db: FalkorDB): Promise<number | null> {
+    try {
+      const reply = await db.configGet('RESULTSET_SIZE');
+      const value = Number(Array.isArray(reply) ? reply.flat().at(-1) : reply);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Returns the client, or a 503 if we are not currently connected. */

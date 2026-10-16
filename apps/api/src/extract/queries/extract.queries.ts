@@ -4,13 +4,15 @@
 
 /**
  * Candidate artifacts for extraction: id, extra label, title, day, authors and
- * the authors' departments. $depts = [] means "all departments".
+ * the authors' departments (people who AUTHORED it or PARTICIPATED in it: the same
+ * people who were all AUTHORED before the participation model, so cached
+ * extraction fingerprints still match). $depts = [] means "all departments".
  * Bodies are NOT here: they are read from the TextStore.
  */
 export const SELECT_CANDIDATES = `
   MATCH (a:Artifact)
   WHERE a:Page OR a:Thread OR a:PR OR a:Email OR a:Ticket OR a:Meeting
-  OPTIONAL MATCH (p:Person)-[:AUTHORED]->(a)
+  OPTIONAL MATCH (p:Person)-[:AUTHORED|PARTICIPATED]->(a)
   OPTIONAL MATCH (p)-[:MEMBER_OF]->(d:Dept)
   WITH a, collect(DISTINCT p.name) AS authors, collect(DISTINCT d.name) AS depts
   WHERE size($depts) = 0 OR any(dept IN depts WHERE dept IN $depts)
@@ -142,4 +144,104 @@ export const STALE_PAGES = `
   MATCH (p:Page)-[:ASSERTS]->(d:Decision {status: 'superseded'})
   RETURN p.id AS page, p.title AS title, d.id AS decision, d.summary AS summary
   ORDER BY page LIMIT 20
+`;
+
+// ---------------------------------------------------------------- replay: copy one day's extraction from apex
+// The replay graph is built without LLM calls, so it has no systems or decisions of its own.
+// After each replayed day these read what extraction already wrote into apex for that
+// day's artifacts; the MERGE_* queries above write it into the replay graph.
+
+/** Systems mentioned by artifacts of $day, and decisions made that day ({name, aliases}). */
+export const REPLAY_SYSTEMS_FOR_DAY = `
+  MATCH (a:Artifact {day: $day})-[:MENTIONS]->(s:System)
+  RETURN DISTINCT s.name AS name, s.aliases AS aliases
+  UNION
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(:Decision)-[:ABOUT]->(s:System)
+  RETURN DISTINCT s.name AS name, s.aliases AS aliases
+`;
+
+/** MENTIONS edges of artifacts of $day ({artifactId, system, weight}). */
+export const REPLAY_MENTIONS_FOR_DAY = `
+  MATCH (a:Artifact {day: $day})-[m:MENTIONS]->(s:System)
+  RETURN a.id AS artifactId, s.name AS system, m.weight AS weight
+  ORDER BY artifactId, system
+`;
+
+/** Decisions made in artifacts of $day ({id, artifactId, summary, day, kind, confidence}). */
+export const REPLAY_DECISIONS_FOR_DAY = `
+  MATCH (d:Decision)-[:DECIDED_IN]->(a:Artifact {day: $day})
+  RETURN d.id AS id, a.id AS artifactId, d.summary AS summary, d.day AS day, d.kind AS kind, d.confidence AS confidence
+  ORDER BY id
+`;
+
+/** ABOUT edges of those decisions ({decisionId, system}). */
+export const REPLAY_ABOUT_FOR_DAY = `
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(d:Decision)-[:ABOUT]->(s:System)
+  RETURN d.id AS decisionId, s.name AS system
+  ORDER BY decisionId, system
+`;
+
+/** SUPERSEDES whose newer decision was made on $day; the older one is already replayed ({newerId, olderId}). */
+export const REPLAY_SUPERSEDES_FOR_DAY = `
+  MATCH (:Artifact {day: $day})<-[:DECIDED_IN]-(newer:Decision)-[:SUPERSEDES]->(older:Decision)
+  RETURN newer.id AS newerId, older.id AS olderId
+`;
+
+/**
+ * ASSERTS where the page or the decision's source is from $day: whichever of
+ * the two arrives later creates the edge ({pageId, decisionId}).
+ */
+export const REPLAY_ASSERTS_FOR_DAY = `
+  MATCH (p:Page)-[:ASSERTS]->(d:Decision)-[:DECIDED_IN]->(src:Artifact)
+  WHERE p.day = $day OR src.day = $day
+  RETURN p.id AS pageId, d.id AS decisionId
+`;
+
+// ---------------------------------------------------------------- targeted stale-page pass
+
+/**
+ * Core systems worth a targeted stale-page pass: at least one superseded decision
+ * or 3+ decisions ({system, decisions, superseded, claims}). Claims must have been
+ * rebuilt first (they only exist during a linking run).
+ */
+export const STALE_LINK_TARGETS = `
+  MATCH (s:System)
+  WHERE s.core = true
+  OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+  WITH s, count(d) AS decisions, sum(CASE WHEN d.status = 'superseded' THEN 1 ELSE 0 END) AS superseded
+  WHERE superseded >= 1 OR decisions >= 3
+  OPTIONAL MATCH (:Page)-[:CLAIMS]->(c:Claim {system: s.name})
+  RETURN s.name AS system, decisions, superseded, count(c) AS claims
+  ORDER BY system
+`;
+
+/**
+ * Prompt input for the systems in $names: decisions oldest first, and page claims
+ * with the day the page was written ({system, decisions, claims}).
+ */
+export const STALE_LINK_INPUT = `
+  MATCH (s:System)
+  WHERE s.name IN $names
+  OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+  WITH s, d ORDER BY coalesce(d.day, 1000000), d.id
+  WITH s, collect(CASE WHEN d IS NULL THEN NULL ELSE {id: d.id, day: d.day, summary: d.summary} END) AS decisions
+  OPTIONAL MATCH (p:Page)-[:CLAIMS]->(c:Claim {system: s.name})
+  WITH s, decisions, p, c ORDER BY p.id, c.id
+  WITH s, decisions, collect(CASE WHEN c IS NULL THEN NULL ELSE {pageId: p.id, pageDay: p.day, claim: c.claim} END) AS claims
+  RETURN s.name AS system, decisions, claims
+  ORDER BY system
+`;
+
+/** SUPERSEDES between two decisions made in the same artifact: a document does not supersede itself. */
+export const DELETE_SAME_SOURCE_SUPERSEDES = `
+  MATCH (n:Decision)-[r:SUPERSEDES]->(o:Decision)
+  MATCH (n)-[:DECIDED_IN]->(src:Artifact)<-[:DECIDED_IN]-(o)
+  DELETE r
+`;
+
+/** A decision marked superseded that no SUPERSEDES edge points at any more is active again. */
+export const REACTIVATE_UNSUPERSEDED = `
+  MATCH (o:Decision {status: 'superseded'})
+  WHERE NOT ()-[:SUPERSEDES]->(o)
+  SET o.status = 'active'
 `;

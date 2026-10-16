@@ -7,6 +7,8 @@
  *   pnpm extract --force              full run even above EXTRACT_MAX_CALLS
  *   pnpm extract --refresh            ignore the extraction cache (costs money)
  *   pnpm extract --graph apex_replay  another graph (default apex)
+ *   pnpm extract --relink-stale [--claims-only] [--dry-run]
+ *                                     targeted stale-page pass on core systems (see ExtractService.relinkStale)
  *
  * With LLM_CACHE_ONLY=yes any cache miss fails, proving a rerun makes zero LLM calls.
  */
@@ -16,6 +18,7 @@ import { join } from 'node:path';
 import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
 import { ExtractCacheService } from '../src/extract/extract-cache.service';
+import { MIN_BODY_CHARS } from '../src/extract/extract.constants';
 import { ExtractService } from '../src/extract/extract.service';
 import { falkorSettingsFromEnv } from '../src/graph/falkor-settings';
 import { GraphService } from '../src/graph/graph.service';
@@ -44,11 +47,19 @@ async function main(): Promise<void> {
     graph,
     llm,
     new LocalTextStore(env.DATA_DIR),
-    { dataDir: env.DATA_DIR, minBodyChars: 300, maxCalls: env.EXTRACT_MAX_CALLS, depts: env.EXTRACT_DEPTS },
+    { dataDir: env.DATA_DIR, minBodyChars: MIN_BODY_CHARS, maxCalls: env.EXTRACT_MAX_CALLS, depts: env.EXTRACT_DEPTS },
     new ExtractCacheService(env.DATA_DIR, env.S3_BUCKET),
   );
 
   const limit = option('limit');
+  if (flag('relink-stale')) {
+    try {
+      await relinkStale(extract, option('graph') ?? 'apex');
+    } finally {
+      await graph.onModuleDestroy();
+    }
+    return;
+  }
   try {
     const summary = await extract.run(
       {
@@ -84,6 +95,32 @@ async function main(): Promise<void> {
   } finally {
     await graph.onModuleDestroy();
   }
+}
+
+/**
+ * pnpm extract --relink-stale [--claims-only] [--dry-run]: the targeted stale-page
+ * pass (core systems with a superseded decision or 3+ decisions).
+ */
+async function relinkStale(extract: ExtractService, graphName: string): Promise<void> {
+  const summary = await extract.relinkStale(graphName, { claimsOnly: flag('claims-only'), dryRun: flag('dry-run') });
+  const model = extract.model();
+  const estimate = costUsd(model, {
+    inputTokens: summary.estimatedInputTokens,
+    cachedInputTokens: 0,
+    outputTokens: summary.estimatedOutputTokens,
+    reasoningTokens: 0,
+  });
+  console.log(
+    `\npage claims rebuilt from cache: ${summary.claims}; target systems: ${summary.targets} (${summary.targetsWithClaims} with page claims)` +
+      `\nplanned LLM calls: ${summary.calls}; estimated ~${summary.estimatedInputTokens} in / ${summary.estimatedOutputTokens} out` +
+      (estimate === null ? '' : ` (~$${estimate.toFixed(3)} on ${model})`),
+  );
+  if (summary.dryRun) return;
+  const cost = costUsd(model, summary.tokens);
+  console.log(
+    `real LLM calls ${summary.llmCalls}; failures ${summary.failures.length}; new links: ${summary.supersedes} SUPERSEDES, ` +
+      `${summary.asserts} ASSERTS (${summary.rejected} rejected)` + (cost === null ? '' : `; cost $${cost.toFixed(4)}`),
+  );
 }
 
 main().catch((error: unknown) => {

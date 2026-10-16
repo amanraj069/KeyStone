@@ -14,7 +14,11 @@
     "worker": "node dist/worker.js",
     "llm-check": "tsx scripts/llm-check.ts",
     "extract-sample": "tsx scripts/extract-sample.ts",
-    "extract": "tsx scripts/extract.ts"
+    "extract": "tsx scripts/extract.ts",
+    "embed": "tsx scripts/embed.ts",
+    "expertise": "tsx scripts/expertise.ts",
+    "systems": "tsx scripts/systems.ts",
+    "reingest-roles": "tsx scripts/reingest-roles.ts"
   },
   "dependencies": {
     "@google/genai": "2.25.0",

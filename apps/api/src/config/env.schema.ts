@@ -69,6 +69,10 @@ export const EnvSchema = z
       .default('')
       .transform((raw) => raw.split(',').map((d) => d.trim()).filter((d) => d.length > 0)),
 
+    // A System is "core" (bus factor, departure impact, apex_proj) when at least this many
+    // artifacts mention it, written by at least 2 people. See catalog.constants.ts.
+    CORE_MIN_MENTIONS: z.coerce.number().int().min(1).default(5),
+
     // Memory guard for ingestion stages; both below the container's 4 GB limit.
     MEMORY_WARN_MB: z.coerce.number().int().positive().default(3000),
     MEMORY_MAX_MB: z.coerce.number().int().positive().default(3600),

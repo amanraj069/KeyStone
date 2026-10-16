@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ExtractCacheService } from '../src/extract/extract-cache.service';
-import { LINKS_SYSTEM_PROMPT } from '../src/extract/extract.prompts';
+import { LINKS_SYSTEM_PROMPT, STALE_LINKS_SYSTEM_PROMPT } from '../src/extract/extract.prompts';
 import { ExtractService } from '../src/extract/extract.service';
 import type { GraphService } from '../src/graph/graph.service';
 import { SchemaService } from '../src/graph/schema.service';
@@ -13,6 +13,7 @@ import { LlmService } from '../src/llm/llm.service';
 import type { LlmJsonRequest, LlmProvider } from '../src/llm/llm.types';
 import { connectTestGraphService, testGraphName } from './graph-test-utils';
 import { MINI_RECORDS } from './ingest-records';
+import { MARK_ALL_SYSTEMS_CORE } from './queries/test.queries';
 
 const USAGE = { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, reasoningTokens: 0 };
 
@@ -24,6 +25,12 @@ const USAGE = { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, reason
  */
 function scriptedProvider(): LlmProvider & { calls: jest.Mock } {
   const calls = jest.fn(async (request: LlmJsonRequest) => {
+    // Targeted stale pass: the page claim restates the SECOND oldest decision.
+    if (request.system.startsWith(STALE_LINKS_SYSTEM_PROMPT)) {
+      const ids = [...request.prompt.matchAll(/^- (D:\S+) \(day/gm)].map((m) => m[1]);
+      const pages = [...request.prompt.matchAll(/^- (\S+) \(page written day/gm)].map((m) => m[1]);
+      return { text: JSON.stringify({ supersedes: [], asserts: pages.length ? [{ pageId: pages[0], decisionId: ids[1] }] : [] }), usage: USAGE };
+    }
     if (request.system.startsWith(LINKS_SYSTEM_PROMPT)) {
       const ids = [...request.prompt.matchAll(/^- (D:\S+) \(day/gm)].map((m) => m[1]);
       const pages = [...request.prompt.split('Page claims:')[1].matchAll(/^- (\S+?): /gm)].map((m) => m[1]);
@@ -149,5 +156,28 @@ describe('ExtractService on the mini company (scripted LLM)', () => {
     expect(summary.llmCalls + summary.linkCalls).toBe(0);
     expect(summary.fromCache).toBe(6);
     await expect(q(counts)).resolves.toEqual(before);
+  });
+
+  it('the targeted stale pass estimates first, then adds ASSERTS for core systems from rebuilt claims', async () => {
+    await graph.query(name, MARK_ALL_SYSTEMS_CORE);
+    const callsBefore = provider.calls.mock.calls.length;
+    const plan = await extract.relinkStale(name, { claimsOnly: true, dryRun: true });
+    // TitanDB: core, 6 decisions, 1 claim (CONF-1, rebuilt from the extraction cache).
+    expect(plan).toMatchObject({ claims: 1, targets: 1, targetsWithClaims: 1, calls: 1, llmCalls: 0 });
+    expect(plan.estimatedInputTokens).toBeGreaterThan(0);
+    expect(provider.calls.mock.calls.length).toBe(callsBefore);
+    await expect(q('MATCH (c:Claim) RETURN count(c) AS n')).resolves.toEqual([{ n: 0 }]);
+
+    const result = await extract.relinkStale(name, { claimsOnly: true, dryRun: false });
+    expect(result).toMatchObject({ llmCalls: 1, asserts: 1, supersedes: 0, failures: [] });
+    // The first pass linked CONF-1 to the oldest decision; this one adds the second oldest.
+    await expect(q("MATCH (:Page {id: 'CONF-1'})-[:ASSERTS]->(d:Decision) RETURN count(d) AS n")).resolves.toEqual([{ n: 2 }]);
+    await expect(q('MATCH (c:Claim) RETURN count(c) AS n')).resolves.toEqual([{ n: 0 }]);
+
+    // A full re-extraction rebuilds only the first and second pass, so the targeted pass is
+    // its own step when rebuilding; repeating it on the same graph is answered from the cache.
+    const callsAfter = provider.calls.mock.calls.length;
+    await expect(extract.relinkStale(name, { claimsOnly: true, dryRun: false })).resolves.toMatchObject({ llmCalls: 0, asserts: 1 });
+    expect(provider.calls.mock.calls.length).toBe(callsAfter);
   });
 });

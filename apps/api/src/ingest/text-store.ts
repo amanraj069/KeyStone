@@ -8,6 +8,8 @@ import { join } from 'node:path';
 export interface TextStore {
   put(kind: 'artifacts' | 'chunks', id: string, text: string): Promise<void>;
   get(kind: 'artifacts' | 'chunks', id: string): Promise<string | null>;
+  /** Several texts at once; missing ids are left out of the map. */
+  getMany(kind: 'artifacts' | 'chunks', ids: readonly string[]): Promise<Map<string, string>>;
 }
 
 /** TextStore on the local disk: DATA_DIR/text/<kind>/<encoded id>.txt */
@@ -27,6 +29,11 @@ export class LocalTextStore implements TextStore {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw error;
     }
+  }
+
+  async getMany(kind: 'artifacts' | 'chunks', ids: readonly string[]): Promise<Map<string, string>> {
+    const texts = await Promise.all(ids.map(async (id) => [id, await this.get(kind, id)] as const));
+    return new Map(texts.filter((entry): entry is readonly [string, string] => entry[1] !== null));
   }
 
   /** Ids contain characters like ':' and '/', so they are URL-encoded into a safe file name. */

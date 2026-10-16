@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { IngestProgress } from '@keystone/shared';
-import { GraphService } from '../graph/graph.service';
+import { type BatchRow, GraphService } from '../graph/graph.service';
 import { readArtifacts } from '../ingest/artifact-record';
 import { TEXT_STORE } from '../ingest/ingest.constants';
 import { GRAPH_COUNTS } from '../ingest/queries/ingest.queries';
@@ -26,6 +26,10 @@ import {
   type LinksPromptInput,
   MAX_BODY_CHARS,
   PROMPT_VERSION,
+  STALE_LINKS_PROMPT_VERSION,
+  STALE_LINKS_SYSTEM_PROMPT,
+  staleLinksPrompt,
+  type StaleLinksPromptInput,
 } from './extract.prompts';
 import {
   type ArtifactExtraction,
@@ -190,7 +194,12 @@ export class ExtractService {
     return summary;
   }
 
-  /** Selects artifacts: right type, body over minBodyChars (read from the TextStore), optional departments. */
+  /** The model extraction runs on (for cost estimates). */
+  model(): string {
+    return this.llm.usage().model;
+  }
+
+  /** Selects artifacts: right type, long enough body (read from the TextStore), optional departments. */
   async plan(options: Pick<ExtractRunOptions, 'graph' | 'limit' | 'depts' | 'refresh'>): Promise<{ candidates: number; items: PlannedItem[] }> {
     const depts = options.depts ?? this.settings.depts;
     const rows = await this.graph.roQuery<CandidateRow>(options.graph, Q.SELECT_CANDIDATES, { depts });
@@ -199,7 +208,7 @@ export class ExtractService {
     const items: PlannedItem[] = [];
     for (const row of rows) {
       const body = (await this.textStore.get('artifacts', row.id)) ?? '';
-      if (body.length <= this.settings.minBodyChars) continue;
+      if (!worthExtracting(row.label, body, this.settings.minBodyChars)) continue;
       const title = row.title ?? '';
       const fingerprint = sha256(
         JSON.stringify([PROMPT_VERSION, provider.provider, provider.model, sha256(body), title, row.day, row.authors]),
@@ -208,7 +217,7 @@ export class ExtractService {
     }
     const chosen = options.limit ? spreadEvenly(items, options.limit) : items;
     for (const item of chosen) item.cached = options.refresh ? null : await this.cache.get(item.id, item.fingerprint);
-    this.logger.log(`Plan: ${rows.length} candidates, ${items.length} over ${this.settings.minBodyChars} chars, ${chosen.length} selected`);
+    this.logger.log(`Plan: ${rows.length} candidates, ${items.length} worth extracting (tickets, or over ${this.settings.minBodyChars} chars), ${chosen.length} selected`);
     return { candidates: rows.length, items: chosen };
   }
 
@@ -303,12 +312,10 @@ export class ExtractService {
       });
       // Claims are only kept for Pages: they feed the ASSERTS links of the second pass.
       if (item.label === 'Page') {
-        value.asserts.forEach((claim, index) => {
-          const name = canon.canonical(claim.system);
-          if (!name) return;
-          systems.add(name);
-          claims.push({ id: `C:${item.id}:${index}`, pageId: item.id, claim: claim.claim, system: name });
-        });
+        for (const claim of claimRows(item.id, value.asserts, canon)) {
+          systems.add(claim.system);
+          claims.push(claim);
+        }
       }
     }
 
@@ -359,6 +366,118 @@ export class ExtractService {
   }
 
   /**
+   * Targeted stale-page pass. Rebuilds page claims from the extraction cache (no
+   * LLM), picks core systems with a superseded decision or 3+ decisions (only those
+   * with page claims when claimsOnly), and asks the stale-links prompt for
+   * SUPERSEDES and ASSERTS. dryRun stops after the estimate. Links are added with
+   * MERGE (existing ones stay); claims are deleted again at the end.
+   */
+  async relinkStale(graphName: string, options: { claimsOnly: boolean; dryRun: boolean }): Promise<StaleRelinkSummary> {
+    const claims = await this.rebuildClaims(graphName);
+    try {
+      const targets = await this.graph.roQuery<{ system: string; decisions: number; superseded: number; claims: number }>(
+        graphName,
+        Q.STALE_LINK_TARGETS,
+      );
+      const chosen = targets.filter((t) => !options.claimsOnly || t.claims > 0);
+      const inputs = (
+        chosen.length === 0
+          ? []
+          : await this.graph.roQuery<StaleLinksPromptInput>(graphName, Q.STALE_LINK_INPUT, { names: chosen.map((t) => t.system) })
+      ).map((row) => ({ ...row, decisions: row.decisions.slice(-MAX_LINK_DECISIONS), claims: row.claims.slice(0, MAX_LINK_CLAIMS) }));
+      const prompts = inputs.map((input) => staleLinksPrompt(input));
+      const summary: StaleRelinkSummary = {
+        claims,
+        targets: targets.length,
+        targetsWithClaims: targets.filter((t) => t.claims > 0).length,
+        calls: prompts.length,
+        estimatedInputTokens: Math.round(prompts.reduce((sum, p) => sum + (STALE_LINKS_SYSTEM_PROMPT.length + p.length) / CHARS_PER_TOKEN, 0)),
+        estimatedOutputTokens: prompts.length * STALE_LINK_OUTPUT_TOKENS,
+        dryRun: options.dryRun,
+        llmCalls: 0,
+        supersedes: 0,
+        asserts: 0,
+        rejected: 0,
+        failures: [],
+        tokens: { ...NO_TOKENS },
+      };
+      if (options.dryRun) return summary;
+
+      const before = this.llm.usage();
+      const supersedes: { newerId: string; olderId: string }[] = [];
+      const asserts: { pageId: string; decisionId: string }[] = [];
+      await Promise.all(
+        inputs.map(async (input, i) => {
+          try {
+            const answer = await this.llm.generateObjectWithUsage(SystemLinksSchema, {
+              task: STALE_LINKS_PROMPT_VERSION,
+              system: STALE_LINKS_SYSTEM_PROMPT,
+              prompt: prompts[i],
+            });
+            const valid = validateLinks(input, answer.value);
+            summary.rejected += valid.rejected;
+            supersedes.push(...valid.supersedes);
+            asserts.push(...valid.asserts);
+          } catch (error) {
+            summary.failures.push({ id: `stale:${input.system}`, error: error instanceof Error ? error.message.slice(0, 300) : String(error) });
+          }
+        }),
+      );
+      const after = this.llm.usage();
+      summary.llmCalls = after.jsonCalls - before.jsonCalls;
+      summary.tokens = subtractUsage(after.tokens, before.tokens);
+      const newSupersedes = dedupe(supersedes, (s) => `${s.newerId}|${s.olderId}`);
+      const newAsserts = dedupe(asserts, (a) => `${a.pageId}|${a.decisionId}`);
+      await this.graph.batchWrite(graphName, Q.MERGE_SUPERSEDES, newSupersedes.map((s) => ({ ...s })));
+      await this.graph.batchWrite(graphName, Q.MERGE_ASSERTS, newAsserts.map((a) => ({ ...a })));
+      // Links written before the same-artifact rule existed are removed here too.
+      await this.graph.query(graphName, Q.DELETE_SAME_SOURCE_SUPERSEDES);
+      await this.graph.query(graphName, Q.REACTIVATE_UNSUPERSEDED);
+      summary.supersedes = newSupersedes.length;
+      summary.asserts = newAsserts.length;
+      return summary;
+    } finally {
+      await this.graph.query(graphName, Q.DELETE_CLAIMS);
+    }
+  }
+
+  /** Recreates (:Page)-[:CLAIMS]->(:Claim) from cached page extractions, with today's canonical names. */
+  async rebuildClaims(graphName: string): Promise<number> {
+    const { items } = await this.plan({ graph: graphName, refresh: false });
+    const canon = new Canonicalizer(await this.buildVocabulary(graphName));
+    const rows = items.flatMap((item) => (item.label === 'Page' && item.cached ? claimRows(item.id, item.cached.asserts, canon) : []));
+    await this.graph.query(graphName, Q.DELETE_CLAIMS);
+    await this.graph.batchWrite(graphName, Q.MERGE_CLAIMS, rows.map((r) => ({ ...r })));
+    return rows.length;
+  }
+
+  /**
+   * Replay support: copies what extraction already wrote into `sourceGraph` for
+   * the artifacts of one day (systems, mentions, decisions, links) into
+   * `targetGraph`. No LLM calls; every write is a MERGE, so replaying a day twice
+   * changes nothing. Returns how many rows of each kind were copied.
+   */
+  async replayDay(sourceGraph: string, targetGraph: string, day: number): Promise<Record<string, number>> {
+    // Rows are written into the target exactly as read (same keys as the MERGE queries expect).
+    const read = (cypher: string) => this.graph.roQuery<BatchRow>(sourceGraph, cypher, { day });
+    const systems = await read(Q.REPLAY_SYSTEMS_FOR_DAY);
+    const mentions = await read(Q.REPLAY_MENTIONS_FOR_DAY);
+    const decisions = await read(Q.REPLAY_DECISIONS_FOR_DAY);
+    const about = await read(Q.REPLAY_ABOUT_FOR_DAY);
+    const supersedes = await read(Q.REPLAY_SUPERSEDES_FOR_DAY);
+    const asserts = await read(Q.REPLAY_ASSERTS_FOR_DAY);
+
+    // Same order as a real extraction: nodes before the edges that MATCH them.
+    await this.graph.batchWrite(targetGraph, Q.MERGE_SYSTEMS, systems);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_MENTIONS, mentions);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_DECISIONS, decisions);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_ABOUT, about);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_SUPERSEDES, supersedes);
+    await this.graph.batchWrite(targetGraph, Q.MERGE_ASSERTS, asserts);
+    return { systems: systems.length, mentions: mentions.length, decisions: decisions.length, supersedes: supersedes.length };
+  }
+
+  /**
    * Builds progress events. Graph totals are only re-counted outside the
    * 'extract' phase: nothing is written while artifacts are being extracted, and
    * with a warm cache thousands of artifacts finish at once (one count query per
@@ -380,6 +499,55 @@ export class ExtractService {
 }
 
 /**
+ * Whether an artifact's body is worth an LLM call. Tickets always are: a sprint
+ * ticket's body is just its title (~85 chars), yet the title names the systems
+ * the work touches, and without MENTIONS a ticket has no candidate new owners (K6).
+ * Everything else must be longer than minBodyChars.
+ */
+export function worthExtracting(label: string, body: string, minBodyChars: number): boolean {
+  if (label === 'Ticket') return body.trim().length > 0;
+  return body.length > minBodyChars;
+}
+
+/** Characters per token, for estimates only (English text averages about 4). */
+const CHARS_PER_TOKEN = 4;
+/** Estimated output tokens per stale-links call (a few ids each). */
+const STALE_LINK_OUTPUT_TOKENS = 200;
+
+export interface StaleRelinkSummary {
+  claims: number;
+  targets: number;
+  targetsWithClaims: number;
+  calls: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  dryRun: boolean;
+  llmCalls: number;
+  supersedes: number;
+  asserts: number;
+  rejected: number;
+  failures: { id: string; error: string }[];
+  tokens: LlmTokenUsage;
+}
+
+/** Claim rows for one page: canonical system name, stable id C:<page id>:<n>. */
+export function claimRows(
+  pageId: string,
+  asserts: readonly { claim: string; system: string }[],
+  canon: Canonicalizer,
+): { id: string; pageId: string; claim: string; system: string }[] {
+  return asserts.flatMap((claim, index) => {
+    const system = canon.canonical(claim.system);
+    return system ? [{ id: `C:${pageId}:${index}`, pageId, claim: claim.claim, system }] : [];
+  });
+}
+
+/** The artifact a decision was made in, from its stable id "D:<artifact id>:<n>". */
+export function decisionSource(decisionId: string): string {
+  return decisionId.slice(0, decisionId.lastIndexOf(':'));
+}
+
+/**
  * Keeps only links between ids that were actually in the prompt, never a
  * decision superseding itself, and never an older decision superseding a newer one.
  */
@@ -389,13 +557,19 @@ export function validateLinks(
 ): { supersedes: { newerId: string; olderId: string }[]; asserts: { pageId: string; decisionId: string }[]; rejected: number } {
   const dayById = new Map(input.decisions.map((d) => [d.id, d.day]));
   const pages = new Set(input.claims.map((c) => c.pageId));
-  const supersedes = answer.supersedes.filter(({ newerId, olderId }) => {
+  // The model sometimes drops the "D:" prefix of a decision id; put it back when that names a given decision.
+  const fixId = (id: string) => (dayById.has(id) || !dayById.has(`D:${id}`) ? id : `D:${id}`);
+  const proposedSupersedes = answer.supersedes.map((s) => ({ newerId: fixId(s.newerId), olderId: fixId(s.olderId) }));
+  const proposedAsserts = answer.asserts.map((a) => ({ pageId: a.pageId, decisionId: fixId(a.decisionId) }));
+  const supersedes = proposedSupersedes.filter(({ newerId, olderId }) => {
     if (newerId === olderId || !dayById.has(newerId) || !dayById.has(olderId)) return false;
+    // A document does not supersede itself: both decisions from one artifact are steps of one plan.
+    if (decisionSource(newerId) === decisionSource(olderId)) return false;
     const newer = dayById.get(newerId);
     const older = dayById.get(olderId);
     return newer === null || older === null || newer === undefined || older === undefined || newer >= older;
   });
-  const asserts = answer.asserts.filter(({ pageId, decisionId }) => pages.has(pageId) && dayById.has(decisionId));
+  const asserts = proposedAsserts.filter(({ pageId, decisionId }) => pages.has(pageId) && dayById.has(decisionId));
   const rejected = answer.supersedes.length - supersedes.length + answer.asserts.length - asserts.length;
   return { supersedes, asserts, rejected };
 }
