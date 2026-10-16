@@ -7,6 +7,8 @@
  *   pnpm extract --force              full run even above EXTRACT_MAX_CALLS
  *   pnpm extract --refresh            ignore the extraction cache (costs money)
  *   pnpm extract --graph apex_replay  another graph (default apex)
+ *   pnpm extract --relink-stale [--claims-only] [--dry-run]
+ *                                     targeted stale-page pass on core systems (see ExtractService.relinkStale)
  *
  * With LLM_CACHE_ONLY=yes any cache miss fails, proving a rerun makes zero LLM calls.
  */
@@ -50,6 +52,14 @@ async function main(): Promise<void> {
   );
 
   const limit = option('limit');
+  if (flag('relink-stale')) {
+    try {
+      await relinkStale(extract, option('graph') ?? 'apex');
+    } finally {
+      await graph.onModuleDestroy();
+    }
+    return;
+  }
   try {
     const summary = await extract.run(
       {
@@ -85,6 +95,32 @@ async function main(): Promise<void> {
   } finally {
     await graph.onModuleDestroy();
   }
+}
+
+/**
+ * pnpm extract --relink-stale [--claims-only] [--dry-run]: the targeted stale-page
+ * pass (core systems with a superseded decision or 3+ decisions).
+ */
+async function relinkStale(extract: ExtractService, graphName: string): Promise<void> {
+  const summary = await extract.relinkStale(graphName, { claimsOnly: flag('claims-only'), dryRun: flag('dry-run') });
+  const model = extract.model();
+  const estimate = costUsd(model, {
+    inputTokens: summary.estimatedInputTokens,
+    cachedInputTokens: 0,
+    outputTokens: summary.estimatedOutputTokens,
+    reasoningTokens: 0,
+  });
+  console.log(
+    `\npage claims rebuilt from cache: ${summary.claims}; target systems: ${summary.targets} (${summary.targetsWithClaims} with page claims)` +
+      `\nplanned LLM calls: ${summary.calls}; estimated ~${summary.estimatedInputTokens} in / ${summary.estimatedOutputTokens} out` +
+      (estimate === null ? '' : ` (~$${estimate.toFixed(3)} on ${model})`),
+  );
+  if (summary.dryRun) return;
+  const cost = costUsd(model, summary.tokens);
+  console.log(
+    `real LLM calls ${summary.llmCalls}; failures ${summary.failures.length}; new links: ${summary.supersedes} SUPERSEDES, ` +
+      `${summary.asserts} ASSERTS (${summary.rejected} rejected)` + (cost === null ? '' : `; cost $${cost.toFixed(4)}`),
+  );
 }
 
 main().catch((error: unknown) => {

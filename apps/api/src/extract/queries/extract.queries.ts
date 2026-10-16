@@ -196,3 +196,52 @@ export const REPLAY_ASSERTS_FOR_DAY = `
   WHERE p.day = $day OR src.day = $day
   RETURN p.id AS pageId, d.id AS decisionId
 `;
+
+// ---------------------------------------------------------------- targeted stale-page pass
+
+/**
+ * Core systems worth a targeted stale-page pass: at least one superseded decision
+ * or 3+ decisions ({system, decisions, superseded, claims}). Claims must have been
+ * rebuilt first (they only exist during a linking run).
+ */
+export const STALE_LINK_TARGETS = `
+  MATCH (s:System)
+  WHERE s.core = true
+  OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+  WITH s, count(d) AS decisions, sum(CASE WHEN d.status = 'superseded' THEN 1 ELSE 0 END) AS superseded
+  WHERE superseded >= 1 OR decisions >= 3
+  OPTIONAL MATCH (:Page)-[:CLAIMS]->(c:Claim {system: s.name})
+  RETURN s.name AS system, decisions, superseded, count(c) AS claims
+  ORDER BY system
+`;
+
+/**
+ * Prompt input for the systems in $names: decisions oldest first, and page claims
+ * with the day the page was written ({system, decisions, claims}).
+ */
+export const STALE_LINK_INPUT = `
+  MATCH (s:System)
+  WHERE s.name IN $names
+  OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+  WITH s, d ORDER BY coalesce(d.day, 1000000), d.id
+  WITH s, collect(CASE WHEN d IS NULL THEN NULL ELSE {id: d.id, day: d.day, summary: d.summary} END) AS decisions
+  OPTIONAL MATCH (p:Page)-[:CLAIMS]->(c:Claim {system: s.name})
+  WITH s, decisions, p, c ORDER BY p.id, c.id
+  WITH s, decisions, collect(CASE WHEN c IS NULL THEN NULL ELSE {pageId: p.id, pageDay: p.day, claim: c.claim} END) AS claims
+  RETURN s.name AS system, decisions, claims
+  ORDER BY system
+`;
+
+/** SUPERSEDES between two decisions made in the same artifact: a document does not supersede itself. */
+export const DELETE_SAME_SOURCE_SUPERSEDES = `
+  MATCH (n:Decision)-[r:SUPERSEDES]->(o:Decision)
+  MATCH (n)-[:DECIDED_IN]->(src:Artifact)<-[:DECIDED_IN]-(o)
+  DELETE r
+`;
+
+/** A decision marked superseded that no SUPERSEDES edge points at any more is active again. */
+export const REACTIVATE_UNSUPERSEDED = `
+  MATCH (o:Decision {status: 'superseded'})
+  WHERE NOT ()-[:SUPERSEDES]->(o)
+  SET o.status = 'active'
+`;

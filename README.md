@@ -52,6 +52,22 @@ FalkorDB Browser.
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
 | `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
 
+## Rebuilding the graph
+
+Everything in the graph is rebuilt from `data/artifacts.jsonl` and the caches in `DATA_DIR`
+(extraction, LLM answers, embeddings), so a rebuild makes no LLM calls. Order:
+
+1. `POST /ingest/full` - people, artifacts and role edges (no LLM)
+2. `pnpm reingest-roles` - only when upgrading an existing graph to new role rules (a fresh ingest already writes them)
+3. `pnpm extract` - systems, decisions, SUPERSEDES/ASSERTS (cached)
+4. `pnpm expertise` - system statistics and core flags, KNOWS, COLLAB, `apex_proj`
+5. `pnpm extract --relink-stale` - targeted stale-page pass on core systems (cached; needs the core flags from step 4)
+6. `pnpm embed` - chunks and embeddings (cached)
+7. `pnpm expertise` - final refresh of KNOWS, COLLAB and `apex_proj`
+
+`LLM_CACHE_ONLY=yes` turns any cache miss into an error, which proves a run made no calls.
+TODO: wrap these steps in a single `pnpm seed` command.
+
 ## LLM provider
 
 All LLM use goes through `LlmService` (`apps/api/src/llm/`): OpenAI when
@@ -83,6 +99,7 @@ Every answer is Zod-validated and cached (`DATA_DIR/cache/extract/<doc_id>.json`
 | `pnpm extract --dry-run` | Plan and cost estimate; no LLM calls, no writes |
 | `pnpm extract --limit 50` | Trial on 50 artifacts spread across types |
 | `pnpm extract [--force] [--refresh]` | Full run (stops above `EXTRACT_MAX_CALLS` unless `--force`) |
+| `pnpm extract --relink-stale [--claims-only] [--dry-run]` | Targeted second pass for stale pages on core systems (run after `pnpm extract`; cached) |
 | `POST /extract/run` `{"dryRun":false,"force":false}` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
 
 ### System catalog
