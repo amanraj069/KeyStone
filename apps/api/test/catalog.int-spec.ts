@@ -3,7 +3,7 @@ import { CORE_MIN_AUTHORS, DEFAULT_CORE_MIN_MENTIONS } from '../src/catalog/cata
 import { CatalogService } from '../src/catalog/catalog.service';
 import { ProjectionService } from '../src/projection/projection.service';
 import { fixtureExpertise, testGraphName, useFixtureGraph } from './graph-test-utils';
-import { ADD_TITAN_DUPLICATE, IDF_FIXTURE, PROJECTION_COLLAB_PAIRS, SYSTEM_STATS, TITAN_EDGES, WORKLOAD_FIXTURE } from './queries/test.queries';
+import { ADD_TITAN_DUPLICATE, BACKUP_FIXTURE, IDF_FIXTURE, PROJECTION_COLLAB_PAIRS, SYSTEM_STATS, TITAN_EDGES, WORKLOAD_FIXTURE } from './queries/test.queries';
 
 /**
  * System catalog on the mini-company fixture: statistics, core flag, idf,
@@ -137,5 +137,15 @@ describe('System catalog on the fixture graph', () => {
     expect(impact.openTickets).toEqual([
       { ticket: 'T-7', title: 'Niche export', suggestedOwners: ['Free', 'Busy'], ownerEvidence: [['F-1'], ['B-1']] },
     ]);
+  });
+
+  it('K5 measures backups against the top score of the people who remain', async () => {
+    const graph = testGraphName();
+    created.push(graph);
+    await fx.graph.query(graph, BACKUP_FIXTURE);
+    const impact = await new AnalyticsService(fx.graph).departureImpact('Leaver', 0.4, graph, 0.25);
+    // Other (2.0) is below 25% of Leaver (10.0), but once Leaver is gone Other is the top: a backup.
+    expect(impact.systems).toEqual([expect.objectContaining({ system: 'S', backups: 1, backupNames: ['Other'] })]);
+    expect(impact.orphanedSystems).toEqual([]);
   });
 });

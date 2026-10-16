@@ -160,6 +160,10 @@ export const RISK_LEVEL_COUNTS = `
  * CHANGE: adds `k.evidence AS evidence` (the leaver's evidence for the system) for citations.
  * CHANGE: core systems only (s.core = true), and the same expert rule as K4 for
  * the leaver and the backups ($minScore and $topShare of the system's top score).
+ * CHANGE: a backup is measured against the top score WITHOUT the leaver (topLeft),
+ * i.e. the expert rule as it applies once they are gone. Measured against the
+ * leaver's own score, a strong leaver hid every backup: K5 said Jax orphans 10
+ * systems while the what-if simulation (which recomputes the rule) found 4.
  */
 export const K5_DEPARTURE_SYSTEMS = `
   MATCH (leaver:Person {name:$person})-[k:KNOWS]->(s:System)
@@ -167,8 +171,11 @@ export const K5_DEPARTURE_SYSTEMS = `
   OPTIONAL MATCH (s)<-[kt:KNOWS]-(:Person {active:true})
   WITH leaver, k, s, max(kt.score) AS top
   WHERE k.score >= $topShare * top
+  OPTIONAL MATCH (s)<-[kl:KNOWS]-(left:Person {active:true})
+  WHERE left <> leaver
+  WITH leaver, k, s, max(kl.score) AS topLeft
   OPTIONAL MATCH (s)<-[k2:KNOWS]-(other:Person {active:true})
-  WHERE other <> leaver AND k2.score >= $minScore AND k2.score >= $topShare * top
+  WHERE other <> leaver AND k2.score >= $minScore AND k2.score >= $topShare * topLeft
   WITH s, k, count(other) AS backups, collect(other.name) AS backupNames
   RETURN s.name AS system, k.score AS leaverScore, backups, backupNames, k.evidence AS evidence
   ORDER BY backups ASC, leaverScore DESC

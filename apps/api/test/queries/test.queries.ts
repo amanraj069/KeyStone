@@ -238,3 +238,23 @@ export const DEPARTURES = `
   RETURN p.name AS person, p.departedDay AS departedDay, p.active AS active, collect(a.id) AS announcedIn
   ORDER BY person
 `;
+
+/** Every node label and relationship type with its count ({kind, name, count}): a fingerprint of a graph. */
+export const GRAPH_FINGERPRINT = `
+  MATCH (n) UNWIND labels(n) AS name
+  RETURN 'node' AS kind, name, count(*) AS count
+  UNION ALL
+  MATCH ()-[r]->()
+  RETURN 'edge' AS kind, type(r) AS name, count(*) AS count
+`;
+
+/**
+ * Backup test graph: Leaver knows core system S with 10.0, Other with 2.0 (below
+ * 25% of 10, but the top of everyone who remains once Leaver is gone).
+ */
+export const BACKUP_FIXTURE = `
+  CREATE (l:Person {name: 'Leaver', active: true}), (o:Person {name: 'Other', active: true}),
+         (s:System {name: 'S', core: true}),
+         (l)-[:KNOWS {score: 10.0, lastDay: 1, evidence: ['A-1']}]->(s),
+         (o)-[:KNOWS {score: 2.0, lastDay: 1, evidence: ['B-1']}]->(s)
+`;

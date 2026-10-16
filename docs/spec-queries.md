@@ -136,8 +136,11 @@ WHERE k.score >= $minScore AND s.core = true
 OPTIONAL MATCH (s)<-[kt:KNOWS]-(:Person {active:true})
 WITH leaver, k, s, max(kt.score) AS top
 WHERE k.score >= $topShare * top
+OPTIONAL MATCH (s)<-[kl:KNOWS]-(left:Person {active:true})
+WHERE left <> leaver
+WITH leaver, k, s, max(kl.score) AS topLeft
 OPTIONAL MATCH (s)<-[k2:KNOWS]-(other:Person {active:true})
-WHERE other <> leaver AND k2.score >= $minScore AND k2.score >= $topShare * top
+WHERE other <> leaver AND k2.score >= $minScore AND k2.score >= $topShare * topLeft
 WITH s, k, count(other) AS backups, collect(other.name) AS backupNames
 RETURN s.name AS system, k.score AS leaverScore, backups, backupNames, k.evidence AS evidence
 ORDER BY backups ASC, leaverScore DESC
@@ -146,6 +149,7 @@ ORDER BY backups ASC, leaverScore DESC
 Changes:
 - Returns the leaver's evidence ids for each system.
 - Core systems only, and the same expert rule as K4 for the leaver and the backups.
+- Backups are measured against the top score of the people who remain (the rule as it applies after the departure), so K5 agrees with the what-if simulation.
 
 ## K6. Departure impact: open tickets and suggested owners
 
