@@ -17,7 +17,7 @@ export const MERGE_DEPTS = `
 export const MERGE_PEOPLE = `
   UNWIND $rows AS row
   MERGE (p:Person {name: row.name})
-  SET p.dept = row.dept, p.active = true
+  SET p.dept = row.dept, p.active = p.departedDay IS NULL
   WITH p, row WHERE row.dept IS NOT NULL
   MATCH (d:Dept {name: row.dept})
   MERGE (p)-[:MEMBER_OF]->(d)
@@ -184,7 +184,7 @@ export const UPDATE_PERSON_ACTIVITY = `
   OPTIONAL MATCH (p)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)
   WHERE type(r) <> 'PARTICIPATED' OR r.wrote = true
   WITH p, min(a.day) AS firstDay, max(a.day) AS lastSeenDay
-  SET p.firstDay = firstDay, p.lastSeenDay = lastSeenDay, p.active = true
+  SET p.firstDay = firstDay, p.lastSeenDay = lastSeenDay, p.active = p.departedDay IS NULL
 `;
 
 /** Returns {people, artifacts, edges}: graph totals shown in the progress stream. */

@@ -44,6 +44,9 @@ export class ExpertiseService {
     const graphName = options.graph ?? APEX_GRAPH;
     const asOfDay = options.asOfDay ?? (await this.lastDay(graphName));
 
+    // Who is active on that day (announced departures), then system statistics: mentionCount, authorCount, core and idf (used by K4-K6 and the projection).
+    await this.graph.query(graphName, Q.SET_ACTIVE_AS_OF, { asOfDay });
+    const catalog = await this.catalog.refreshStats(graphName);
     // KNOWS: rebuild from scratch so a refresh "as of" an earlier day leaves no newer pairs behind.
     await this.graph.query(graphName, Q.DELETE_ALL_KNOWS);
     await this.graph.query(graphName, Q.K2_MATERIALISE_KNOWS, { asOfDay });

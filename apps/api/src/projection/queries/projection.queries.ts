@@ -15,11 +15,11 @@ export const ACTIVE_PEOPLE = `
 
 /**
  * People active on $asOfDay ({name, dept, active}): already started (firstDay)
- * and not yet left (lastDay null, or on/after that day).
+ * and not departed (departedDay null, or after that day).
  */
 export const ACTIVE_PEOPLE_AS_OF = `
   MATCH (p:Person)
-  WHERE coalesce(p.firstDay, 0) <= $asOfDay AND (p.lastDay IS NULL OR p.lastDay >= $asOfDay)
+  WHERE coalesce(p.firstDay, 0) <= $asOfDay AND (p.departedDay IS NULL OR p.departedDay > $asOfDay)
   RETURN p.name AS name, p.dept AS dept, true AS active
   ORDER BY name SKIP $skip LIMIT $limit
 `;
@@ -84,8 +84,8 @@ export const ACTIVE_COLLAB = `
 export const COLLAB_AS_OF_WEIGHT_PERCENTILE = `
   MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(b:Person)
   WHERE id(a) < id(b) AND x.day IS NOT NULL AND x.day <= $asOfDay
-    AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.lastDay IS NULL OR a.lastDay >= $asOfDay)
-    AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.lastDay IS NULL OR b.lastDay >= $asOfDay)
+    AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.departedDay IS NULL OR a.departedDay > $asOfDay)
+    AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.departedDay IS NULL OR b.departedDay > $asOfDay)
   WITH a, b, count(x) AS w
   RETURN percentileDisc(w, $percentile) AS weight
 `;
@@ -94,8 +94,8 @@ export const COLLAB_AS_OF_WEIGHT_PERCENTILE = `
 export const COLLAB_AS_OF = `
   MATCH (a:Person)-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(x:Artifact)<-[:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]-(b:Person)
   WHERE id(a) < id(b) AND x.day IS NOT NULL AND x.day <= $asOfDay
-    AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.lastDay IS NULL OR a.lastDay >= $asOfDay)
-    AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.lastDay IS NULL OR b.lastDay >= $asOfDay)
+    AND coalesce(a.firstDay, 0) <= $asOfDay AND (a.departedDay IS NULL OR a.departedDay > $asOfDay)
+    AND coalesce(b.firstDay, 0) <= $asOfDay AND (b.departedDay IS NULL OR b.departedDay > $asOfDay)
   WITH a, b, count(x) AS w
   WHERE w >= $minWeight
   RETURN a.name AS a, b.name AS b, w AS weight

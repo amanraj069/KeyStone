@@ -4,7 +4,7 @@
 // edges (KNOWS, COLLAB, PART_OF, ...) are computed by later stages, not faked.
 //
 // PEOPLE (5) in 2 departments
-//   Engineering_Backend: Ada, Ben, Cara (Cara left on day 12: active false, lastDay 12)
+//   Engineering_Backend: Ada, Ben, Cara (Cara left on day 12: active false, departedDay 12)
 //   Product:             Dev, Eve
 //
 // SYSTEMS (4): TitanDB, PaymentsAPI, LegacyAuth, MobileApp
@@ -47,11 +47,11 @@ CREATE
   (prod:Dept {name: 'Product'}),
 
   // People
-  (ada:Person  {name: 'Ada',  dept: 'Engineering_Backend', firstDay: 1, lastDay: null, active: true}),
-  (ben:Person  {name: 'Ben',  dept: 'Engineering_Backend', firstDay: 1, lastDay: null, active: true}),
-  (cara:Person {name: 'Cara', dept: 'Engineering_Backend', firstDay: 1, lastDay: 12,   active: false}),
-  (dev:Person  {name: 'Dev',  dept: 'Product',             firstDay: 1, lastDay: null, active: true}),
-  (eve:Person  {name: 'Eve',  dept: 'Product',             firstDay: 1, lastDay: null, active: true}),
+  (ada:Person  {name: 'Ada',  dept: 'Engineering_Backend', firstDay: 1, departedDay: null, active: true}),
+  (ben:Person  {name: 'Ben',  dept: 'Engineering_Backend', firstDay: 1, departedDay: null, active: true}),
+  (cara:Person {name: 'Cara', dept: 'Engineering_Backend', firstDay: 1, departedDay: 12, active: false}),
+  (dev:Person  {name: 'Dev',  dept: 'Product',             firstDay: 1, departedDay: null, active: true}),
+  (eve:Person  {name: 'Eve',  dept: 'Product',             firstDay: 1, departedDay: null, active: true}),
   (ada)-[:MEMBER_OF]->(eng), (ben)-[:MEMBER_OF]->(eng), (cara)-[:MEMBER_OF]->(eng),
   (dev)-[:MEMBER_OF]->(prod), (eve)-[:MEMBER_OF]->(prod),
 

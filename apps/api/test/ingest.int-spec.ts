@@ -8,8 +8,11 @@ import { INGEST_QUEUE } from '../src/ingest/ingest.constants';
 import { IngestService } from '../src/ingest/ingest.service';
 import { LocalTextStore } from '../src/ingest/text-store';
 import { connectTestGraphService, testGraphName } from './graph-test-utils';
-import { MINI_RECORDS } from './ingest-records';
-import { ARTIFACT_LINKS, PEOPLE_SUMMARY, PEOPLE_TO_TICKETS_PAGES_THREADS } from './queries/test.queries';
+import { MINI_RECORDS, record } from './ingest-records';
+import { ARTIFACT_LINKS, BO_ACTIVITY, BO_ON_DAY_9_THREAD, DEPARTURES, PEOPLE_SUMMARY, PEOPLE_TO_TICKETS_PAGES_THREADS } from './queries/test.queries';
+import { calendarFrom } from '../src/ingest/calendar';
+import { buildPlan } from '../src/ingest/ingest-plan';
+import { UPDATE_PERSON_ACTIVITY } from '../src/ingest/queries/ingest.queries';
 
 describe('IngestService against a real FalkorDB', () => {
   let graph: GraphService;
@@ -111,5 +114,41 @@ describe('IngestService against a real FalkorDB', () => {
 
   it('stores artifact bodies in the TextStore, not the graph', async () => {
     await expect(new LocalTextStore(dataDir).get('artifacts', 'zoom_1')).resolves.toContain('**[10:00:00] Bo:**');
+  });
+
+  it('activity counts PARTICIPATED only where the person wrote a line', async () => {
+    const copy = testGraphName(); // keep the full graph untouched
+    await graph.copyGraph(fullGraph, copy);
+    try {
+      await graph.query(copy, BO_ON_DAY_9_THREAD, { wrote: false });
+      await graph.query(copy, UPDATE_PERSON_ACTIVITY);
+      await expect(graph.roQuery(copy, BO_ACTIVITY)).resolves.toEqual([{ firstDay: 1, lastSeenDay: 3 }]); // listed only: ignored
+      await graph.query(copy, BO_ON_DAY_9_THREAD, { wrote: true });
+      await graph.query(copy, UPDATE_PERSON_ACTIVITY);
+      await expect(graph.roQuery(copy, BO_ACTIVITY)).resolves.toEqual([{ firstDay: 1, lastSeenDay: 9 }]);
+    } finally {
+      await graph.deleteGraph(copy).catch(() => undefined);
+    }
+  });
+
+  it('an HR announcement sets departedDay (via the calendar) and keeps the announcement as evidence', async () => {
+    const copy = testGraphName();
+    const announcement = record({
+      doc_id: 'slack_hr_ops_2026-01-05T10:00:00',
+      doc_type: 'slack',
+      day: 3,
+      actors: ['Ada'],
+      body: "Ada: Bo's last day is 2026-01-06. Please revoke access after that.",
+    });
+    const calendar = calendarFrom({ lastDay: 4, days: [{ day: 3, date: '2026-01-05' }, { day: 4, date: '2026-01-06' }] });
+    try {
+      await service.runFull(copy, async () => undefined, buildPlan([...MINI_RECORDS, announcement], calendar));
+      // Active is "not departed": departedDay is set, so Bo is no longer active after ingest.
+      await expect(graph.roQuery(copy, DEPARTURES)).resolves.toEqual([
+        { person: 'Bo', departedDay: 4, active: false, announcedIn: ['slack_hr_ops_2026-01-05T10:00:00'] },
+      ]);
+    } finally {
+      await graph.deleteGraph(copy).catch(() => undefined);
+    }
   });
 });

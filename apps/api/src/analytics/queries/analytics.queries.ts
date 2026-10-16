@@ -32,6 +32,17 @@ export const K2_MATERIALISE_KNOWS = `
 `;
 
 /**
+ * Who is active on $asOfDay: nobody whose announced departure day has come
+ * (departedDay <= $asOfDay). Run first in every expertise refresh, so experts,
+ * bus factor and suggested owners never include someone who has left. Their
+ * KNOWS edges stay: their past work is what a departure simulation needs.
+ */
+export const SET_ACTIVE_AS_OF = `
+  MATCH (p:Person)
+  SET p.active = (p.departedDay IS NULL OR p.departedDay > $asOfDay)
+`;
+
+/**
  * Before K2: drop every KNOWS edge. K2 only MERGEs pairs it finds, so without
  * this a refresh "as of" an earlier day would keep pairs that have no evidence yet.
  */

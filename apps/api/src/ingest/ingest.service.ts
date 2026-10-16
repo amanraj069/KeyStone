@@ -3,6 +3,7 @@ import type { GraphCounts, IngestProgress, ReplayRequest } from '@keystone/share
 import { GraphService } from '../graph/graph.service';
 import { SchemaService } from '../graph/schema.service';
 import { readArtifacts } from './artifact-record';
+import { readCalendar } from './calendar';
 import { INGEST_SETTINGS, type IngestSettings, TEXT_STORE } from './ingest.constants';
 import { buildPlan, type IngestPlan, type IngestSlice, sliceFor } from './ingest-plan';
 import type { ArtifactLabel } from './labels';
@@ -57,10 +58,11 @@ export class IngestService {
   /** Reads artifacts.jsonl and derives the roster, roles and links. */
   async loadPlan(): Promise<IngestPlan> {
     const records = await readArtifacts(this.settings.dataDir);
-    const plan = buildPlan(records);
+    const plan = buildPlan(records, await readCalendar(this.settings.dataDir));
     this.logger.log(
       `Plan: ${records.length} artifacts, ${plan.roster.people.length} people, ${plan.roles.length} roles, ` +
-        `${plan.references.length} references, ${plan.fixes.length} fixes, days ${plan.days[0]}..${plan.days.at(-1)}`,
+        `${plan.references.length} references, ${plan.fixes.length} fixes, ${plan.departures.length} departures, ` +
+        `days ${plan.days[0]}..${plan.days.at(-1)}`,
     );
     return plan;
   }
@@ -133,7 +135,7 @@ export class IngestService {
     slice: IngestSlice,
     onStep?: (phase: string, percent: number, added: Record<string, number>) => Promise<unknown>,
   ): Promise<Record<string, number>> {
-    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, references: 0, fixes: 0 };
+    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, references: 0, fixes: 0, departures: 0 };
     const step = async (phase: string, percent: number) => onStep?.(phase, percent, { ...added });
 
     await this.graph.batchWrite(graphName, Q.MERGE_DEPTS, slice.depts.map((name) => ({ name })));
@@ -161,6 +163,9 @@ export class IngestService {
     added.fixes = slice.fixes.length;
     await step('links', 90);
 
+    // Departures announced in these artifacts (the person must already exist).
+    await this.graph.batchWrite(graphName, Q.MERGE_DEPARTURES, slice.departures.map((d) => ({ ...d })));
+    added.departures = slice.departures.length;
     await this.graph.query(graphName, Q.UPDATE_PERSON_ACTIVITY);
     return added;
   }
