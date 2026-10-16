@@ -7,7 +7,11 @@ Keystone builds a knowledge graph of the synthetic OrgForge "Apex Athletics"
 company, answers questions with cited sources, works out who knows what,
 simulates "what if this person leaves", and proposes actions a human approves.
 
-> Work in progress. Stage 1: monorepo scaffold, FalkorDB connection, health check.
+How the graph is built: `data/artifacts.jsonl` is ingested without any LLM
+(people, artifacts, who authored, reviewed or owns what); an LLM extracts the
+systems and decisions each artifact talks about (cached, so a rebuild needs no
+LLM calls); chunks are embedded for search; then FalkorDB computes who knows
+each system (`KNOWS`), who works with whom (`COLLAB`) and the analytics on top.
 
 ## Layout
 
@@ -18,7 +22,7 @@ simulates "what if this person leaves", and proposes actions a human approves.
 | `packages/shared` | Zod schemas and types shared by both apps. |
 | `scripts/` | Python data prep. |
 | `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3100) and Redis for BullMQ (6380). |
-| `docker-compose.prod.yml` | Production stack (completed in Stage 14). |
+| `docker-compose.prod.yml` | Production stack. |
 
 ## Quick start
 
@@ -40,7 +44,9 @@ FalkorDB Browser.
 | `pnpm --filter @keystone/api test:int` | Integration tests against the running FalkorDB |
 | `pnpm lint` | ESLint everywhere |
 | `pnpm capability-check` | PASS/FAIL for every FalkorDB feature Keystone needs |
+| `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
 | `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
+| `pnpm expertise [--as-of N]` | Recompute KNOWS + COLLAB on apex, rebuild `apex_proj`, print the KNOWS score distribution |
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
 | `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
 
@@ -54,12 +60,13 @@ repeated request costs no LLM call; `LLM_CACHE_ONLY=yes` makes a cache miss an
 error. Embeddings are shortened to `EMBED_DIM` (768) on both providers. Check the
 setup with `pnpm llm-check` after adding a key.
 
-## Extraction (Stage 5)
+## Extraction
 
 LLM extraction of **System** and **Decision** nodes from artifact text
 (`apps/api/src/extract/`). It reads bodies from the TextStore (never the graph),
-selects Pages, Threads, PRs, Emails, Tickets and Meetings with a body over 300
-characters, seeds a system-name vocabulary from artifact text plus the
+selects Pages, Threads, PRs, Emails and Meetings with a body over 300
+characters, plus every Ticket (a sprint ticket's title names the systems it
+touches), seeds a system-name vocabulary from artifact text plus the
 hand-editable `apps/api/src/extract/aliases.json`, then:
 
 1. per artifact: systems (MENTIONS {weight}), decisions (DECIDED_IN, ABOUT) and page claims;
@@ -76,7 +83,7 @@ Every answer is Zod-validated and cached (`DATA_DIR/cache/extract/<doc_id>.json`
 | `pnpm extract [--force] [--refresh]` | Full run (stops above `EXTRACT_MAX_CALLS` unless `--force`) |
 | `POST /extract/run` `{"dryRun":false,"force":false}` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
 
-## Retrieval (Stage 6)
+## Retrieval
 
 `pnpm embed` splits every artifact body (from the TextStore) into chunks of about
 800 characters with 100 characters of overlap (title first, at most 6 per
@@ -93,7 +100,35 @@ the TextStore, embeds it (cached, `EMBED_DIM` 768) and writes
 FalkorDB's vector `score` is a cosine **distance** (0 = identical), so results are
 ordered ascending; responses also carry `similarity = 1 - distance`.
 
-## Ingestion (Stage 4)
+## Expertise and analytics
+
+`POST /analytics/refresh-expertise {graph?, asOfDay?}` (admin token) runs a BullMQ job: K2 materialises
+`KNOWS` (recency-weighted, 30-day decay, computed in Cypher), edges below 0.05 are deleted,
+K8a rebuilds `COLLAB`, then the graph's projection is rebuilt (`apex` -> `apex_proj`,
+`apex_replay` -> `apex_proj_replay`): Person, System, KNOWS, and COLLAB pairs at or above the
+median weight, in both directions (~2 MB vs 47 MB for apex). Progress: `GET /analytics/jobs/:id/events`.
+`pnpm expertise` does the same for apex from the command line.
+
+A replay (`POST /ingest/replay`) runs the same steps after every replayed day: it copies that
+day's extraction (systems, mentions, decisions, SUPERSEDES, ASSERTS) from apex without LLM
+calls, then refreshes expertise as of that day.
+
+| Endpoint | Query | Graph |
+| --- | --- | --- |
+| `GET /systems/:name/experts` | K3a experts + K3b evidence graph `{nodes, edges}` of the top one | apex |
+| `GET /systems/:name/decisions` | K10a decision trace (what replaced what, source, authors) | apex |
+| `GET /people/:name/departure-impact?minScore=` | K5 systems + backups, K6 open tickets + suggested owners (with evidence), K7 unshared pages | apex |
+| `GET /analytics/bus-factor?minScore=` | K4 with `riskLevel` (0 orphaned, 1 critical, 2 watch, 3+ ok) | apex_proj |
+| `GET /analytics/bridges` | K8b betweenness on COLLAB, top 10, with cross-department evidence | apex_proj |
+| `GET /analytics/stale-docs` | K10b pages asserting a superseded decision | apex |
+| `GET /analytics/summary?minScore=` | People, systems by risk level, stale docs, open tickets, memory | both |
+
+Every response that states a fact carries the artifact ids it came from. Default
+`minScore` is 1.0 (see the comment on `DEFAULT_MIN_SCORE` in `analytics.constants.ts`).
+FalkorDB returns at most `RESULTSET_SIZE` rows (10,000 by default); `GraphService` throws
+when a result reaches it, and the projection reads page with `SKIP/LIMIT`.
+
+## Ingestion
 
 Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
 on the separate Redis. In dev the API runs the worker itself
@@ -119,11 +154,23 @@ Every query lives in a `queries/` file as an exported constant.
 | `apps/api/src/graph/queries/graph.queries.ts` | `HEALTH_PING` | `{ ok: 1 }`, used by `GET /health` |
 | `apps/api/src/graph/queries/schema.queries.ts` | `PERSON_NAME_INDEX`, `ARTIFACT_ID_INDEX`, `ARTIFACT_DAY_INDEX`, `SYSTEM_NAME_INDEX`, `DECISION_ID_INDEX`, `ACTION_ID_INDEX`, `CHUNK_EMBEDDING_VECTOR_INDEX` (via `chunkEmbeddingVectorIndex(EMBED_DIM)`), `LIST_INDEXES` | Index DDL run by `SchemaService.ensureSchema`; `LIST_INDEXES` returns label, properties, index types |
 | `apps/api/src/ingest/queries/ingest.queries.ts` | `MERGE_DEPTS`, `MERGE_PEOPLE`, `MERGE_{TICKET,PAGE,THREAD,PR,EMAIL,MEETING,ALERT,RECORD}_ARTIFACTS`, `MERGE_AUTHORED`, `MERGE_REVIEWED`, `MERGE_ASSIGNED`, `MERGE_REFERENCES`, `MERGE_FIXES`, `UPDATE_PERSON_ACTIVITY`, `GRAPH_COUNTS` | Deterministic ingestion (all MERGE, safe to rerun); `GRAPH_COUNTS` returns people/artifacts/edges for the progress stream |
-| `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures |
+| `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES`, `REPLAY_{SYSTEMS,MENTIONS,DECISIONS,ABOUT,SUPERSEDES,ASSERTS}_FOR_DAY` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures; replay copies one day's extraction from apex |
 | `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
-| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY` | Integration tests only, against `test/fixtures/mini-company.cypher` |
+| `apps/api/src/analytics/queries/analytics.queries.ts` | `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
+| `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `ALL_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
+| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS` | Integration tests only, against `test/fixtures/mini-company.cypher` |
 | `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |
 
 ## AI usage
 
-See [AI_USAGE.md](AI_USAGE.md).
+AI tools were used to build Keystone, as the hackathon rules require us to disclose:
+
+- **Claude Code (Claude Opus 5.5)** wrote most of the code, tests and documentation
+  from our written specs and stage briefs; every change was reviewed, run and tested
+  before it was committed.
+- **OpenAI `gpt-5-nano`** runs inside the product: it extracts systems and decisions from
+  artifact text and links decisions to the pages that state them (cached, Zod-validated).
+- **OpenAI `text-embedding-3-small`** embeds artifact chunks for search.
+- **create-next-app** and the **shadcn/ui** CLI generated the web app template and UI components.
+
+The full log is in [AI_USAGE.md](AI_USAGE.md).

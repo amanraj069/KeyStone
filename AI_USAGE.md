@@ -1,0 +1,18 @@
+# AI usage log
+
+Every piece of AI-generated work in this repo, and what a human changed afterwards.
+
+| Date | Stage | Tool | What it generated | What I changed |
+| --- | --- | --- | --- | --- |
+| 2026-10-15 | 0 | Claude Code (Claude Opus 5.5) | AGENTS.md / CLAUDE.md standing brief from my written spec | |
+| 2026-10-15 | 1 | Claude Code (Claude Opus 5.5) | pnpm monorepo scaffold: NestJS API (GraphService, RedisService, /health, exception filter, Zod env), Next.js web status page, shared Zod schemas, docker-compose files, capability-check script, unit + integration tests | |
+| 2026-10-15 | 1 | create-next-app 15.5.28, shadcn 4.21.5 | Next.js template, shadcn/ui init, Badge/Card/Button components | |
+| 2026-10-15 | 2 | Claude Code (Claude Opus 5.5) | scripts/prepare_orgforge.py (download, artifact/answer-key split, recovered artifact types, ground-truth facts stripping, day inference for 17 undated rows, calendar.json, departures + gap events, self-check), requirements.txt, scripts/README.md, AGENTS.md rule and graph-label updates | |
+| 2026-10-15 | 2 (fix) | Claude Code (Claude Opus 5.5) | prepare_orgforge.py: tag allowlist (TAG_DECISIONS / KEPT_TAGS), calendar rebuilt from day>=1 rows with business-day check, day-0 remap via calendar, re-run day inference on corrected days, (day, timestamp) sort, three new self-checks; stats.md histogram and tag table; scripts/README.md and AGENTS.md tag rule | |
+| 2026-10-15 | 2 (final) + 3 | Claude Code (Claude Opus 5.5) | prepare_orgforge.py: post-sim dates -> rawDate + inference, recovered-row remap, date-only day source, strict calendar self-check. Stage 3: schema.queries.ts, SchemaService (ensureSchema on apex at startup), GraphService.batchWrite / assertMemoryBudget / whenConnected, result mapper, mini-company fixture, fixture/global-teardown helpers, unit + integration tests | |
+| 2026-10-15 | 4 | Claude Code (Claude Opus 5.5) | Deterministic ingestion: roster/roles/links rules, ingest plan + slices, ingest.queries.ts, IngestService (full + day-by-day replay), BullMQ queue/worker/SSE progress, worker.ts entrypoint, admin-token guard, /ingest web page, unit + integration tests; prep script scrubs simulator annotations and 3 record rows | |
+| 2026-10-15 | 5 prep | Claude Code (Claude Opus 5.5) | LLM layer: USE_OPENAI switch (OpenAI gpt-5-mini / Gemini), providers, Zod-validated disk cache, LLM_CACHE_ONLY, llm-check script, tests | |
+| 2026-10-15 | 5 | Claude Code (Claude Opus 5.5) | ExtractModule: LlmService hardening (validation retries, backoff, concurrency, Gemini schema/rotation), extraction cache, selection, seed vocabulary + aliases.json, per-artifact extraction, graph writes, second pass (SUPERSEDES/ASSERTS), POST /extract/run + SSE, CLI, stats-extraction.md, tests | |
+| 2026-10-15 | 6 | Claude Code (Claude Opus 5.5) | RetrievalModule: chunker + memory-aware cap, TextStore.getMany, embeddings via LlmService (cached), Chunk writes, hybrid + vector-only search, /search endpoints, embed CLI, unit + 4-dim integration tests | |
+| 2026-10-16 | 7 | Claude Code (Claude Opus 5.5) | AnalyticsModule + ProjectionModule: spec queries K2-K10 (changes marked CHANGE:), ExpertiseService.refresh + refresh-expertise job, apex_proj projection (paged reads, both-way COLLAB), analytics endpoints with evidence ids, RESULTSET_SIZE guard, time-limited shutdown, fixture tests, pnpm expertise | |
+| 2026-10-16 | 7 | Claude Code (Claude Opus 5.5) | Stage 7 audit: replay refreshes expertise per day (extraction copied from apex), COLLAB median filter for betweenness, tickets always extracted, K6 owner evidence, extra fixture tests; README de-staged, notes moved to docs/ (gitignored) | |
