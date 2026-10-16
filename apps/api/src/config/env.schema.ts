@@ -73,6 +73,9 @@ export const EnvSchema = z
     // artifacts mention it, written by at least 2 people. See catalog.constants.ts.
     CORE_MIN_MENTIONS: z.coerce.number().int().min(1).default(5),
 
+    // At most this many what-if simulations (each a GRAPH.COPY of apex_proj) run at once.
+    WHATIF_MAX_CONCURRENT: z.coerce.number().int().min(1).max(16).default(2),
+
     // Memory guard for ingestion stages; both below the container's 4 GB limit.
     MEMORY_WARN_MB: z.coerce.number().int().positive().default(3000),
     MEMORY_MAX_MB: z.coerce.number().int().positive().default(3600),

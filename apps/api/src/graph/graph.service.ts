@@ -184,6 +184,12 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
     await this.timed('copy', src, `GRAPH.COPY ${src} ${dst}`, () => db.selectGraph(src).copy(dst));
   }
 
+  /** Memory of one graph in MB (GRAPH.MEMORY USAGE), or null if unsupported. */
+  async graphMemoryMb(name: string): Promise<number | null> {
+    const connection = await (await this.requireDb()).connection;
+    return graphMemoryMb(connection, name);
+  }
+
   /** GRAPH.DELETE: removes a graph and everything in it. */
   async deleteGraph(name: string): Promise<void> {
     const db = await this.requireDb();

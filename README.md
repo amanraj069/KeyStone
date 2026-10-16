@@ -183,6 +183,25 @@ Every response that states a fact carries the artifact ids it came from. Default
 FalkorDB returns at most `RESULTSET_SIZE` rows (10,000 by default); `GraphService` throws
 when a result reaches it, and the projection reads page with `SKIP/LIMIT`.
 
+## What-if: simulating a departure
+
+`POST /whatif/departure {"person": "Jax"}` answers "what if this person leaves?" without
+touching the live graph. It copies the small projection `apex_proj` (people, core systems,
+KNOWS, COLLAB; about 1 MB) into a scratch graph `apex_whatif_<id>` with `GRAPH.COPY`, deletes
+the person there, and compares bus factor (K4), bridges (K8b) and knowledge islands (K9) before
+and after. Departure impact (K5-K7: open tickets with suggested owners, sole-authored pages)
+is read from `apex`. The response lists newly orphaned and newly critical systems, new islands,
+the bridge shift, orphaned tickets and pages (each with artifact ids), timings per step, the
+scratch graph's memory, and a small graph around the person for the UI animation.
+
+- The scratch graph is always deleted (also on errors); a sweeper at startup and every hour
+  removes any leftover `apex_whatif_*` graph.
+- `apex_proj` is rebuilt first if it is older than the last expertise refresh.
+- At most `WHATIF_MAX_CONCURRENT` (2) simulations run at once; two requests for the same
+  person share one run.
+- `GET /whatif/candidates`: the 10 people whose departure would orphan the most core systems
+  (K5 for everyone, cached for 60 seconds).
+
 ## Ingestion
 
 Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
@@ -211,10 +230,11 @@ Every query lives in a `queries/` file as an exported constant.
 | `apps/api/src/ingest/queries/ingest.queries.ts` | `MERGE_DEPTS`, `MERGE_PEOPLE`, `MERGE_{TICKET,PAGE,THREAD,PR,EMAIL,MEETING,ALERT,RECORD}_ARTIFACTS`, `MERGE_AUTHORED`, `MERGE_REVIEWED`, `MERGE_PARTICIPATED`, `DELETE_ROLE_EDGES`, `MERGE_DEPARTURES`, `DELETE_DEPARTURE_EDGES`, `CLEAR_DEPARTED_DAYS`, `MERGE_ASSIGNED`, `MERGE_REFERENCES`, `MERGE_FIXES`, `UPDATE_PERSON_ACTIVITY`, `GRAPH_COUNTS` | Deterministic ingestion (all MERGE, safe to rerun); `GRAPH_COUNTS` returns people/artifacts/edges for the progress stream |
 | `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES`, `REPLAY_{SYSTEMS,MENTIONS,DECISIONS,ABOUT,SUPERSEDES,ASSERTS}_FOR_DAY`, `STALE_LINK_TARGETS`, `STALE_LINK_INPUT`, `DELETE_SAME_SOURCE_SUPERSEDES`, `REACTIVATE_UNSUPERSEDED` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures; replay copies one day's extraction from apex |
 | `apps/api/src/catalog/queries/catalog.queries.ts` | `SET_SYSTEM_STATS`, `MARK_CORE_SYSTEMS`, `SET_SYSTEM_IDF`, `CORE_COUNT_AT`, `MENTION_BUCKETS`, `AUTHOR_BUCKETS`, `TOP_SYSTEMS`, `ALL_SYSTEM_COUNTS`, `SYSTEM_TOTALS`, `MERGE_SYSTEM_ALIASES`, `MOVE_SYSTEM_MENTIONS`, `MOVE_SYSTEM_ABOUT`, `DELETE_MERGED_SYSTEMS` | System statistics, core flag, idf, distributions, and merging duplicate systems |
+| `apps/api/src/whatif/queries/whatif.queries.ts` | `K9_KNOWLEDGE_ISLANDS`, `REMOVE_PERSON`, `LEAVER_KNOWS`, `DEPARTURE_CANDIDATES` | Departure simulation: knowledge islands, removing the person in the scratch copy, island evidence, and K5 for every person |
 | `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
-| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
-| `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `CORE_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
-| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS`, `SYSTEM_STATS`, `ADD_TITAN_DUPLICATE`, `TITAN_EDGES`, `IDF_FIXTURE`, `MARK_ALL_SYSTEMS_CORE`, `EVE_JOINS_MEETING`, `KNOWS_SCORE`, `COLLAB_WEIGHT`, `WORKLOAD_FIXTURE`, `BO_ON_DAY_9_THREAD`, `BO_ACTIVITY`, `DEPARTURES` | Integration tests only, against `test/fixtures/mini-company.cypher` |
+| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
+| `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `CORE_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `STAMP_PROJECTION`, `PROJECTION_STAMP`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
+| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS`, `SYSTEM_STATS`, `ADD_TITAN_DUPLICATE`, `TITAN_EDGES`, `IDF_FIXTURE`, `MARK_ALL_SYSTEMS_CORE`, `EVE_JOINS_MEETING`, `KNOWS_SCORE`, `COLLAB_WEIGHT`, `WORKLOAD_FIXTURE`, `BO_ON_DAY_9_THREAD`, `BO_ACTIVITY`, `DEPARTURES`, `BACKUP_FIXTURE`, `GRAPH_FINGERPRINT` | Integration tests only, against `test/fixtures/mini-company.cypher` |
 | `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |
 
 ## AI usage
