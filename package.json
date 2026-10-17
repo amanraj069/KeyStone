@@ -17,6 +17,8 @@
     "embed": "pnpm --filter @keystone/api embed",
     "expertise": "pnpm --filter @keystone/api expertise",
     "systems": "pnpm --filter @keystone/api systems",
-    "reingest-roles": "pnpm --filter @keystone/api reingest-roles"
+    "reingest-roles": "pnpm --filter @keystone/api reingest-roles",
+    "mcp:stdio": "pnpm --silent --filter @keystone/api mcp:stdio",
+    "mcp:check": "pnpm --filter @keystone/api mcp:check"
   }
 }

@@ -4,6 +4,7 @@ import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import type { GraphPath } from '../graph/result-mapper';
 import { DONE_STATUSES, EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE, PROJECTION_GRAPH, type RiskLevel, riskLevel } from './analytics.constants';
+import { closestNames } from './closest-names';
 import { type GraphView, pathsToGraphView } from './graph-view';
 import * as Q from './queries/analytics.queries';
 
@@ -192,6 +193,25 @@ export class AnalyticsService {
       openTickets: open?.open ?? 0,
       memory,
     };
+  }
+
+  /** Core systems, most mentioned first: the names worth asking about. */
+  async listCoreSystems(graphName = APEX_GRAPH): Promise<{ name: string; mentionCount: number; authorCount: number }[]> {
+    return this.graph.roQuery(graphName, Q.LIST_CORE_SYSTEMS);
+  }
+
+  /** People with department and activity; `activeOnly` drops people who have left. */
+  async listPeople(
+    activeOnly = false,
+    graphName = APEX_GRAPH,
+  ): Promise<{ name: string; dept: string | null; active: boolean; lastSeenDay: number | null; departedDay: number | null }[]> {
+    return this.graph.roQuery(graphName, Q.LIST_PEOPLE, { activeOnly });
+  }
+
+  /** "Did you mean": the system names closest to one that was not found (aliases count). */
+  async similarSystems(name: string, graphName = APEX_GRAPH, limit = 5): Promise<string[]> {
+    const systems = await this.graph.roQuery<{ name: string; aliases: string[] }>(graphName, Q.SYSTEM_NAMES);
+    return closestNames(name, systems, limit);
   }
 
   private async requireSystem(system: string, graphName: string): Promise<void> {

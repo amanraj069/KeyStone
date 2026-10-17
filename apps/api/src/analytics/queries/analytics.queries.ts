@@ -333,3 +333,28 @@ export const OPEN_TICKETS_COUNT = `
   WHERE NOT toLower(coalesce(t.status, asg.status, 'unknown')) IN $doneStatuses
   RETURN count(DISTINCT t) AS open
 `;
+
+// ---------------------------------------------------------------- directory (names the agent can use)
+
+/** Core systems, most mentioned first ({name, mentionCount, authorCount}). */
+export const LIST_CORE_SYSTEMS = `
+  MATCH (s:System)
+  WHERE s.core = true
+  RETURN s.name AS name, s.mentionCount AS mentionCount, s.authorCount AS authorCount
+  ORDER BY mentionCount DESC, name
+`;
+
+/** Every system name with its aliases ({name, aliases}), for "did you mean" suggestions. */
+export const SYSTEM_NAMES = `
+  MATCH (s:System)
+  RETURN s.name AS name, coalesce(s.aliases, []) AS aliases
+  ORDER BY name
+`;
+
+/** People ({name, dept, active, lastSeenDay, departedDay}); $activeOnly limits to active people. */
+export const LIST_PEOPLE = `
+  MATCH (p:Person)
+  WHERE NOT $activeOnly OR p.active = true
+  RETURN p.name AS name, p.dept AS dept, p.active AS active, p.lastSeenDay AS lastSeenDay, p.departedDay AS departedDay
+  ORDER BY name
+`;

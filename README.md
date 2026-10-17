@@ -67,6 +67,8 @@ FalkorDB Browser.
 | `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
 | `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
 | `pnpm reingest-roles` | Rewrite person-artifact role edges from `artifacts.jsonl` (no reset), then refresh expertise |
+| `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio (see `docs/mcp.md`) |
+| `pnpm mcp:check [--stdio]` | Lists the MCP tools and calls the read tools on apex |
 | `pnpm systems report` | System catalog: distribution by mentions and authors, top 50, core counts |
 | `pnpm expertise [--as-of N]` | Recompute KNOWS + COLLAB on apex, rebuild `apex_proj`, print the KNOWS score distribution |
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
@@ -202,6 +204,15 @@ scratch graph's memory, and a small graph around the person for the UI animation
 - `GET /whatif/candidates`: the 10 people whose departure would orphan the most core systems
   (K5 for everyone, cached for 60 seconds).
 
+## MCP server
+
+The graph tools are also an MCP server (`apps/api/src/mcp/`): Streamable HTTP at
+`POST /mcp` while the API runs, or stdio with `pnpm --silent mcp:stdio`. Tools: `search_knowledge`,
+`who_knows`, `bus_factor`, `bridge_people`, `simulate_departure`, `trace_decision`,
+`find_stale_docs`, `list_systems`, `list_people` (plus three action tools that are not available
+yet). Each returns `{ data, evidence, graphPath? }`, where `evidence` is the artifact ids to cite.
+Claude Desktop config, MCP Inspector instructions and the tool list: [docs/mcp.md](docs/mcp.md).
+
 ## Ingestion
 
 Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
@@ -232,7 +243,7 @@ Every query lives in a `queries/` file as an exported constant.
 | `apps/api/src/catalog/queries/catalog.queries.ts` | `SET_SYSTEM_STATS`, `MARK_CORE_SYSTEMS`, `SET_SYSTEM_IDF`, `CORE_COUNT_AT`, `MENTION_BUCKETS`, `AUTHOR_BUCKETS`, `TOP_SYSTEMS`, `ALL_SYSTEM_COUNTS`, `SYSTEM_TOTALS`, `MERGE_SYSTEM_ALIASES`, `MOVE_SYSTEM_MENTIONS`, `MOVE_SYSTEM_ABOUT`, `DELETE_MERGED_SYSTEMS` | System statistics, core flag, idf, distributions, and merging duplicate systems |
 | `apps/api/src/whatif/queries/whatif.queries.ts` | `K9_KNOWLEDGE_ISLANDS`, `REMOVE_PERSON`, `LEAVER_KNOWS`, `DEPARTURE_CANDIDATES` | Departure simulation: knowledge islands, removing the person in the scratch copy, island evidence, and K5 for every person |
 | `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
-| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
+| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT`, `LIST_CORE_SYSTEMS`, `SYSTEM_NAMES`, `LIST_PEOPLE` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
 | `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `CORE_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `STAMP_PROJECTION`, `PROJECTION_STAMP`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
 | `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS`, `SYSTEM_STATS`, `ADD_TITAN_DUPLICATE`, `TITAN_EDGES`, `IDF_FIXTURE`, `MARK_ALL_SYSTEMS_CORE`, `EVE_JOINS_MEETING`, `KNOWS_SCORE`, `COLLAB_WEIGHT`, `WORKLOAD_FIXTURE`, `BO_ON_DAY_9_THREAD`, `BO_ACTIVITY`, `DEPARTURES`, `BACKUP_FIXTURE`, `GRAPH_FINGERPRINT` | Integration tests only, against `test/fixtures/mini-company.cypher` |
 | `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |

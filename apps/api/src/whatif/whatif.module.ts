@@ -26,5 +26,6 @@ import { WhatIfService } from './whatif.service';
     },
     WhatIfService,
   ],
+  exports: [WhatIfService],
 })
 export class WhatIfModule {}
