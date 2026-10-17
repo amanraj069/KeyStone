@@ -86,8 +86,9 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
     {
       title: 'Experts on a system',
       description:
-        'Who knows one system best: the five strongest active experts, each with an expertise score, the last day they worked on it ' +
-        'and the artifact ids that show it, plus an evidence graph for the top expert. The score is recency-weighted (writing a ' +
+        'Who knows one system best: the five strongest active experts, each with an expertise score, lastActive (the day number of ' +
+        "their latest work on it in the company's timeline, where a higher number is more recent; not a number of days ago) and the " +
+        'artifact ids that show it, plus an evidence graph for the top expert. The score is recency-weighted (writing a ' +
         'document about the system counts 3, reviewing 2, owning a ticket 1, taking part in a conversation up to 0.5; older work ' +
         "counts less, halving about every three weeks). Use it for 'who knows X', 'who is the expert on X', 'who should I ask about " +
         "X'. If the name is not a known system, the result has found: false and up to five similar system names: call it again with " +
@@ -168,7 +169,8 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
         'Simulates one person leaving without changing any data: removes them from a copy of the expertise graph and compares before ' +
         'and after. Returns the core systems that would lose their last expert (newly orphaned) or be left with exactly one (newly ' +
         "critical), systems nobody would know at all, how the key connectors shift, the person's open tickets with suggested new " +
-        'owners, and pages only they wrote, each with artifact ids, plus a graph around the person. Use it for "what if X leaves", ' +
+        'owners, and pages only they wrote, each with artifact ids, plus a graph around the person. These cover every system the ' +
+        'person knows, not only one a question started from. Use it for "what if X leaves", ' +
         '"what breaks if X quits", "who could take over X\'s work". The person must be an active employee: check the exact name with ' +
         'list_people; to find the expert on a system first, use who_knows.',
       inputSchema: {
