@@ -20,6 +20,17 @@ const eslintConfig = [
       "next-env.d.ts",
     ],
   },
+  {
+    // The benchmark's answer key never reaches the web app (AGENTS.md section 2); it shows results from GET /bench/results.
+    files: ["**/*.ts", "**/*.tsx"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "Literal[value=/answer_key/]", message: "The web app must not read data/answer_key/." },
+        { selector: "TemplateElement[value.raw=/answer_key/]", message: "The web app must not read data/answer_key/." },
+      ],
+    },
+  },
 ];
 
 export default eslintConfig;

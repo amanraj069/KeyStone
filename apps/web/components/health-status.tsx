@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { HealthResponse } from "@keystone/shared";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { API_BASE_URL, fetchHealth } from "@/lib/api";
+import { API_BASE_URL, api } from "@/lib/api";
 import { StatusPill, type PillState } from "./status-pill";
 
 const POLL_MS = 5_000;
@@ -18,7 +18,7 @@ export function HealthStatus() {
 
     async function poll() {
       try {
-        setHealth(await fetchHealth(controller.signal));
+        setHealth(await api.health(controller.signal));
         setApiState("up");
       } catch {
         if (controller.signal.aborted) return;

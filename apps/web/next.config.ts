@@ -11,6 +11,10 @@ const nextConfig: NextConfig = {
     // Exposed to the browser: the only API the web app talks to.
     NEXT_PUBLIC_API_BASE_URL: process.env.API_BASE_URL ?? "http://localhost:4000",
   },
+  // The dev badge sits on top of the graph canvas; the overlay still shows errors.
+  devIndicators: false,
+  // Transpile @theme-toggles/react since it ships raw .tsx source files
+  transpilePackages: ["@theme-toggles/react"],
 };
 
 export default nextConfig;
