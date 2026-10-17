@@ -10,7 +10,7 @@ import {
 } from '@keystone/shared';
 import { type Job, Queue, QueueEvents } from 'bullmq';
 import type { Redis } from 'ioredis';
-import { Observable } from 'rxjs';
+import { EMPTY, Observable, Subject, takeUntil } from 'rxjs';
 import {
   EXTRACT_JOB,
   FULL_JOB,
@@ -33,6 +33,9 @@ export class IngestQueue implements OnModuleDestroy {
   private readonly connections: Redis[];
   readonly queue: Queue;
   private readonly events: QueueEvents;
+  /** Fires on shutdown: ends the open-ended event streams, or closing the HTTP server would wait for them forever. */
+  private readonly closing = new Subject<void>();
+  private shuttingDown = false;
 
   constructor(@Inject(INGEST_SETTINGS) settings: IngestSettings) {
     const queueConnection = bullConnection(settings.redisUrl);
@@ -113,7 +116,43 @@ export class IngestQueue implements OnModuleDestroy {
     });
   }
 
+  /**
+   * Progress, completion and failure of every job (for the web app's activity strip
+   * and live dot). Unlike events$, it never completes: it follows the queue.
+   */
+  allEvents$(): Observable<IngestEvent> {
+    // A reconnect that arrives while shutting down gets an empty stream, not one that never ends.
+    if (this.shuttingDown) return EMPTY;
+    const events = new Observable<IngestEvent>((subscriber) => {
+      const onProgress = ({ jobId, data }: { jobId: string; data: unknown }) => {
+        const progress = IngestProgressSchema.safeParse(data);
+        if (progress.success) subscriber.next({ type: 'progress', jobId, progress: progress.data });
+      };
+      const onCompleted = ({ jobId }: { jobId: string }) => subscriber.next({ type: 'completed', jobId });
+      const onFailed = ({ jobId, failedReason }: { jobId: string; failedReason: string }) =>
+        subscriber.next({ type: 'failed', jobId, reason: failedReason });
+      this.events.on('progress', onProgress);
+      this.events.on('completed', onCompleted);
+      this.events.on('failed', onFailed);
+      return () => {
+        this.events.off('progress', onProgress);
+        this.events.off('completed', onCompleted);
+        this.events.off('failed', onFailed);
+      };
+    });
+    return events.pipe(takeUntil(this.closing));
+  }
+
+  /** Jobs running or waiting now, with their latest progress. */
+  async activeJobs(): Promise<IngestJob[]> {
+    const jobs = await this.queue.getJobs(['active', 'waiting']);
+    return Promise.all(jobs.map((job) => this.describe(job)));
+  }
+
   async onModuleDestroy(): Promise<void> {
+    this.shuttingDown = true;
+    this.closing.next();
+    this.closing.complete();
     await closeWithin('BullMQ queue events', this.logger, () => this.events.close());
     await closeWithin('BullMQ queue', this.logger, () => this.queue.close());
     for (const connection of this.connections) connection.disconnect();

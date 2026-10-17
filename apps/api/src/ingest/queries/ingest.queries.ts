@@ -120,6 +120,35 @@ export const MERGE_PARTICIPATED = `
 `;
 
 /**
+ * Person received the artifact, e.g. an email's recipient or liaison ({person, artifactId, day}).
+ * Not a role: expertise, collaboration and activity never read it; the event tools do.
+ */
+export const MERGE_RECEIVED = `
+  UNWIND $rows AS row
+  MATCH (p:Person {name: row.person}), (a:Artifact {id: row.artifactId})
+  MERGE (p)-[r:RECEIVED]->(a)
+  SET r.day = row.day
+`;
+
+/**
+ * Person is listed among the artifact's actors with no other edge to it: mentioned in
+ * a thread, at a meeting without speaking, named on a PR ({person, artifactId, day}).
+ * Not a role either: only the event tools read it.
+ */
+export const MERGE_LISTED_ON = `
+  UNWIND $rows AS row
+  MATCH (p:Person {name: row.person}), (a:Artifact {id: row.artifactId})
+  MERGE (p)-[r:LISTED_ON]->(a)
+  SET r.day = row.day
+`;
+
+/** Removes every RECEIVED and LISTED_ON edge, so they can be rewritten with the roles. */
+export const DELETE_SEEN_EDGES = `
+  MATCH (:Person)-[r:RECEIVED|LISTED_ON]->(:Artifact)
+  DELETE r
+`;
+
+/**
  * Removes every Person -> Artifact role edge, so roles can be rewritten from
  * artifacts.jsonl without resetting the graph (extraction and chunks stay).
  */

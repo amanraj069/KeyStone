@@ -23,6 +23,9 @@ const CALLS: [string, Record<string, unknown>][] = [
   ['find_stale_docs', {}],
   ['search_knowledge', { question: 'Why did we change the cost tagging approach?', k: 3 }],
   ['simulate_departure', { person: 'Jax' }],
+  ['find_artifacts', { people: ['Jax'], fromDay: 20, toDay: 21, limit: 5 }],
+  ['get_artifact', { id: 'ORG-139' }],
+  ['what_followed', { id: 'ORG-139', days: 10 }],
 ];
 
 async function main(): Promise<void> {

@@ -99,6 +99,19 @@ describe('WhatIfService on the fixture graph', () => {
     await expect(projections.isFresh(projection(), fx.name)).resolves.toBe(true);
   });
 
+  it('the before-subgraph uses the simulation\'s node ids, with nothing flagged yet', async () => {
+    const before = await whatIf.beforeGraph('Ada');
+    const ids = before.graph.nodes.map((n) => n.id);
+    expect(ids).toEqual(expect.arrayContaining(['person:Ada', 'system:PaymentsAPI', 'system:TitanDB']));
+    expect(before.graph.nodes.every((n) => !n.leaving && !n.orphaned && !n.critical)).toBe(true);
+    // Every system shown before is in the simulation's graph, so the layout can stay put.
+    const after = new Set((await whatIf.simulateDeparture('Ada')).graph.nodes.map((n) => n.id));
+    expect(ids.filter((id) => id.startsWith('system:')).every((id) => after.has(id))).toBe(true);
+    // Dev's open ticket is a ticket node (OPEN_TICKETS_OF).
+    expect((await whatIf.beforeGraph('Dev')).graph.nodes.map((n) => n.id)).toContain('ticket:T-4');
+    await expect(whatIf.beforeGraph('Nobody')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('rejects unknown and already departed people', async () => {
     await expect(whatIf.simulateDeparture('Nobody')).rejects.toBeInstanceOf(NotFoundException);
     await expect(whatIf.simulateDeparture('Cara')).rejects.toBeInstanceOf(ConflictException);

@@ -40,6 +40,13 @@ export class GeminiAgentModel implements AgentModel {
       toolCalls: calls.map((call) => ({ id: call.id ?? randomUUID(), name: call.name ?? '', args: call.args ?? {} })),
       // Sent back as is in the next turn: Gemini 2.5 keeps its reasoning in thought signatures on these parts.
       raw: response.candidates?.[0]?.content,
+      // Same mapping as GeminiProvider: thinking tokens are billed as output.
+      usage: {
+        inputTokens: response.usageMetadata?.promptTokenCount ?? 0,
+        cachedInputTokens: response.usageMetadata?.cachedContentTokenCount ?? 0,
+        outputTokens: (response.usageMetadata?.candidatesTokenCount ?? 0) + (response.usageMetadata?.thoughtsTokenCount ?? 0),
+        reasoningTokens: response.usageMetadata?.thoughtsTokenCount ?? 0,
+      },
     };
   }
 

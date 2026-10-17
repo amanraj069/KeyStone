@@ -2,27 +2,15 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* Dark mode follows the `dark` class on <html> (set by ThemeContext and the inline script in layout.tsx). */
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
+  --font-sans: var(--font-body);
+  --font-mono: var(--font-code);
+  --font-heading: var(--font-body);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -35,96 +23,216 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Inner rows on a card (list items, stat rows), one step off the card. */
+  --color-surface: var(--surface);
+  /* The one alarm colour: risk and the agent's path. Nothing else uses it. */
+  --color-signal: var(--signal);
+  --color-signal-soft: var(--signal-soft);
+  --color-signal-foreground: var(--signal-foreground);
+  --color-faint: var(--faint);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) * 1.4);
   --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Keystone palette: cool slate paper, white cards, a deep navy "ink" for what is
+ * selected or primary, and one vermilion signal for risk. The --node-* colours
+ * are the graph canvas's label colours (low chroma, so the signal stands out).
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  color-scheme: light;
   --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --background: #eceff2;
+  --foreground: #161d26;
+  --card: #fbfcfd;
+  --card-foreground: #161d26;
+  --popover: #fbfcfd;
+  --popover-foreground: #161d26;
+  --surface: #f2f4f6;
+  --primary: #1d3557;
+  --primary-hover: #172b47;
+  --primary-foreground: #ffffff;
+  --secondary: #f2f4f6;
+  --secondary-foreground: #161d26;
+  --muted: #f2f4f6;
+  --muted-foreground: #5f6b7a;
+  --faint: #8a95a3;
+  --accent: #e6eaee;
+  --accent-foreground: #161d26;
+  --destructive: #c8361c;
+  --border: #dbe0e6;
+  --input: #c9d0d8;
+  --ring: #1d3557;
+  --signal: #d4452a;
+  --signal-soft: #fbe8e3;
+  --signal-foreground: #ffffff;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.36);
+
+  --node-person: #1d3557;
+  --node-system: #4f7f6e;
+  --node-ticket: #b08a4f;
+  --node-page: #5b8aa6;
+  --node-thread: #8a7aa6;
+  --node-pr: #7d8f4f;
+  --node-email: #a6766b;
+  --node-meeting: #6d73a6;
+  --node-artifact: #95a0ab;
+  --node-decision: #8a6a3d;
+  --node-action: #2b3440;
+  --edge: #c3cad2;
+  --canvas-label: #161d26;
+  --canvas-label-bg: #fbfcfd;
+
+  /* Benchmark chart series (dataviz reference slots 1-2, validated on --card in both modes). */
+  --series-keystone: #2a78d6;
+  --series-baseline: #eb6834;
+  /* Not a series: the hindsight reference, kept neutral so it never reads as a third system. */
+  --series-reference: #b3bbc4;
 }
 
+html.dark,
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  color-scheme: dark;
+  --background: #0b0f14;
+  --foreground: #eef1f5;
+  --card: #121820;
+  --card-foreground: #eef1f5;
+  --popover: #151c25;
+  --popover-foreground: #eef1f5;
+  --surface: #0f141b;
+  --primary: #24446d;
+  --primary-hover: #2b5182;
+  --primary-foreground: #ffffff;
+  --secondary: #1a222c;
+  --secondary-foreground: #eef1f5;
+  --muted: #1a222c;
+  --muted-foreground: #97a3b2;
+  --faint: #66727f;
+  --accent: #1a222c;
+  --accent-foreground: #eef1f5;
+  --destructive: #f06a4a;
+  --border: #222c37;
+  --input: #2f3a47;
+  --ring: #5f86b8;
+  --signal: #f06a4a;
+  --signal-soft: #3a1c15;
+  --signal-foreground: #0b0f14;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.36);
+
+  --node-person: #9fb6d6;
+  --node-system: #7fb39f;
+  --node-ticket: #d4b27a;
+  --node-page: #8fb7cf;
+  --node-thread: #b4a6cc;
+  --node-pr: #a9b97a;
+  --node-email: #cfa196;
+  --node-meeting: #a0a6d6;
+  --node-artifact: #7f8a96;
+  --node-decision: #d1ad7d;
+  --node-action: #dfe5ec;
+  --edge: #2c3744;
+  --canvas-label: #eef1f5;
+  --canvas-label-bg: #121820;
+
+  --series-keystone: #3987e5;
+  --series-baseline: #d95926;
+  --series-reference: #4a5563;
+}
+
+/* Scrollbars, quiet in both themes (as in Intake). */
+* {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background text-foreground;
-  }
   html {
     @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+  *:focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: not-allowed;
+  }
+}
+
+/* The small uppercase label above a group ("TODAY'S MEALS" in Intake, "BRIDGE PEOPLE" here). */
+@utility section-label {
+  @apply text-[11px] font-bold tracking-[0.18em] text-muted-foreground uppercase;
+}
+
+/* Ids, Cypher and other machine text. */
+@utility code-id {
+  @apply font-mono text-[0.78em] tracking-tight;
+}
+
+@keyframes enter-fade-up {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: enter-fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--foreground) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.live-dot {
+  animation: live-pulse 1.6s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .animate-fade-up {
+    animation: none;
   }
 }

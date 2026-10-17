@@ -1,45 +1,16 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import type { MemoryReport } from '@keystone/shared';
+import type { AnalyticsSummary, Bridge, BusFactorRow, DecisionTraceRow, Expert, ExpertsResponse, PersonListItem, StaleDoc, SystemWithDecisions } from '@keystone/shared';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import type { GraphPath } from '../graph/result-mapper';
 import { DONE_STATUSES, EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE, PROJECTION_GRAPH, type RiskLevel, riskLevel } from './analytics.constants';
 import { closestNames } from './closest-names';
-import { type GraphView, pathsToGraphView } from './graph-view';
+import { pathsToGraphView } from './graph-view';
 import * as Q from './queries/analytics.queries';
 
 // Response shapes. Every fact carries the artifact ids it came from (`evidence`, `source`, ids).
-
-export interface Expert {
-  person: string;
-  score: number;
-  lastActive: number;
-  evidence: string[];
-}
-
-export interface ExpertsResponse {
-  system: string;
-  experts: Expert[];
-  /** Evidence graph for the top expert: their 10 most recent artifacts about the system. */
-  evidencePath: (GraphView & { person: string; evidence: string[] }) | null;
-}
-
-export interface BusFactorRow {
-  system: string;
-  experts: number;
-  riskLevel: RiskLevel;
-  names: string[];
-  /** One evidence list per expert, in the same order as `names`. */
-  evidence: string[][];
-}
-
-export interface Bridge {
-  person: string;
-  score: number;
-  dept: string | null;
-  /** Recent artifacts this person shares with people from other departments. */
-  evidence: string[];
-}
+// The ones the web app reads are Zod schemas in @keystone/shared (one definition for both sides).
+export type { AnalyticsSummary, Bridge, BusFactorRow, DecisionTraceRow, Expert, ExpertsResponse, StaleDoc };
 
 export interface DepartureImpact {
   person: string;
@@ -52,39 +23,6 @@ export interface DepartureImpact {
   openTickets: { ticket: string; title: string; suggestedOwners: string[]; ownerEvidence: string[][] }[];
   /** Pages only this person has written or reviewed. */
   unsharedPages: { page: string; title: string }[];
-}
-
-export interface DecisionTraceRow {
-  id: string;
-  summary: string;
-  day: number | null;
-  kind: string;
-  status: string;
-  source: string;
-  sourceType: string;
-  authors: string[];
-  replacedId: string | null;
-  replaced: string | null;
-}
-
-export interface StaleDoc {
-  stalePage: string;
-  pageTitle: string;
-  outdatedId: string;
-  outdatedClaim: string;
-  currentId: string;
-  currentDecision: string;
-  decidedOn: number | null;
-  decidedIn: string | null;
-}
-
-export interface AnalyticsSummary {
-  people: { active: number; inactive: number };
-  systems: Record<RiskLevel, number>;
-  minScore: number;
-  staleDocs: number;
-  openTickets: number;
-  memory: MemoryReport;
 }
 
 /**
@@ -185,7 +123,10 @@ export class AnalyticsService {
       this.graph.roQuery<{ open: number }>(graphName, Q.OPEN_TICKETS_COUNT, { doneStatuses: DONE_STATUSES }),
       this.graph.memoryReport(),
     ]);
+    const [day] = await this.graph.roQuery<{ day: number | null }>(graphName, Q.LAST_ARTIFACT_DAY);
     return {
+      graph: graphName,
+      day: day?.day ?? null,
       people: people ?? { active: 0, inactive: 0 },
       systems: risk ?? { orphaned: 0, critical: 0, watch: 0, ok: 0 },
       minScore,
@@ -200,11 +141,16 @@ export class AnalyticsService {
     return this.graph.roQuery(graphName, Q.LIST_CORE_SYSTEMS);
   }
 
+  /** Systems with decisions for the Decisions screen: core ones and any with a replaced decision. */
+  async systemsWithDecisions(graphName = APEX_GRAPH): Promise<SystemWithDecisions[]> {
+    return this.graph.roQuery(graphName, Q.SYSTEMS_WITH_DECISIONS);
+  }
+
   /** People with department and activity; `activeOnly` drops people who have left. */
   async listPeople(
     activeOnly = false,
     graphName = APEX_GRAPH,
-  ): Promise<{ name: string; dept: string | null; active: boolean; lastSeenDay: number | null; departedDay: number | null }[]> {
+  ): Promise<PersonListItem[]> {
     return this.graph.roQuery(graphName, Q.LIST_PEOPLE, { activeOnly });
   }
 

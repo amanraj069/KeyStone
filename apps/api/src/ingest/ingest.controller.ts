@@ -9,6 +9,8 @@ import { IngestQueue } from './ingest.queue';
  * POST /ingest/replay   rebuild a graph (default apex_replay) day by day
  * GET  /ingest/jobs/:id job state and latest progress
  * GET  /ingest/jobs/:id/events   Server-Sent Events: live progress until done
+ * GET  /ingest/events            Server-Sent Events for every job (the web app's activity strip)
+ * GET  /ingest/active            jobs running or waiting now (with their latest progress)
  * Bodies are validated with Zod; a bad body becomes a 400 ApiError.
  */
 @Controller('ingest')
@@ -25,6 +27,16 @@ export class IngestController {
   @UseGuards(AdminTokenGuard)
   startReplay(@Body() body: unknown): Promise<IngestJob> {
     return this.queue.addReplay(ReplayRequestSchema.parse(body ?? {}));
+  }
+
+  @Sse('events')
+  allEvents(): Observable<MessageEvent> {
+    return this.queue.allEvents$().pipe(map((event) => ({ type: event.type, data: event })));
+  }
+
+  @Get('active')
+  active(): Promise<IngestJob[]> {
+    return this.queue.activeJobs();
   }
 
   @Get('jobs/:id')

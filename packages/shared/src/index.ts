@@ -10,3 +10,7 @@ export * from './schemas/api-error';
 export * from './schemas/health';
 export * from './schemas/ingest';
 export * from './schemas/search';
+export * from './schemas/analytics';
+export * from './schemas/agent';
+export * from './schemas/whatif';
+export * from './schemas/bench';

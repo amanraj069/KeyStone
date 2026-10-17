@@ -9,7 +9,10 @@ import type { Env } from './config/env.schema';
 const API_PORT = 4000;
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // forceCloseConnections: on shutdown, also close open Server-Sent Event streams
+  // (a browser's EventSource reconnects on the same socket, which would keep
+  // server.close() waiting forever and hang every dev restart).
+  const app = await NestFactory.create(AppModule, { forceCloseConnections: true });
   const config = app.get<ConfigService<Env, true>>(ConfigService);
 
   // Only the Keystone web app may call this API from a browser.

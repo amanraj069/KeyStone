@@ -39,21 +39,23 @@ export const CHUNK_MODELS = 'MATCH (c:Chunk) RETURN c.model AS model, count(c) A
  * chunk belongs to, artifacts linked to it within 2 REFERENCES hops, and who
  * wrote it. Notes:
  *   - FalkorDB returns `score` as a DISTANCE (0 = identical), so nearest first is ASC.
- *   - Vector queries cannot take property filters, so the "as of day" filter
- *     ($asOfDay, null = no filter) is applied after the CALL.
+ *   - Vector queries cannot take property filters, so the day filters ($fromDay
+ *     and $asOfDay, null = no filter) are applied after the CALL; with a filter the
+ *     caller asks for more neighbours ($k) and keeps the best $limit.
  *   - `linked <> a` stops an artifact from listing itself through a 2-hop loop.
  *   - authors include PARTICIPATED (the people in a thread or meeting).
  */
 export const HYBRID_SEARCH = `
   CALL db.idx.vector.queryNodes('Chunk', 'embedding', $k, vecf32($q)) YIELD node, score
   MATCH (node)-[:PART_OF]->(a:Artifact)
-  WHERE $asOfDay IS NULL OR a.day <= $asOfDay
+  WHERE ($asOfDay IS NULL OR a.day <= $asOfDay) AND ($fromDay IS NULL OR a.day >= $fromDay)
   OPTIONAL MATCH (a)-[:REFERENCES*1..2]-(linked:Artifact)
   WHERE linked <> a
   OPTIONAL MATCH (a)<-[:AUTHORED|PARTICIPATED]-(author:Person)
   RETURN node.id AS chunkId, a.id AS id, a.title AS title, a.type AS type, a.day AS day, score,
          collect(DISTINCT linked.id)[0..8] AS related, collect(DISTINCT author.name) AS authors
   ORDER BY score ASC
+  LIMIT $limit
 `;
 
 /**

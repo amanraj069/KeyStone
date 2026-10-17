@@ -1,63 +1,138 @@
-# Keystone
+<h1 align="center">Keystone</h1>
 
-A Company Brain agent built on [FalkorDB](https://www.falkordb.com) for the
-Graph Hacks hackathon (WeMakeDevs x FalkorDB, Oct 15–18, 2026).
+<p align="center"><b>Your company's memory, made searchable. Know who knows what, before it walks out the door.</b></p>
 
-Keystone builds a knowledge graph of the synthetic OrgForge "Apex Athletics"
-company, answers questions with cited sources, works out who knows what,
-simulates "what if this person leaves", and proposes actions a human approves.
+<p align="center">
+  Keystone builds a living knowledge graph of your organisation — people, artifacts, systems, decisions —
+  so you can answer <em>who knows this</em>, <em>what breaks if this person leaves</em>,
+  and <em>why was this decided</em>, with cited sources.
+</p>
 
-How the graph is built: `data/artifacts.jsonl` is ingested without any LLM
-(people, artifacts, who authored, reviewed or owns what); an LLM extracts the
-systems and decisions each artifact talks about (cached, so a rebuild needs no
-LLM calls); chunks are embedded for search; then FalkorDB computes who knows
-each system (`KNOWS`), who works with whom (`COLLAB`) and the analytics on top.
+<p align="center">
+  <a href="#quick-start"><b>Quick start</b></a> ·
+  <a href="#how-it-works"><b>How it works</b></a> ·
+  <a href="#the-web-app"><b>Web app</b></a> ·
+  <a href="#mcp-server"><b>MCP server</b></a> ·
+  <a href="#rebuilding-the-graph"><b>Rebuilding</b></a>
+</p>
 
-- **Who did what.** `AUTHORED` is real authorship: a page, PR, email, the creator of a
-  ticket, or the single writer of a Slack thread. People in a multi-person thread or a
-  meeting get `PARTICIPATED {messages}` (one message = one `Name:` line), `REVIEWED` is a
-  PR review and `ASSIGNED` is ticket ownership.
-- **Departures** come from HR announcements found in the company's own documents ("X's last
-  day is ...", "X is leaving the company"): they set `departedDay`, keep the announcing artifact
-  as evidence, and make the person inactive from that day on (their past work stays in the graph).
-- **Expertise (`KNOWS`).** Each person-system pair is scored from the artifacts that
-  mention the system: authored 3, reviewed 2, assigned 1, participated
-  0.5 x min(messages, 4) / 4, each with a 30-day exponential decay.
-- **Core systems.** A system is core when at least 5 artifacts mention it, written by at
-  least 2 people (144 of 1,939). Bus factor, departure impact and the projection use core
-  systems only.
-- **Experts.** A person is an expert on a core system when their score is at least
-  `MIN_EXPERT_SCORE` = 0.4 and at least 25% of that system's top score. 0.4 is the median
-  KNOWS score on core systems (0.41), rounded; the rule was fixed before looking at the
-  results and without the benchmark answers.
+<p align="center">
+  <img alt="Graph DB" src="https://img.shields.io/badge/graph-FalkorDB-blue">
+  <img alt="API" src="https://img.shields.io/badge/api-NestJS%2011-E0234E">
+  <img alt="Web" src="https://img.shields.io/badge/web-Next.js%2015-black">
+  <img alt="LLM" src="https://img.shields.io/badge/llm-OpenAI%20%7C%20Gemini-5A2D82">
+  <img alt="Queue" src="https://img.shields.io/badge/queue-BullMQ-orange">
+  <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-brightgreen">
+</p>
 
-The queries are documented in [docs/spec-queries.md](docs/spec-queries.md).
+---
 
-## Layout
+## The problem
+
+When someone leaves a company, knowledge leaves with them. Most of what your team knows lives in Slack threads, pull requests, emails, tickets and Confluence pages — not in anyone's head. Keystone reads all of it, builds a graph of who knows what, and answers questions with citations to the actual artifacts.
+
+> *"Who is our last expert on the TitanDB migrations? If they left tomorrow, what would break, and who could cover?"*
+
+That is the question Keystone answers in seconds, with evidence.
+
+---
+
+## What Keystone does
+
+```mermaid
+flowchart LR
+    A[Artifacts\nSlack · PRs · Docs · Tickets] --> B[Ingest\nno LLM]
+    B --> C[Extract\nLLM cached]
+    C --> D[FalkorDB\nKnowledge Graph]
+    D --> E[Agent\nask a question]
+    D --> F[What-if\nsimulate departure]
+    D --> G[Audit\napprove actions]
+    E --> H[Answer + citations]
+```
+
+| Who asks | What Keystone answers |
+|---|---|
+| **Engineering lead** | Who are the experts on System X? Who is the backup? |
+| **HR / manager** | If this person leaves, which systems are exposed? Which tickets need a new owner? |
+| **Team member** | Why was this architecture decision made? Which document is now out of date? |
+| **An AI agent (MCP)** | Any of the above, via the MCP tool API |
+
+---
+
+## How it works
+
+### Graph model
+
+Keystone ingests `data/artifacts.jsonl` — pages, PRs, Slack threads, emails, tickets, meetings — without any LLM call. Then an LLM (cached, so a rebuild costs zero calls) extracts the **systems** and **decisions** each artifact mentions.
+
+- **Who did what.** `AUTHORED` = real authorship (one page, PR, email creator, single thread writer). People in multi-person threads or meetings get `PARTICIPATED {messages}`. `REVIEWED` = PR review. `ASSIGNED` = ticket ownership.
+- **Departures** come from HR announcements in the documents themselves ("X's last day is …"). They set `departedDay`, keep the announcing artifact as evidence, and make the person inactive from that day on. Their past work stays in the graph.
+- **Expertise (`KNOWS`).** Each person–system pair is scored from the artifacts that mention the system: authored 3, reviewed 2, assigned 1, participated 0.5 × min(messages, 4) / 4 — each with a 30-day exponential decay.
+- **Core systems.** A system is *core* when at least 5 artifacts mention it, written by at least 2 people. Bus factor, departure impact and the projection use core systems only.
+- **Experts.** A person is an expert on a core system when their score is ≥ 0.4 and at least 25 % of that system's top score.
+
+### Retrieval
+
+`pnpm embed` splits every artifact body into ~800-character chunks (100-character overlap), embeds them, and writes `(:Chunk)-[:PART_OF]->(:Artifact)` into FalkorDB. Search is hybrid: nearest-neighbour vector lookup plus graph-expansion over `REFERENCES` edges and author links.
+
+### The agent
+
+`POST /agent/ask` answers any question as a stream of Server-Sent Events. It uses the API's own `/mcp` as its tool server, classifies the question (who_knows, why, what_if, freshness, event, visibility, counterfactual, general; event, visibility and counterfactual come with a short tool recipe that ends in a verdict tool, so the graph decides the yes/no), runs up to 5 tool calls, then applies a citation guardrail: artifact ids that no tool returned as evidence are removed. An answer left with no valid citation becomes *"The answer is not in the company's records."* Yes/no questions are answered with Yes or No first; an answer that something did not happen cites the documents that were checked.
+
+---
+
+## Repository layout
 
 | Path | What it is |
-| --- | --- |
-| `apps/api` | NestJS 11 API (port 4000). The only thing that talks to FalkorDB. |
+|---|---|
+| `apps/api` | NestJS 11 API (port 4000). The only service that talks to FalkorDB. |
 | `apps/web` | Next.js 15 web app (port 3000). |
 | `packages/shared` | Zod schemas and types shared by both apps. |
-| `scripts/` | Python data prep. |
+| `scripts/` | Python data preparation (`prepare_orgforge.py`). |
 | `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3100) and Redis for BullMQ (6380). |
 | `docker-compose.prod.yml` | Production stack. |
+| `docs/` | Cypher query reference, MCP integration guide, development notes. |
+
+---
 
 ## Quick start
 
+Needs **Node ≥ 22**, **pnpm ≥ 10**, and **Docker**.
+
 ```bash
-cp .env.example .env          # then set FALKOR_PASSWORD
-docker compose up -d          # FalkorDB + Redis
+cp .env.example .env          # set FALKOR_PASSWORD and an LLM key (GEMINI_API_KEYS or OPENAI_API_KEY)
+docker compose up -d          # FalkorDB on :6379 (Browser on :3100) and Redis on :6380
 pnpm install
 pnpm dev                      # API on :4000, web on :3000
 ```
 
-Open http://localhost:3000 for the status page, http://localhost:3100 for the
-FalkorDB Browser.
+Then ingest and build the graph:
+
+```bash
+# 1. Ingest artifacts (no LLM)
+curl -X POST http://localhost:4000/ingest/full
+
+# 2. Extract systems and decisions (LLM, cached)
+pnpm extract
+
+# 3. Compute expertise and projections
+pnpm expertise
+
+# 4. Build embeddings for hybrid search (LLM, cached)
+pnpm embed
+
+# 5. Final expertise refresh
+pnpm expertise
+```
+
+Open **http://localhost:3000** for the Org Pulse dashboard, **http://localhost:3100** for the FalkorDB Browser.
+
+---
+
+## Commands
 
 | Command | What it does |
-| --- | --- |
+|---|---|
 | `pnpm dev` | Builds shared, then runs shared (watch), API and web in parallel |
 | `pnpm build` | Builds every package |
 | `pnpm test` | Unit tests (no Docker needed) |
@@ -65,221 +140,262 @@ FalkorDB Browser.
 | `pnpm lint` | ESLint everywhere |
 | `pnpm capability-check` | PASS/FAIL for every FalkorDB feature Keystone needs |
 | `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
-| `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
-| `pnpm reingest-roles` | Rewrite person-artifact role edges from `artifacts.jsonl` (no reset), then refresh expertise |
-| `pnpm ask [--raw] "question"` | Ask the agent from the command line (`--raw` also prints the answer before the citation guardrail) |
-| `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio (see `docs/mcp.md`) |
-| `pnpm mcp:check [--stdio]` | Lists the MCP tools and calls the read tools on apex |
-| `pnpm systems report` | System catalog: distribution by mentions and authors, top 50, core counts |
-| `pnpm expertise [--as-of N]` | Recompute KNOWS + COLLAB on apex, rebuild `apex_proj`, print the KNOWS score distribution |
-| `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
-| `scripts/.venv/bin/python scripts/prepare_orgforge.py` | Download OrgForge and write `data/artifacts.jsonl` (see `scripts/README.md`) |
+| `pnpm embed [--dry-run]` | Build retrieval chunks and embeddings (cached) |
+| `pnpm reingest-roles` | Rewrite person–artifact role edges, then refresh expertise |
+| `pnpm ask "question"` | Ask the agent from the command line (API must be running) |
+| `pnpm bench [--only=b1\|b2] [--dry-run] [--yes] [--out=name]` | Benchmark: departure prediction (B1) and question answering vs a vector-only baseline (B2) |
+| `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio |
+| `pnpm mcp:check [--stdio]` | List MCP tools and call the read tools |
+| `pnpm systems report` | System catalog: distribution by mentions and authors |
+| `pnpm expertise [--as-of N]` | Recompute `KNOWS` + `COLLAB`, rebuild `apex_proj` |
+| `pnpm llm-check` | Verify one cached JSON call + one embedding with the configured LLM |
+
+---
 
 ## Rebuilding the graph
 
-Everything in the graph is rebuilt from `data/artifacts.jsonl` and the caches in `DATA_DIR`
-(extraction, LLM answers, embeddings), so a rebuild makes no LLM calls. Order:
+Everything is rebuilt from `data/artifacts.jsonl` and the caches in `DATA_DIR` (extraction, LLM answers, embeddings), so a rebuild costs zero LLM calls. Order:
 
-1. `POST /ingest/full` - people, artifacts and role edges (no LLM)
-2. `pnpm reingest-roles` - only when upgrading an existing graph to new role rules (a fresh ingest already writes them)
-3. `pnpm extract` - systems, decisions, SUPERSEDES/ASSERTS (cached)
-4. `pnpm expertise` - system statistics and core flags, KNOWS, COLLAB, `apex_proj`
-5. `pnpm extract --relink-stale` - targeted stale-page pass on core systems (cached; needs the core flags from step 4)
-6. `pnpm embed` - chunks and embeddings (cached)
-7. `pnpm expertise` - final refresh of KNOWS, COLLAB and `apex_proj`
+1. `POST /ingest/full` — people, artifacts and role edges (no LLM)
+2. `pnpm reingest-roles` — only when upgrading an existing graph to new role rules
+3. `pnpm extract` — systems, decisions, `SUPERSEDES`/`ASSERTS` (cached)
+4. `pnpm expertise` — system statistics and core flags, `KNOWS`, `COLLAB`, `apex_proj`
+5. `pnpm extract --relink-stale` — targeted stale-page pass on core systems (cached; needs core flags from step 4)
+6. `pnpm embed` — chunks and embeddings (cached)
+7. `pnpm expertise` — final refresh of `KNOWS`, `COLLAB` and `apex_proj`
 
-`LLM_CACHE_ONLY=yes` turns any cache miss into an error, which proves a run made no calls.
-TODO: wrap these steps in a single `pnpm seed` command.
+Set `LLM_CACHE_ONLY=yes` to turn any cache miss into an error, proving a run made no LLM calls.
+
+---
 
 ## LLM provider
 
-All LLM use goes through `LlmService` (`apps/api/src/llm/`): OpenAI when
-`USE_OPENAI=yes` (key `OPENAI_API_KEY`, default models `gpt-5-nano` and
-`text-embedding-3-small`), otherwise Gemini (`GEMINI_API_KEYS`, comma separated).
-Every answer is validated with Zod and cached in `DATA_DIR/llm-cache`, so a
-repeated request costs no LLM call; `LLM_CACHE_ONLY=yes` makes a cache miss an
-error. Embeddings are shortened to `EMBED_DIM` (768) on both providers. Check the
-setup with `pnpm llm-check` after adding a key.
+All LLM calls go through `LlmService` (`apps/api/src/llm/`):
+
+| Provider | Env vars | Default models |
+|---|---|---|
+| **OpenAI** | `USE_OPENAI=yes`, `OPENAI_API_KEY` | `gpt-5-nano` (extraction), `text-embedding-3-small` (embeddings) |
+| **Gemini** (default) | `GEMINI_API_KEYS` (comma-separated, rotated) | `gemini-2.5-flash`, `gemini-embedding-001` |
+
+Every response is Zod-validated and cached in `DATA_DIR/llm-cache`. Embeddings are shortened to `EMBED_DIM` (768) on both providers. Verify setup with `pnpm llm-check`.
+
+---
 
 ## Extraction
 
-LLM extraction of **System** and **Decision** nodes from artifact text
-(`apps/api/src/extract/`). It reads bodies from the TextStore (never the graph),
-selects Pages, Threads, PRs, Emails and Meetings with a body over 300
-characters, plus every Ticket (a sprint ticket's title names the systems it
-touches), seeds a system-name vocabulary from artifact text plus the
-hand-editable `apps/api/src/extract/aliases.json`, then:
+LLM extraction lives in `apps/api/src/extract/`. It selects pages, threads, PRs, emails and meetings with a body over 300 characters, plus every ticket, seeds a system-name vocabulary from artifact text and the hand-editable `aliases.json`, then:
 
-1. per artifact: systems (MENTIONS {weight}), decisions (DECIDED_IN, ABOUT) and page claims;
-2. per system with 2+ decisions/claims: SUPERSEDES between decisions and ASSERTS from pages.
-
-Every answer is Zod-validated and cached (`DATA_DIR/cache/extract/<doc_id>.json` and
-`DATA_DIR/llm-cache`), so a rerun costs zero LLM calls; prove it with
-`LLM_CACHE_ONLY=yes pnpm extract`. Results: `data/stats-extraction.md`.
+1. Per artifact: systems (`MENTIONS {weight}`), decisions (`DECIDED_IN`, `ABOUT`) and page claims.
+2. Per system with 2+ decisions or claims: `SUPERSEDES` between decisions and `ASSERTS` from pages.
 
 | Command / endpoint | What it does |
-| --- | --- |
+|---|---|
 | `pnpm extract --dry-run` | Plan and cost estimate; no LLM calls, no writes |
 | `pnpm extract --limit 50` | Trial on 50 artifacts spread across types |
-| `pnpm extract [--force] [--refresh]` | Full run (stops above `EXTRACT_MAX_CALLS` unless `--force`) |
-| `pnpm extract --relink-stale [--claims-only] [--dry-run]` | Targeted second pass for stale pages on core systems (run after `pnpm extract`; cached) |
-| `POST /extract/run` `{"dryRun":false,"force":false}` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
+| `pnpm extract [--force] [--refresh]` | Full run |
+| `pnpm extract --relink-stale` | Targeted second pass for stale pages on core systems |
+| `POST /extract/run` | Same, as a BullMQ job; follow `GET /extract/jobs/:id/events` |
 
 ### System catalog
 
-Extraction names many systems once or twice. The catalog (`apps/api/src/catalog/`)
-writes `mentionCount`, `authorCount`, `core` and `idf` onto every System (refreshed
-with expertise). A system is **core** when at least `CORE_MIN_MENTIONS` (5) artifacts
-mention it, written by at least 2 people; bus factor, departure impact and `apex_proj`
-use core systems only, while every system stays in `apex` for search and citations.
-`idf = log(totalArtifacts / (1 + mentionCount))` makes niche systems count more when
-suggesting ticket owners.
+The catalog (`apps/api/src/catalog/`) writes `mentionCount`, `authorCount`, `core` and `idf` onto every System. A system is **core** when ≥ `CORE_MIN_MENTIONS` (5) artifacts mention it, written by ≥ 2 people. `idf = log(totalArtifacts / (1 + mentionCount))` makes niche systems rank higher when suggesting ticket owners.
 
-| Command | What it does |
-| --- | --- |
-| `pnpm systems merge [--dry-run]` | Merge names that differ only by case, punctuation, version or a generic last word ("service", "system", "api"); records them in `aliases.json` |
-| `pnpm systems propose` | One cached LLM call proposing merge groups for the 300 most mentioned systems (saved for review, not applied) |
-| `pnpm systems apply-proposals` | Apply the reviewed proposals |
-
-## Retrieval
-
-`pnpm embed` splits every artifact body (from the TextStore) into chunks of about
-800 characters with 100 characters of overlap (title first, at most 6 per
-artifact; fewer if memory would pass `MEMORY_WARN_MB`), stores the chunk text in
-the TextStore, embeds it (cached, `EMBED_DIM` 768) and writes
-`(:Chunk {id, artifactId, model, embedding})-[:PART_OF]->(:Artifact)`. No text in the graph.
-`pnpm embed --dry-run` prints chunk counts, the memory estimate and cost without calling anything.
-
-| Endpoint | What it does |
-| --- | --- |
-| `GET /search?q=&k=[&asOfDay=]` | Hybrid: nearest chunks from the vector index, plus each artifact's REFERENCES neighbours (2 hops) and authors from the graph |
-| `GET /search/vector-only?q=&k=` | Baseline for benchmarks: the same vectors and k, no graph expansion |
-
-FalkorDB's vector `score` is a cosine **distance** (0 = identical), so results are
-ordered ascending; responses also carry `similarity = 1 - distance`.
+---
 
 ## Expertise and analytics
 
-`POST /analytics/refresh-expertise {graph?, asOfDay?}` (admin token) runs a BullMQ job: K2 materialises
-`KNOWS` (recency-weighted, 30-day decay, computed in Cypher), edges below 0.05 are deleted,
-K8a rebuilds `COLLAB`, then the graph's projection is rebuilt (`apex` -> `apex_proj`,
-`apex_replay` -> `apex_proj_replay`): Person, core System, KNOWS, and COLLAB pairs at or above the
-median weight, in both directions (~1 MB vs 47 MB for apex). Progress: `GET /analytics/jobs/:id/events`.
-`pnpm expertise` does the same for apex from the command line.
+`POST /analytics/refresh-expertise` (or `pnpm expertise`) runs a BullMQ job that:
 
-A replay (`POST /ingest/replay`) runs the same steps after every replayed day: it copies that
-day's extraction (systems, mentions, decisions, SUPERSEDES, ASSERTS) from apex without LLM
-calls, then refreshes expertise as of that day.
+1. Materialises `KNOWS` edges (recency-weighted, 30-day decay, computed in Cypher); edges below 0.05 are deleted.
+2. Rebuilds `COLLAB` (collaboration graph).
+3. Rebuilds the small projection `apex_proj` (Person, core System, `KNOWS`, `COLLAB` pairs at or above median weight; ~1 MB vs 47 MB for the full graph).
 
-| Endpoint | Query | Graph |
-| --- | --- | --- |
-| `GET /systems/:name/experts` | K3a experts + K3b evidence graph `{nodes, edges}` of the top one | apex |
-| `GET /systems/:name/decisions` | K10a decision trace (what replaced what, source, authors) | apex |
-| `GET /people/:name/departure-impact?minScore=` | K5 systems + backups, K6 open tickets + suggested owners (with evidence), K7 unshared pages | apex |
-| `GET /analytics/bus-factor?minScore=` | K4 with `riskLevel` (0 orphaned, 1 critical, 2 watch, 3+ ok) | apex_proj |
-| `GET /analytics/bridges` | K8b betweenness on COLLAB, top 10, with cross-department evidence | apex_proj |
-| `GET /analytics/stale-docs` | K10b pages asserting a superseded decision | apex |
-| `GET /analytics/summary?minScore=` | People, systems by risk level, stale docs, open tickets, memory | both |
+| Endpoint | What it returns |
+|---|---|
+| `GET /systems/:name/experts` | Top experts + evidence graph |
+| `GET /systems/:name/decisions` | Decision trace (what replaced what, source, authors) |
+| `GET /people/:name/departure-impact` | Systems + backups, open tickets + suggested owners, sole-authored pages |
+| `GET /analytics/bus-factor` | Systems with 0, 1 or 2 experts (orphaned / critical / watch) |
+| `GET /analytics/bridges` | Top 10 people who connect teams (betweenness on `COLLAB`) |
+| `GET /analytics/stale-docs` | Pages still asserting a superseded decision |
+| `GET /analytics/summary` | Dashboard figures: people, systems by risk level, stale docs, memory |
 
-Every response that states a fact carries the artifact ids it came from. Default
-`minScore` overrides the expert floor (default `MIN_EXPERT_SCORE` 0.4, see "How the graph is built").
-FalkorDB returns at most `RESULTSET_SIZE` rows (10,000 by default); `GraphService` throws
-when a result reaches it, and the projection reads page with `SKIP/LIMIT`.
+---
 
 ## What-if: simulating a departure
 
-`POST /whatif/departure {"person": "Jax"}` answers "what if this person leaves?" without
-touching the live graph. It copies the small projection `apex_proj` (people, core systems,
-KNOWS, COLLAB; about 1 MB) into a scratch graph `apex_whatif_<id>` with `GRAPH.COPY`, deletes
-the person there, and compares bus factor (K4), bridges (K8b) and knowledge islands (K9) before
-and after. Departure impact (K5-K7: open tickets with suggested owners, sole-authored pages)
-is read from `apex`. The response lists newly orphaned and newly critical systems, new islands,
-the bridge shift, orphaned tickets and pages (each with artifact ids), timings per step, the
-scratch graph's memory, and a small graph around the person for the UI animation.
+`POST /whatif/departure {"person": "…"}` answers *"what if this person leaves?"* without touching the live graph. It copies the small projection `apex_proj` (~1 MB) into a scratch graph using `GRAPH.COPY`, removes the person, and compares bus factor, bridges and knowledge islands before and after.
 
-- The scratch graph is always deleted (also on errors); a sweeper at startup and every hour
-  removes any leftover `apex_whatif_*` graph.
-- `apex_proj` is rebuilt first if it is older than the last expertise refresh.
-- At most `WHATIF_MAX_CONCURRENT` (2) simulations run at once; two requests for the same
-  person share one run.
-- `GET /whatif/candidates`: the 10 people whose departure would orphan the most core systems
-  (K5 for everyone, cached for 60 seconds).
+- The scratch graph is always deleted (also on errors); a sweeper at startup and every hour removes leftover `apex_whatif_*` graphs.
+- At most `WHATIF_MAX_CONCURRENT` (2) simulations run at once; two requests for the same person share one run.
+- `GET /whatif/candidates` returns the 10 people whose departure would orphan the most core systems.
 
-## Asking questions: the agent
+---
 
-`POST /agent/ask {"question": "...", "sessionId": "..."}` answers a question about Apex Athletics
-as a stream of Server-Sent Events. The agent is an MCP client of the API's own `/mcp`: it reads
-the tool list (names, descriptions, input schemas) from the MCP server once and hands it to the
-model as function declarations (OpenAI when `USE_OPENAI=yes`, else Gemini).
+## Proposed actions and approval
 
-1. One cheap call labels the question (`who_knows`, `why`, `what_if`, `freshness`, `general`);
-   the label goes to the model as a hint.
-2. Model call, tool calls through MCP, results back to the model, repeated: at most 5 tool calls
-   and 60 seconds, after which the model must answer from what it has.
-3. Guardrail: the answer cites `[ID]`s; ids that no tool returned as evidence are removed (and
-   logged as hallucinated). An answer left without a valid citation, or a refusal, becomes
-   "The answer is not in the company's records." with the tools that were tried.
+Keystone proposes; a person approves. Every proposal is an `(:Action)` node: `kind` (`reassign`, `runbook`, `review_doc`, `handover`), `status` (`proposed`, `approved`, `rejected`), the day, the reason, and the artifacts that justify it.
 
-Events: `classified`, `tool_call`, `tool_result` (summary, evidence count, graphPath),
-`answer_delta`, then `done` (citations with title, type and day; the union of graphPaths;
-timings) or `error`. Each run is logged as one JSON line. Nothing about the conversation is
-stored. `pnpm ask "Who knows TitanDB best?"` runs the same agent from the command line (the API
-must be running).
+| Endpoint | What it does |
+|---|---|
+| `POST /actions/handover {"person"}` | Drafts a full handover plan from the departure simulation |
+| `GET /actions?status=` | Lists all actions, newest first, with target, assignee and evidence |
+| `GET /actions/:id/why` | The audit trail of one action |
+| `GET /actions/:id/graph` | The same trail as a drawable graph |
+| `POST /actions/:id/approve` | Approves (admin token); moves the ticket's `ASSIGNED` edge |
+| `POST /actions/:id/reject {"reason"}` | Rejects with a reason (admin token) |
+
+**Why did Keystone suggest this?** One Cypher query (`WHY_SUGGESTED`) walks the action's edges: what it targets, the handover plan it belongs to, every `BASED_ON` artifact, and the assignee's `KNOWS` scores. Because suggestions are nodes in the same graph as the evidence, the audit trail is a graph traversal.
+
+---
+
+## Benchmark
+
+`pnpm bench` measures Keystone against the OrgForge answer key. `apps/api/src/bench/` is the **only** code allowed to
+read `data/answer_key/`: an ESLint rule (API and web) and a repo-wide Jest test (`answer-key-guard.spec.ts`) fail if
+anything else names the folder or imports its reader. The answer key is read only to pick questions and to score
+answers after both systems have answered; it never reaches the graph, the agent's tools, embeddings or their prompts.
+
+- **B1, departure prediction.** For each departure inside the simulated days, `ProjectionService.rebuild('bench_proj_<day>', { asOfDay: day - 1 })`
+  builds a small projection, departure impact (K5, default minScore) runs on it, and the projection is deleted in a
+  `finally` (one at a time). The systems K5 lists are matched to the person's knowledge domains: aliases.json and
+  normalisation, then fuzzy matching, then an LLM *"are these two names the same system? yes/no"* for leftover pairs.
+  Precision, recall and F1 per departure and micro-averaged. Departures before day 1 are checked against bus factor
+  (K4) on `apex_proj`: do their domains show up as orphaned or critical (recall)?
+- **B2, question answering.** Up to `BENCH_PER_TYPE` questions per type, sampled with a fixed seed, each answered
+  twice with the same model and the same context budget (5 tool results x 12,000 characters): Keystone through
+  `AgentService.ask` (non-streaming), and a baseline that pastes the top-k `vectorOnlySearch` chunks into one prompt
+  (*"answer only from these documents and cite ids"*). Gold ids are matched exactly against cited ids, names by
+  normalised string match, anything else by a blinded LLM judge that sees one candidate at a time, never which system
+  wrote it. Proposing actions is disabled during the run, so it writes nothing to `apex`. For yes/no gold answers the
+  judge works in two steps: once per question it states the correct Yes/No to the question as worded (wording such as
+  "would X still have happened?" settles it by rule), then a candidate that opens with Yes or No is compared with that
+  directly; anything else is judged free-form.
+- The CLI prints the question file's fields, types and an example per type, then the planned number of LLM calls,
+  and asks before going over 1,500 (`--yes` skips the question; `--dry-run` stops there).
+- Output: `data/bench/results.json` (everything, also `GET /bench/results`) and `data/bench/results.md` (tables, and
+  a plain statement with a one-line hypothesis wherever the baseline wins or ties). `--out=name` writes `name.json` /
+  `name.md` instead, e.g. to keep a run with another model next to the main one.
+- Every accuracy comes with a 95% confidence interval (Wilson), and the two systems are compared **paired** on the
+  same questions: how many only Keystone got right, how many only the baseline did, and an exact sign-test p-value.
+  `BENCH_PER_TYPE=30` runs all 78 questions of the answer key (21 counterfactual, 30 perspective, 27 silence).
+- Every run also records, per question, the tool calls and the artifact ids each system had in front of it, and the
+  **evidence recall** (share of the answer key's evidence artifacts among them), plus a hindsight reference row:
+  the accuracy of always giving each type's most common gold yes/no.
+- The judge (and B1's "same system?" checks) uses the systems' model unless `BENCH_JUDGE_MODEL` names another.
+- B1 also scores a second predictor next to K5, **knowledge share**: systems (core or not, named in 3+ documents)
+  where the person holds at least a quarter of everyone's knowledge as of the day before, thread participation included.
+
+---
+
+## The web app
+
+`apps/web` (Next.js 15 App Router, Tailwind, shadcn/ui) follows the layout of our Intake app:
+a permanent sidebar that retracts to an icon rail (a drawer on phones), pill navigation, white
+cards on a slate background, heavy Inter titles and light descriptions. Keystone's own colours:
+a navy ink for what is selected or primary, and one vermilion signal used only for risk and the
+agent's path; monospace only for ids. Light and dark mode come from CSS variables; the toggle
+sets a `dark` class on `<html>`, saved in `localStorage` and applied before first paint.
+
+| Page | What it shows |
+|---|---|
+| `/` **Org Pulse** | Summary figures, core systems grouped by risk (click for experts and evidence path), bridge people, and a replay control |
+| `/ask` **Ask** | Chat on the left, force-graph canvas on the right; tool calls as a step list while the answer streams, citations as chips |
+| `/whatif` **What-if** | Person picker, graph around them, simulated departure in three animated beats, impact report, handover plan |
+| `/decisions` **Decisions** | Systems with decisions, a timeline where replaced decisions are struck through |
+| `/audit` **Audit** | Every proposal, filterable by status and kind; approve or reject from the UI |
+| `/bench` **Benchmark** | Accuracy by question type, Keystone and vector-only side by side (sample size per type), and the departure-prediction scores |
+
+---
 
 ## MCP server
 
-The graph tools are also an MCP server (`apps/api/src/mcp/`): Streamable HTTP at
-`POST /mcp` while the API runs, or stdio with `pnpm --silent mcp:stdio`. Tools: `search_knowledge`,
-`who_knows`, `bus_factor`, `bridge_people`, `simulate_departure`, `trace_decision`,
-`find_stale_docs`, `list_systems`, `list_people` (plus three action tools that are not available
-yet). Each returns `{ data, evidence, graphPath? }`, where `evidence` is the artifact ids to cite.
-Claude Desktop config, MCP Inspector instructions and the tool list: [docs/mcp.md](docs/mcp.md).
+Keystone exposes its knowledge graph as an [MCP](https://modelcontextprotocol.io) server — any MCP client (Claude Desktop, MCP Inspector, your own agent) can use it.
+
+Two transports, same tools:
+
+| Transport | How to reach it |
+|---|---|
+| Streamable HTTP | `POST http://localhost:4000/mcp` while the API runs |
+| stdio | `pnpm --silent mcp:stdio` |
+
+### Tools
+
+| Tool | What it does |
+|---|---|
+| `search_knowledge` | Hybrid search: passages with artifact id, title, type, day, authors (optional day range) |
+| `find_artifacts` | Documents by people involved, day range, type, title or text |
+| `get_artifact` | One document with everyone involved (and how), its links in both directions and the start of its text |
+| `what_followed` | What came after a document: linked documents and the same people's later work |
+| `find_event` | The documents of one event, ranked by people, rare words, document type and day |
+| `check_follow_up` | Verdict from the graph: did a response of a given kind follow a document? |
+| `check_visibility` | Verdict in one call: could a person have known about an event by a day? (finds the event without them, then checks involvement) |
+| `check_involvement` | Verdict from the graph: was a person part of these documents by a given day? |
+| `check_causal_link` | Verdict from the graph: linked, likely (soon after, same people) or no evidence |
+| `who_knows` | Top 5 experts on a system, with scores and evidence |
+| `bus_factor` | Systems with 0, 1 or 2 experts (orphaned / critical / watch) |
+| `bridge_people` | Top 10 people who connect teams |
+| `simulate_departure` | What breaks if someone leaves |
+| `trace_decision` | A system's decisions, newest first, with what they replaced |
+| `find_stale_docs` | Pages that still state a superseded decision |
+| `list_systems` | Core systems with mention counts |
+| `list_people` | People with department and activity |
+| `draft_handover` | Proposes a handover plan (propose-only; a human approves) |
+| `propose_reassignment` | Proposes moving a ticket to a person |
+| `create_runbook_task` | Proposes a runbook task for a sole expert |
+
+Every tool returns `{ data, evidence, graphPath? }`. `evidence` holds artifact ids to cite; `graphPath` is an optional small graph to draw. See [docs/mcp.md](docs/mcp.md) for Claude Desktop config and MCP Inspector instructions.
+
+---
 
 ## Ingestion
 
-Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
-on the separate Redis. In dev the API runs the worker itself
-(`INGEST_WORKER_INLINE=true`); in production the `worker` container runs
-`node dist/worker.js`.
+Deterministic, no LLM: `data/artifacts.jsonl` → FalkorDB through a BullMQ queue on a separate Redis.
+
+In dev the API runs the worker itself (`INGEST_WORKER_INLINE=true`). In production the `worker` container runs `node dist/worker.js`.
 
 | Endpoint | What it does |
-| --- | --- |
-| `POST /ingest/full` `{"graph":"apex"}` | Rebuild `apex` from scratch with every artifact |
-| `POST /ingest/replay` `{"fromDay":1,"toDay":5,"delayMs":2000}` | Rebuild `apex_replay` one day at a time |
-| `GET /ingest/jobs/:id` | Job state and latest progress |
+|---|---|
+| `POST /ingest/full {"graph":"apex"}` | Rebuild `apex` from scratch with every artifact |
+| `POST /ingest/replay {"fromDay":1,"toDay":5}` | Rebuild `apex_replay` one day at a time |
 | `GET /ingest/jobs/:id/events` | Server-Sent Events: live progress until completed/failed |
+| `GET /ingest/events` | SSE for every job (the web app's live dot and replay strip) |
 
-The web page `/ingest` drives both and shows the stream. If `ADMIN_TOKEN` is
-set, the POST endpoints need the header `x-admin-token`.
+---
 
-## Cypher queries
+## Environment variables
 
-Every query lives in a `queries/` file as an exported constant.
+Copy `.env.example` to `.env`. Key variables:
 
-| File | Constant | Returns |
-| --- | --- | --- |
-| `apps/api/src/graph/queries/graph.queries.ts` | `HEALTH_PING` | `{ ok: 1 }`, used by `GET /health` |
-| `apps/api/src/graph/queries/schema.queries.ts` | `PERSON_NAME_INDEX`, `ARTIFACT_ID_INDEX`, `ARTIFACT_DAY_INDEX`, `SYSTEM_NAME_INDEX`, `DECISION_ID_INDEX`, `ACTION_ID_INDEX`, `CHUNK_EMBEDDING_VECTOR_INDEX` (via `chunkEmbeddingVectorIndex(EMBED_DIM)`), `LIST_INDEXES` | Index DDL run by `SchemaService.ensureSchema`; `LIST_INDEXES` returns label, properties, index types |
-| `apps/api/src/ingest/queries/ingest.queries.ts` | `MERGE_DEPTS`, `MERGE_PEOPLE`, `MERGE_{TICKET,PAGE,THREAD,PR,EMAIL,MEETING,ALERT,RECORD}_ARTIFACTS`, `MERGE_AUTHORED`, `MERGE_REVIEWED`, `MERGE_PARTICIPATED`, `DELETE_ROLE_EDGES`, `MERGE_DEPARTURES`, `DELETE_DEPARTURE_EDGES`, `CLEAR_DEPARTED_DAYS`, `MERGE_ASSIGNED`, `MERGE_REFERENCES`, `MERGE_FIXES`, `UPDATE_PERSON_ACTIVITY`, `GRAPH_COUNTS` | Deterministic ingestion (all MERGE, safe to rerun); `GRAPH_COUNTS` returns people/artifacts/edges for the progress stream |
-| `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES`, `REPLAY_{SYSTEMS,MENTIONS,DECISIONS,ABOUT,SUPERSEDES,ASSERTS}_FOR_DAY`, `STALE_LINK_TARGETS`, `STALE_LINK_INPUT`, `DELETE_SAME_SOURCE_SUPERSEDES`, `REACTIVATE_UNSUPERSEDED` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures; replay copies one day's extraction from apex |
-| `apps/api/src/catalog/queries/catalog.queries.ts` | `SET_SYSTEM_STATS`, `MARK_CORE_SYSTEMS`, `SET_SYSTEM_IDF`, `CORE_COUNT_AT`, `MENTION_BUCKETS`, `AUTHOR_BUCKETS`, `TOP_SYSTEMS`, `ALL_SYSTEM_COUNTS`, `SYSTEM_TOTALS`, `MERGE_SYSTEM_ALIASES`, `MOVE_SYSTEM_MENTIONS`, `MOVE_SYSTEM_ABOUT`, `DELETE_MERGED_SYSTEMS` | System statistics, core flag, idf, distributions, and merging duplicate systems |
-| `apps/api/src/agent/queries/agent.queries.ts` | `CITED_ARTIFACTS` | Title, type and day of the artifacts an answer cites |
-| `apps/api/src/whatif/queries/whatif.queries.ts` | `K9_KNOWLEDGE_ISLANDS`, `REMOVE_PERSON`, `LEAVER_KNOWS`, `DEPARTURE_CANDIDATES` | Departure simulation: knowledge islands, removing the person in the scratch copy, island evidence, and K5 for every person |
-| `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
-| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT`, `LIST_CORE_SYSTEMS`, `SYSTEM_NAMES`, `LIST_PEOPLE` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
-| `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `CORE_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `STAMP_PROJECTION`, `PROJECTION_STAMP`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
-| `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS`, `SYSTEM_STATS`, `ADD_TITAN_DUPLICATE`, `TITAN_EDGES`, `IDF_FIXTURE`, `MARK_ALL_SYSTEMS_CORE`, `EVE_JOINS_MEETING`, `KNOWS_SCORE`, `COLLAB_WEIGHT`, `WORKLOAD_FIXTURE`, `BO_ON_DAY_9_THREAD`, `BO_ACTIVITY`, `DEPARTURES`, `BACKUP_FIXTURE`, `GRAPH_FINGERPRINT` | Integration tests only, against `test/fixtures/mini-company.cypher` |
-| `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |
+| Variable | Default | Purpose |
+|---|---|---|
+| `FALKOR_PASSWORD` | *(required)* | FalkorDB password |
+| `USE_OPENAI` | `no` | `yes` to use OpenAI; `no` to use Gemini |
+| `OPENAI_API_KEY` | — | OpenAI key (when `USE_OPENAI=yes`) |
+| `GEMINI_API_KEYS` | — | Comma-separated Gemini keys (rotated) |
+| `EMBED_DIM` | `768` | Embedding vector dimension |
+| `CORE_MIN_MENTIONS` | `5` | Minimum artifact mentions for a system to be "core" |
+| `WHATIF_MAX_CONCURRENT` | `2` | Maximum simultaneous departure simulations |
+| `LLM_CACHE_ONLY` | `no` | `yes` to make a cache miss an error (proves zero LLM calls) |
+| `ADMIN_TOKEN` | — | When set, `POST /ingest/*` and `POST /actions/:id/approve` require `x-admin-token` |
+| `TEXT_STORE` | `local` | `local` or `s3` (artifact bodies and chunk text live here, not in the graph) |
+| `BENCH_PER_TYPE` | `15` | Benchmark questions sampled per question type |
+| `BENCH_SEED` | `13` | Benchmark sampling seed (same seed, same questions) |
+| `BENCH_JUDGE_MODEL` | the system model | Optional: the model that judges answers and checks B1 names |
 
-## AI usage
+---
 
-AI tools were used to build Keystone, as the hackathon rules require us to disclose:
+## Tech stack
 
-- **Claude Code (Claude Opus 5.5)** wrote most of the code, tests and documentation
-  from our written specs; every change was reviewed, run and tested
-  before it was committed.
-- **OpenAI `gpt-5-nano`** runs inside the product: it extracts systems and decisions from
-  artifact text and links decisions to the pages that state them (cached, Zod-validated).
-- **OpenAI `text-embedding-3-small`** embeds artifact chunks for search.
-- **create-next-app** and the **shadcn/ui** CLI generated the web app template and UI components.
-
+| Layer | Technology |
+|---|---|
+| Graph database | [FalkorDB](https://www.falkordb.com) v4.22.1 |
+| API | NestJS 11, TypeScript, Zod |
+| Queue | BullMQ on Redis 7 |
+| Web | Next.js 15 (App Router), Tailwind CSS, shadcn/ui |
+| Graph visualisation | react-force-graph-2d |
+| LLM (extraction + agent) | OpenAI `gpt-5-nano` or Gemini `gemini-2.5-flash` |
+| Embeddings | OpenAI `text-embedding-3-small` or Gemini `gemini-embedding-001` |
+| MCP | [Model Context Protocol](https://modelcontextprotocol.io) — Streamable HTTP + stdio |
+| Monorepo | pnpm workspaces |
+| Container | Docker Compose |

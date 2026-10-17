@@ -1,5 +1,5 @@
 import { NOT_IN_RECORDS, SYSTEM_PROMPT } from './agent.constants';
-import { AgentService, type AgentSettings, sentences } from './agent.service';
+import { AgentService, type AgentSettings, sentences, withHint } from './agent.service';
 import type { AgentEvent, AgentModel, AgentTools, ModelTurn, ToolEnvelope } from './agent.types';
 
 /** A model that plays back scripted turns, recording what it was asked. */
@@ -115,6 +115,21 @@ describe('AgentService', () => {
     expect(doneOf(events).citations).toEqual([]);
   });
 
+  it('a cited "No" about something missing is an answer, not a refusal', async () => {
+    const model = scriptedModel([
+      { text: null, toolCalls: [{ id: 'c1', name: 'what_followed', args: { id: 'CONF-1' } }] },
+      { text: "No, no postmortem followed it in the company's records [CONF-1].", toolCalls: [] },
+    ]);
+    const events = await collect(agent(model, fakeTools(), 'event').service.run('Was a postmortem written after it?', 's9'));
+    expect(answerOf(events)).toBe("No, no postmortem followed it in the company's records [CONF-1].");
+    expect(doneOf(events).citations.map((c) => c.id)).toEqual(['CONF-1']);
+  });
+
+  it('the question carries its type, and a tool recipe for the event types', () => {
+    expect(withHint('Was a ticket opened?', 'event')).toMatch(/Question type: event\. 1\) find_event .*2\) check_follow_up/);
+    expect(withHint('Who knows Kafka?', 'who_knows')).toMatch(/Question type: who_knows\. Use it to choose tools/);
+  });
+
   it("normalizes the model's own refusal and drops its citations", async () => {
     const model = scriptedModel([
       { text: null, toolCalls: [{ id: 'c1', name: 'who_knows', args: { system: 'X' } }] },
@@ -158,6 +173,26 @@ describe('AgentService', () => {
     expect(model.calls.map((c) => c.allowTools)).toEqual([true, false]);
     // CONF-1 never arrived as evidence, so the citation is dropped and the answer replaced.
     expect(answerOf(events)).toBe(`${NOT_IN_RECORDS} Tools tried: who_knows.`);
+  });
+
+  it('ask() returns the whole run at once, with tools, steps and summed token usage', async () => {
+    const usage = { inputTokens: 100, cachedInputTokens: 0, outputTokens: 20, reasoningTokens: 5 };
+    const model = scriptedModel([
+      { text: null, toolCalls: [{ id: 'c1', name: 'who_knows', args: { system: 'TitanDB' } }], usage },
+      { text: 'Priya knows TitanDB best [CONF-1].', toolCalls: [], usage },
+    ]);
+    const { service } = agent(model, fakeTools());
+    const result = await service.ask('Who knows TitanDB best?', 's1');
+
+    expect(result.answer).toBe('Priya knows TitanDB best [CONF-1].');
+    expect(result.citations.map((c) => c.id)).toEqual(['CONF-1']);
+    expect(result.toolsUsed).toEqual(['who_knows']);
+    expect(result.toolCalls).toEqual([{ name: 'who_knows', args: { system: 'TitanDB' } }]);
+    expect(result.evidence).toEqual(['CONF-1', 'CONF-2']);
+    expect(result.steps).toBe(1);
+    expect(result.label).toBe('who_knows');
+    expect(result.usage).toEqual({ inputTokens: 200, cachedInputTokens: 0, outputTokens: 40, reasoningTokens: 10 });
+    expect(result.error).toBeNull();
   });
 
   it('turns a failure into an error event', async () => {

@@ -5,6 +5,10 @@ import type { AgentEvent, AgentModel, ModelTurn } from '../src/agent/agent.types
 import { McpToolClient } from '../src/agent/mcp-tool-client';
 import { toOpenAiTools } from '../src/agent/tool-specs';
 import { AnalyticsService } from '../src/analytics/analytics.service';
+import { ArtifactsService } from '../src/artifacts/artifacts.service';
+import type { TextStore } from '../src/ingest/text-store';
+
+const noText: TextStore = { put: async () => undefined, get: async () => null, getMany: async () => new Map() };
 import { createKeystoneMcpServer } from '../src/mcp/keystone-mcp-server';
 import { ProjectionService } from '../src/projection/projection.service';
 import { WhatIfService } from '../src/whatif/whatif.service';
@@ -39,7 +43,8 @@ describe('Agent with the Keystone MCP server on the fixture graph', () => {
     tools = new McpToolClient(() => {
       connections++;
       const [client, server] = InMemoryTransport.createLinkedPair();
-      void createKeystoneMcpServer({ analytics, whatIf, retrieval: { search } }, { graph: fx.name, projectionGraph: projection() }).connect(server);
+      const actions = { draftHandover: jest.fn(), proposeReassignment: jest.fn(), createRunbookTask: jest.fn() };
+      void createKeystoneMcpServer({ analytics, whatIf, retrieval: { search }, actions, artifacts: new ArtifactsService(fx.graph, noText) }, { graph: fx.name, projectionGraph: projection() }).connect(server);
       return client;
     });
   });

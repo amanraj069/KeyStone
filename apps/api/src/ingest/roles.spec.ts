@@ -1,4 +1,4 @@
-import { rolesFor } from './roles';
+import { rolesFor, visibilityFor } from './roles';
 import { buildRoster } from './roster';
 import { MINI_RECORDS, record } from '../../test/ingest-records';
 
@@ -62,5 +62,36 @@ describe('rolesFor', () => {
 
   it('alerts involve no people', () => {
     expect(rolesOf('DD-1')).toEqual([]);
+  });
+});
+
+describe('visibilityFor (RECEIVED, LISTED_ON)', () => {
+  const roster = buildRoster(MINI_RECORDS);
+  const seenOf = (id: string) => {
+    const rec = MINI_RECORDS.find((r) => r.doc_id === id)!;
+    return visibilityFor(rec, roster, rolesFor(rec, roster)).map((r) => `${r.rel}:${r.person}`);
+  };
+
+  it('email: an employee recipient RECEIVED it; a non-employee recipient gets nothing', () => {
+    expect(seenOf('email_in')).toEqual(['RECEIVED:Ada']);
+    expect(seenOf('email_out')).toEqual([]);
+  });
+
+  it("the liaison receives an email too, but never twice and never the sender", () => {
+    const routed = record({
+      doc_id: 'email_routed', doc_type: 'email', day: 5, actors: ['Nora', 'Bo'],
+      facts: { from_addr: 'Nora <nora@vendor.example>', to_addr: 'Bo <bo@apex.example>', liaison: 'Cy' },
+    });
+    expect(visibilityFor(routed, roster, rolesFor(routed, roster)).map((r) => `${r.rel}:${r.person}`)).toEqual(['RECEIVED:Bo', 'RECEIVED:Cy']);
+  });
+
+  it('slack: an employee the thread lists but who did not write is LISTED_ON; speakers and bots get nothing more', () => {
+    expect(seenOf('slack_product_2026-01-02T09:00:00')).toEqual(['LISTED_ON:Ada']);
+    expect(seenOf('slack_product_2026-01-05T09:00:00')).toEqual([]);
+  });
+
+  it('carries the artifact day', () => {
+    const rec = MINI_RECORDS.find((r) => r.doc_id === 'email_in')!;
+    expect(visibilityFor(rec, roster, rolesFor(rec, roster))[0]).toMatchObject({ artifactId: 'email_in', day: 3 });
   });
 });

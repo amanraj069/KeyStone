@@ -6,13 +6,15 @@ import {
   type BusFactorRow,
   type StaleDoc,
 } from './analytics.service';
-import { MinScoreQuerySchema } from './analytics.schemas';
+import { projectionGraphFor } from './analytics.constants';
+import { DashboardQuerySchema } from './analytics.schemas';
 
 /**
- * GET /analytics/bus-factor?minScore=  K4 on apex_proj with riskLevel
- * GET /analytics/bridges               K8b betweenness on COLLAB (apex_proj), top 10
+ * GET /analytics/bus-factor?minScore=&graph=  K4 on the graph's projection (apex -> apex_proj) with riskLevel
+ * GET /analytics/bridges?graph=        K8b betweenness on COLLAB (the graph's projection), top 10
  * GET /analytics/stale-docs            K10b
- * GET /analytics/summary?minScore=     dashboard counts + memory report
+ * GET /analytics/summary?minScore=&graph=     dashboard counts, the graph's latest day, memory report
+ * graph defaults to apex; a replay graph (apex_replay) shows the company as it grows day by day.
  */
 @Controller('analytics')
 export class AnalyticsController {
@@ -20,12 +22,14 @@ export class AnalyticsController {
 
   @Get('bus-factor')
   busFactor(@Query() query: unknown): Promise<BusFactorRow[]> {
-    return this.analytics.busFactor(MinScoreQuerySchema.parse(query).minScore);
+    const { minScore, graph } = DashboardQuerySchema.parse(query);
+    return this.analytics.busFactor(minScore, projectionGraphFor(graph));
   }
 
   @Get('bridges')
-  bridges(): Promise<Bridge[]> {
-    return this.analytics.bridges();
+  bridges(@Query() query: unknown): Promise<Bridge[]> {
+    const { graph } = DashboardQuerySchema.parse(query);
+    return this.analytics.bridges(projectionGraphFor(graph), graph);
   }
 
   @Get('stale-docs')
@@ -35,6 +39,7 @@ export class AnalyticsController {
 
   @Get('summary')
   summary(@Query() query: unknown): Promise<AnalyticsSummary> {
-    return this.analytics.summary(MinScoreQuerySchema.parse(query).minScore);
+    const { minScore, graph } = DashboardQuerySchema.parse(query);
+    return this.analytics.summary(minScore, graph, projectionGraphFor(graph));
   }
 }

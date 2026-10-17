@@ -20,7 +20,15 @@ repo-root `.env`. `search_knowledge` embeds the question with the configured LLM
 
 | Tool | Arguments | Use it for |
 | --- | --- | --- |
-| `search_knowledge` | `question`, `k?` | What documents say: passages with artifact id, title, type, day, authors |
+| `search_knowledge` | `question`, `k?`, `fromDay?`, `toDay?` | What documents say: passages with artifact id, title, type, day, authors |
+| `find_artifacts` | `people?`, `fromDay?`, `toDay?`, `types?`, `titleContains?`, `textContains?`, `limit?` | Locate a specific event or document by who was involved, day range, type, title or text |
+| `get_artifact` | `id` | One document: everyone involved and how (with the day), linked documents in both directions, start of the text |
+| `what_followed` | `id`, `days?`, `types?` | What happened after a document: linked documents and the same people's later documents; empty means nothing followed |
+| `find_event` | `day`, `people?`, `description?`, `types?`, `tolerance?` | The documents of one event: everything within a few days, ranked by people involved, rare description words in title and text, named document type, day distance |
+| `check_follow_up` | `id`, `kind`, `days?` | Verdict: did a response of a kind (postmortem, ticket, support_ticket, page, email, ...) follow, linked to the document? |
+| `check_visibility` | `person`, `day`, `description`, `title?`, `eventPeople?`, `types?` | Verdict in one call: finds the event without the person asked about, then checks their involvement by that day |
+| `check_involvement` | `person`, `ids`, `asOfDay?` | Verdict: was the person part of these documents by that day (any role, received, listed), or only of a linked one? |
+| `check_causal_link` | `causes`, `effects` | Verdict: `linked` (up to three references / fixes), `likely` (no link, but within 5 days among the same people) or `no_evidence` |
 | `who_knows` | `system` | The five strongest experts on a system, scores and evidence; suggests names if unknown |
 | `bus_factor` | `minScore?` | Systems with 0, 1 or 2 experts (orphaned, critical, watch) and counts per level |
 | `bridge_people` | | The ten people who connect teams (betweenness on collaboration) |
@@ -29,7 +37,13 @@ repo-root `.env`. `search_knowledge` embeds the question with the configured LLM
 | `find_stale_docs` | | Pages that still state a decision a later one replaced |
 | `list_systems` | | Core systems with mention counts, to find exact names |
 | `list_people` | `activeOnly?` | People with department and activity, to find exact names |
-| `draft_handover`, `propose_reassignment`, `create_runbook_task` | | Not available yet (return `not_implemented`) |
+| `draft_handover` | `person` | Proposes a handover plan: reassignments, page reviews, runbook tasks |
+| `propose_reassignment` | `ticketId`, `person`, `reason` | Proposes moving a ticket to a person |
+| `create_runbook_task` | `system` | Proposes a runbook task for a system's single expert |
+
+The three action tools only create proposals (`status: proposed`). Approving or rejecting is
+not a tool: a person does it in Keystone (`POST /actions/:id/approve`), so an agent cannot
+approve its own suggestions.
 
 Every tool answers with one JSON text block in the same envelope:
 

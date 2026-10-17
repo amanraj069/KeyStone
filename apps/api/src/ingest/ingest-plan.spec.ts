@@ -18,7 +18,9 @@ describe('ingest plan', () => {
   it('a day slice holds only that day, its people and links touching it', () => {
     const day1 = sliceFor(plan, (r) => r.day === 1);
     expect([...day1.artifactsByLabel.values()].flat().map((a) => a.id).sort()).toEqual(['ENG-1', 'email_offer', 'zoom_1']);
-    expect(day1.people.map((p) => p.name)).toEqual(['Ada', 'Bo']);
+    // Cy has no role on day 1 but RECEIVED the offer email, so Cy must exist for that edge.
+    expect(day1.people.map((p) => p.name)).toEqual(['Ada', 'Bo', 'Cy']);
+    expect(day1.seen).toEqual([{ rel: 'RECEIVED', person: 'Cy', artifactId: 'email_offer', day: 1 }]);
     // CONF-1 (day 2) -> ENG-1 (day 1) is in both slices; MERGE makes the repeat harmless.
     expect(day1.references).toContainEqual({ from: 'CONF-1', to: 'ENG-1', kind: 'jira' });
   });

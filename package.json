@@ -20,6 +20,7 @@
     "reingest-roles": "pnpm --filter @keystone/api reingest-roles",
     "mcp:stdio": "pnpm --silent --filter @keystone/api mcp:stdio",
     "mcp:check": "pnpm --filter @keystone/api mcp:check",
-    "ask": "pnpm --filter @keystone/api ask"
+    "ask": "pnpm --filter @keystone/api ask",
+    "bench": "pnpm --filter @keystone/api bench"
   }
 }

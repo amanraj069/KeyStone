@@ -6,6 +6,8 @@ export const SearchQuerySchema = z.object({
   k: z.coerce.number().int().min(1).max(50).default(10),
   // Only artifacts up to this simulation day (hybrid search only).
   asOfDay: z.coerce.number().int().min(0).max(1000).optional(),
+  // Only artifacts from this simulation day on (hybrid search only); with asOfDay, a day range.
+  fromDay: z.coerce.number().int().min(0).max(1000).optional(),
 });
 export type SearchQuery = z.infer<typeof SearchQuerySchema>;
 

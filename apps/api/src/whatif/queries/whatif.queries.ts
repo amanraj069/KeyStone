@@ -58,3 +58,16 @@ export const DEPARTURE_CANDIDATES = `
   ORDER BY orphaned DESC, person
   LIMIT 10
 `;
+
+/**
+ * A person's open tickets ({ticket, title}), newest first: the ticket nodes of the
+ * before-subgraph the web app shows ahead of a simulation. Open has the same meaning
+ * as in K6: the status (on the ticket or the ASSIGNED edge) is not a done status,
+ * and a missing status counts as open. Pass $doneStatuses in lower case.
+ */
+export const OPEN_TICKETS_OF = `
+  MATCH (:Person {name:$person})-[asg:ASSIGNED]->(t:Ticket)
+  WHERE NOT toLower(coalesce(t.status, asg.status, 'unknown')) IN $doneStatuses
+  RETURN DISTINCT t.id AS ticket, t.title AS title, t.day AS day
+  ORDER BY day DESC
+`;

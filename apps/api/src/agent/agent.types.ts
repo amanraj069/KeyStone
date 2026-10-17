@@ -1,4 +1,8 @@
-import type { QuestionLabel } from './agent.constants';
+import type { AgentEvent, Citation, GraphPath } from '@keystone/shared';
+import type { LlmTokenUsage } from '../llm/llm.types';
+
+/** The event and citation shapes the web app parses: Zod schemas in @keystone/shared. */
+export type { AgentEvent, Citation, GraphPath };
 
 /** A tool as the MCP server lists it: name, description and JSON Schema of its input. */
 export interface ToolSpec {
@@ -25,6 +29,8 @@ export interface ModelTurn {
   toolCalls: ToolCall[];
   /** The provider's own message, so it can be sent back unchanged (e.g. Gemini thought signatures). */
   raw?: unknown;
+  /** Tokens this call used, when the SDK reports them. */
+  usage?: LlmTokenUsage;
 }
 
 /** A chat model with function calling (OpenAI or Gemini). */
@@ -43,29 +49,8 @@ export interface ToolEnvelope {
   error?: string;
 }
 
-export interface GraphPath {
-  nodes: unknown[];
-  edges: unknown[];
-}
-
 /** The tools the agent can call (an MCP client in the app; a fake in tests). */
 export interface AgentTools {
   list(): Promise<ToolSpec[]>;
   call(name: string, args: Record<string, unknown>): Promise<{ envelope: ToolEnvelope; isError: boolean }>;
 }
-
-export interface Citation {
-  id: string;
-  title: string | null;
-  type: string | null;
-  day: number | null;
-}
-
-/** The events POST /agent/ask streams (Server-Sent Events). */
-export type AgentEvent =
-  | { type: 'classified'; label: QuestionLabel }
-  | { type: 'tool_call'; name: string; args: Record<string, unknown> }
-  | { type: 'tool_result'; name: string; summary: string; evidenceCount: number; graphPath: GraphPath | null }
-  | { type: 'answer_delta'; text: string }
-  | { type: 'done'; citations: Citation[]; graphPath: GraphPath; timings: Record<string, number> }
-  | { type: 'error'; message: string };

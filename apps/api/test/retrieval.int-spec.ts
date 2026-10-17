@@ -75,6 +75,12 @@ describe('RetrievalService on a 4-dimension test graph', () => {
     expect(result.hits.map((h) => h.artifactId)).not.toContain('A'); // A is day 5
   });
 
+  it('a day range (fromDay..asOfDay) over-fetches, so the nearest hit inside the range still comes back', async () => {
+    // The nearest chunk (A, day 5) is outside days 2-3; asking the index for only k = 1 would return nothing.
+    const result = await retrieval.search(name, { q: 'How do I restart TitanDB?', k: 1, fromDay: 2, asOfDay: 3 });
+    expect(result.hits.map((h) => h.artifactId)).toEqual(['B']);
+  });
+
   it('vector-only search finds the same chunk but adds no graph context', async () => {
     const result = await retrieval.vectorOnlySearch(name, { q: 'How do I restart TitanDB?', k: 3 });
     expect(result.hits[0]).toMatchObject({ chunkId: 'A#0', artifactId: 'A', related: [], authors: [], title: null });

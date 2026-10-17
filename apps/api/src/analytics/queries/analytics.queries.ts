@@ -358,3 +358,19 @@ export const LIST_PEOPLE = `
   RETURN p.name AS name, p.dept AS dept, p.active AS active, p.lastSeenDay AS lastSeenDay, p.departedDay AS departedDay
   ORDER BY name
 `;
+
+/**
+ * Systems worth opening on the Decisions screen ({name, core, decisions, changes}):
+ * every core system plus any system with a superseded decision, with how many
+ * decisions are about it and how many of those replaced an earlier one. Systems
+ * with changes come first, because a timeline with a replacement tells a story.
+ * (A pattern inside CASE is always true in FalkorDB, so changes are counted with OPTIONAL MATCH.)
+ */
+export const SYSTEMS_WITH_DECISIONS = `
+  MATCH (s:System)<-[:ABOUT]-(d:Decision)
+  OPTIONAL MATCH (d)-[r:SUPERSEDES]->(:Decision)
+  WITH s, count(DISTINCT d) AS decisions, count(r) AS changes
+  WHERE s.core = true OR changes > 0
+  RETURN s.name AS name, coalesce(s.core, false) AS core, decisions, changes
+  ORDER BY changes DESC, decisions DESC, name
+`;
