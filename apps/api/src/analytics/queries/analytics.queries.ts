@@ -245,13 +245,19 @@ export const K7_DEPARTURE_PAGES = `
 // ---------------------------------------------------------------- bridges (apex_proj or a copy)
 
 /**
- * K8b. Bridge people: betweenness centrality on the collaboration graph. Unchanged.
+ * K8b. Bridge people: betweenness centrality on the collaboration graph.
  * Run it on apex_proj, where COLLAB exists in both directions: FalkorDB's
  * betweenness follows edge direction (checked: x->y<-z gives y 0; with reverse
  * edges y gets 2), so on apex's one-way COLLAB edges the scores would be skewed.
+ * CHANGE: samplingSize 1000 and a fixed samplingSeed. FalkorDB estimates
+ * betweenness from randomly sampled start nodes (with replacement, so no setting is
+ * exact), and by default the scores changed every time apex_proj was rebuilt (Priya
+ * 88, 95, 92, 108). A fixed seed makes the result repeatable; 1000 samples (about
+ * 23 per person) keep the ranking stable. Scores scale with samplingSize, so only
+ * compare scores computed with the same settings (what-if does).
  */
 export const K8B_BRIDGES = `
-  CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB']})
+  CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB'], samplingSize: 1000, samplingSeed: 7})
   YIELD node, score
   RETURN node.name AS person, score
   ORDER BY score DESC LIMIT 10
@@ -326,4 +332,29 @@ export const OPEN_TICKETS_COUNT = `
   MATCH (:Person)-[asg:ASSIGNED]->(t:Ticket)
   WHERE NOT toLower(coalesce(t.status, asg.status, 'unknown')) IN $doneStatuses
   RETURN count(DISTINCT t) AS open
+`;
+
+// ---------------------------------------------------------------- directory (names the agent can use)
+
+/** Core systems, most mentioned first ({name, mentionCount, authorCount}). */
+export const LIST_CORE_SYSTEMS = `
+  MATCH (s:System)
+  WHERE s.core = true
+  RETURN s.name AS name, s.mentionCount AS mentionCount, s.authorCount AS authorCount
+  ORDER BY mentionCount DESC, name
+`;
+
+/** Every system name with its aliases ({name, aliases}), for "did you mean" suggestions. */
+export const SYSTEM_NAMES = `
+  MATCH (s:System)
+  RETURN s.name AS name, coalesce(s.aliases, []) AS aliases
+  ORDER BY name
+`;
+
+/** People ({name, dept, active, lastSeenDay, departedDay}); $activeOnly limits to active people. */
+export const LIST_PEOPLE = `
+  MATCH (p:Person)
+  WHERE NOT $activeOnly OR p.active = true
+  RETURN p.name AS name, p.dept AS dept, p.active AS active, p.lastSeenDay AS lastSeenDay, p.departedDay AS departedDay
+  ORDER BY name
 `;

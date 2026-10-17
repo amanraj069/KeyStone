@@ -67,6 +67,9 @@ FalkorDB Browser.
 | `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
 | `pnpm embed [--dry-run]` | Build the retrieval chunks and embeddings (cached) |
 | `pnpm reingest-roles` | Rewrite person-artifact role edges from `artifacts.jsonl` (no reset), then refresh expertise |
+| `pnpm ask [--raw] "question"` | Ask the agent from the command line (`--raw` also prints the answer before the citation guardrail) |
+| `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio (see `docs/mcp.md`) |
+| `pnpm mcp:check [--stdio]` | Lists the MCP tools and calls the read tools on apex |
 | `pnpm systems report` | System catalog: distribution by mentions and authors, top 50, core counts |
 | `pnpm expertise [--as-of N]` | Recompute KNOWS + COLLAB on apex, rebuild `apex_proj`, print the KNOWS score distribution |
 | `pnpm llm-check` | One cached JSON call + one embedding with the configured LLM provider |
@@ -202,6 +205,36 @@ scratch graph's memory, and a small graph around the person for the UI animation
 - `GET /whatif/candidates`: the 10 people whose departure would orphan the most core systems
   (K5 for everyone, cached for 60 seconds).
 
+## Asking questions: the agent
+
+`POST /agent/ask {"question": "...", "sessionId": "..."}` answers a question about Apex Athletics
+as a stream of Server-Sent Events. The agent is an MCP client of the API's own `/mcp`: it reads
+the tool list (names, descriptions, input schemas) from the MCP server once and hands it to the
+model as function declarations (OpenAI when `USE_OPENAI=yes`, else Gemini).
+
+1. One cheap call labels the question (`who_knows`, `why`, `what_if`, `freshness`, `general`);
+   the label goes to the model as a hint.
+2. Model call, tool calls through MCP, results back to the model, repeated: at most 5 tool calls
+   and 60 seconds, after which the model must answer from what it has.
+3. Guardrail: the answer cites `[ID]`s; ids that no tool returned as evidence are removed (and
+   logged as hallucinated). An answer left without a valid citation, or a refusal, becomes
+   "The answer is not in the company's records." with the tools that were tried.
+
+Events: `classified`, `tool_call`, `tool_result` (summary, evidence count, graphPath),
+`answer_delta`, then `done` (citations with title, type and day; the union of graphPaths;
+timings) or `error`. Each run is logged as one JSON line. Nothing about the conversation is
+stored. `pnpm ask "Who knows TitanDB best?"` runs the same agent from the command line (the API
+must be running).
+
+## MCP server
+
+The graph tools are also an MCP server (`apps/api/src/mcp/`): Streamable HTTP at
+`POST /mcp` while the API runs, or stdio with `pnpm --silent mcp:stdio`. Tools: `search_knowledge`,
+`who_knows`, `bus_factor`, `bridge_people`, `simulate_departure`, `trace_decision`,
+`find_stale_docs`, `list_systems`, `list_people` (plus three action tools that are not available
+yet). Each returns `{ data, evidence, graphPath? }`, where `evidence` is the artifact ids to cite.
+Claude Desktop config, MCP Inspector instructions and the tool list: [docs/mcp.md](docs/mcp.md).
+
 ## Ingestion
 
 Deterministic, no LLM: `data/artifacts.jsonl` -> FalkorDB through a BullMQ queue
@@ -230,9 +263,10 @@ Every query lives in a `queries/` file as an exported constant.
 | `apps/api/src/ingest/queries/ingest.queries.ts` | `MERGE_DEPTS`, `MERGE_PEOPLE`, `MERGE_{TICKET,PAGE,THREAD,PR,EMAIL,MEETING,ALERT,RECORD}_ARTIFACTS`, `MERGE_AUTHORED`, `MERGE_REVIEWED`, `MERGE_PARTICIPATED`, `DELETE_ROLE_EDGES`, `MERGE_DEPARTURES`, `DELETE_DEPARTURE_EDGES`, `CLEAR_DEPARTED_DAYS`, `MERGE_ASSIGNED`, `MERGE_REFERENCES`, `MERGE_FIXES`, `UPDATE_PERSON_ACTIVITY`, `GRAPH_COUNTS` | Deterministic ingestion (all MERGE, safe to rerun); `GRAPH_COUNTS` returns people/artifacts/edges for the progress stream |
 | `apps/api/src/extract/queries/extract.queries.ts` | `SELECT_CANDIDATES`, `ALL_ARTIFACT_IDS`, `PAGE_TITLES`, `CLEAR_EXTRACTION`, `MERGE_SYSTEMS`, `MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_ABOUT`, `MERGE_CLAIMS`, `SYSTEMS_FOR_LINKING`, `MERGE_SUPERSEDES`, `MERGE_ASSERTS`, `DELETE_CLAIMS`, `TOP_SYSTEMS_BY_MENTIONS`, `EXTRACTION_COUNTS`, `DECISIONS_BY_KIND`, `DECISIONS_WITHOUT_SYSTEM`, `STALE_PAGES`, `REPLAY_{SYSTEMS,MENTIONS,DECISIONS,ABOUT,SUPERSEDES,ASSERTS}_FOR_DAY`, `STALE_LINK_TARGETS`, `STALE_LINK_INPUT`, `DELETE_SAME_SOURCE_SUPERSEDES`, `REACTIVATE_UNSUPERSEDED` | LLM extraction: candidate selection, idempotent MERGE writes keyed by stable ids, second-pass input, report figures; replay copies one day's extraction from apex |
 | `apps/api/src/catalog/queries/catalog.queries.ts` | `SET_SYSTEM_STATS`, `MARK_CORE_SYSTEMS`, `SET_SYSTEM_IDF`, `CORE_COUNT_AT`, `MENTION_BUCKETS`, `AUTHOR_BUCKETS`, `TOP_SYSTEMS`, `ALL_SYSTEM_COUNTS`, `SYSTEM_TOTALS`, `MERGE_SYSTEM_ALIASES`, `MOVE_SYSTEM_MENTIONS`, `MOVE_SYSTEM_ABOUT`, `DELETE_MERGED_SYSTEMS` | System statistics, core flag, idf, distributions, and merging duplicate systems |
+| `apps/api/src/agent/queries/agent.queries.ts` | `CITED_ARTIFACTS` | Title, type and day of the artifacts an answer cites |
 | `apps/api/src/whatif/queries/whatif.queries.ts` | `K9_KNOWLEDGE_ISLANDS`, `REMOVE_PERSON`, `LEAVER_KNOWS`, `DEPARTURE_CANDIDATES` | Departure simulation: knowledge islands, removing the person in the scratch copy, island evidence, and K5 for every person |
 | `apps/api/src/retrieval/queries/retrieval.queries.ts` | `DELETE_CHUNKS`, `CREATE_CHUNKS`, `ARTIFACTS_TO_CHUNK`, `CHUNK_VECTOR_INDEX`, `CHUNK_MODELS`, `HYBRID_SEARCH`, `VECTOR_ONLY_SEARCH` | Chunk writes (ids + embeddings only), vector-index check, hybrid search (vector + REFERENCES + authors) and the vector-only baseline |
-| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
+| `apps/api/src/analytics/queries/analytics.queries.ts` | `SET_ACTIVE_AS_OF`, `STAMP_EXPERTISE`, `EXPERTISE_STAMP`, `K2_MATERIALISE_KNOWS`, `DELETE_ALL_KNOWS`, `DELETE_WEAK_KNOWS`, `DELETE_COLLAB`, `K8A_MATERIALISE_COLLAB`, `LAST_ARTIFACT_DAY`, `KNOWS_SCORE_DISTRIBUTION`, `EXPERTISE_COUNTS`, `K3A_SYSTEM_EXPERTS`, `K3B_EVIDENCE_PATH`, `SYSTEM_EXISTS`, `PERSON_EXISTS`, `K4_BUS_FACTOR`, `RISK_LEVEL_COUNTS`, `K5_DEPARTURE_SYSTEMS`, `K6_DEPARTURE_TICKETS`, `K7_DEPARTURE_PAGES`, `K8B_BRIDGES`, `BRIDGE_EVIDENCE`, `K10A_DECISION_TRACE`, `K10B_STALE_DOCS`, `PEOPLE_COUNTS`, `STALE_DOCS_COUNT`, `OPEN_TICKETS_COUNT`, `LIST_CORE_SYSTEMS`, `SYSTEM_NAMES`, `LIST_PEOPLE` | Expertise (KNOWS, COLLAB), bus factor, departure impact, bridges, decision trace, stale docs, and the summary counts |
 | `apps/api/src/projection/queries/projection.queries.ts` | `ACTIVE_PEOPLE`, `ACTIVE_PEOPLE_AS_OF`, `CORE_SYSTEMS`, `ACTIVE_KNOWS`, `KNOWS_AS_OF`, `ACTIVE_COLLAB_WEIGHT_PERCENTILE`, `ACTIVE_COLLAB`, `COLLAB_AS_OF_WEIGHT_PERCENTILE`, `COLLAB_AS_OF`, `WRITE_PEOPLE`, `WRITE_SYSTEMS`, `WRITE_KNOWS`, `WRITE_COLLAB`, `STAMP_PROJECTION`, `PROJECTION_STAMP`, `PROJECTION_COUNTS` | Paged reads from apex (current or as of a day) and writes into `apex_proj` |
 | `apps/api/test/queries/test.queries.ts` | `COUNT_NODES_BY_LABEL`, `ARTIFACTS_AS_OF_DAY`, `WRITE_BATCH_PROBES`, `COUNT_BATCH_PROBES`, `ADA_NODE`, `ADA_AUTHORED_T1`, `SUPERSEDES_PATH`, `ACTIVE_EXPERTS_BY_SYSTEM`, `CROSS_DEPT_COLLABORATORS`, `PEOPLE_TO_TICKETS_PAGES_THREADS`, `ARTIFACT_LINKS`, `PEOPLE_SUMMARY`, `RETRIEVAL_FIXTURE`, `CHUNK_SUMMARY`, `GIVE_D1_A_SOURCE`, `EXTRACTION_SUMMARY`, `ALL_KNOWS`, `PROJECTION_COLLAB_PAIRS`, `SYSTEM_STATS`, `ADD_TITAN_DUPLICATE`, `TITAN_EDGES`, `IDF_FIXTURE`, `MARK_ALL_SYSTEMS_CORE`, `EVE_JOINS_MEETING`, `KNOWS_SCORE`, `COLLAB_WEIGHT`, `WORKLOAD_FIXTURE`, `BO_ON_DAY_9_THREAD`, `BO_ACTIVITY`, `DEPARTURES`, `BACKUP_FIXTURE`, `GRAPH_FINGERPRINT` | Integration tests only, against `test/fixtures/mini-company.cypher` |
 | `apps/api/scripts/queries/capability-check.queries.ts` | `CREATE_PEOPLE`, `CREATE_KNOWS_EDGES`, `COUNT_NODES_AND_EDGES`, `BETWEENNESS`, `WCC`, `PAGE_RANK`, `EXP_ONE`, `CREATE_VECTOR_INDEX`, `SET_EMBEDDINGS`, `VECTOR_NEAREST`, `COUNT_PEOPLE` | Capability check only |

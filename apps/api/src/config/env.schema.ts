@@ -43,6 +43,8 @@ export const EnvSchema = z
     OPENAI_EMBED_MODEL: z.string().min(1).default('text-embedding-3-small'),
     // GPT-5 models bill hidden reasoning as output tokens; "minimal" is the cheapest.
     OPENAI_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high']).default('minimal'),
+    // Reasoning effort for the question-answering agent (OpenAI only): picking tools needs a little more than extraction.
+    AGENT_REASONING_EFFORT: z.enum(['minimal', 'low', 'medium', 'high']).default('low'),
 
     // Gemini (the default provider).
     GEMINI_API_KEYS: z

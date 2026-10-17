@@ -30,6 +30,6 @@ import { LlmService } from './llm.service';
     },
     LlmService,
   ],
-  exports: [LlmService],
+  exports: [LlmService, LLM_SETTINGS],
 })
 export class LlmModule {}

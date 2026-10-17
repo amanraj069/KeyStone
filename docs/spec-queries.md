@@ -217,11 +217,14 @@ Purpose: the ten people who connect otherwise separate groups (betweenness centr
 Graph: `apex_proj`, or a what-if copy of it.
 
 ```cypher
-CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB']})
+CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB'], samplingSize: 1000, samplingSeed: 7})
 YIELD node, score
 RETURN node.name AS person, score
 ORDER BY score DESC LIMIT 10
 ```
+
+Changes:
+- A fixed `samplingSeed` and 1000 samples: FalkorDB estimates betweenness from randomly sampled start nodes, so by default the scores changed every time the projection was rebuilt. With the seed they repeat exactly; scores are only comparable between runs with the same settings.
 
 Each bridge person is returned with up to five artifacts they share with other departments, as evidence.
 

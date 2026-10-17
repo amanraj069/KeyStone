@@ -2,7 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AnalyticsService } from '../src/analytics/analytics.service';
 import { ProjectionService } from '../src/projection/projection.service';
 import { REMOVE_PERSON } from '../src/whatif/queries/whatif.queries';
-import { WhatIfService } from '../src/whatif/whatif.service';
+import { scratchId, WhatIfService } from '../src/whatif/whatif.service';
 import { fixtureExpertise, useFixtureGraph } from './graph-test-utils';
 import { GRAPH_FINGERPRINT } from './queries/test.queries';
 
@@ -104,10 +104,14 @@ describe('WhatIfService on the fixture graph', () => {
     await expect(whatIf.simulateDeparture('Cara')).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('the sweeper deletes leftover scratch graphs', async () => {
-    const leftover = `${prefix()}leftover`;
-    await fx.graph.copyGraph(projection(), leftover);
-    await expect(whatIf.sweep()).resolves.toEqual([leftover]);
+  it('the sweeper deletes leftovers but not a recent copy another process may be using', async () => {
+    const leftover = `${prefix()}leftover`; // no readable time: a leftover
+    const old = `${prefix()}${scratchId(Date.now() - 11 * 60 * 1000)}`;
+    const recent = `${prefix()}${scratchId()}`;
+    for (const g of [leftover, old, recent]) await fx.graph.copyGraph(projection(), g);
+    await expect(whatIf.sweep()).resolves.toEqual(expect.arrayContaining([leftover, old]));
+    await expect(scratchGraphs()).resolves.toEqual([recent]);
+    await expect(whatIf.sweep(Date.now() + 11 * 60 * 1000)).resolves.toEqual([recent]);
     await expect(scratchGraphs()).resolves.toEqual([]);
   });
 
