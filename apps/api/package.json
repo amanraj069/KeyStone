@@ -20,7 +20,8 @@
     "systems": "tsx scripts/systems.ts",
     "reingest-roles": "tsx scripts/reingest-roles.ts",
     "mcp:stdio": "tsc -p tsconfig.build.json 1>&2 && node dist/mcp/stdio.js",
-    "mcp:check": "tsx scripts/mcp-check.ts"
+    "mcp:check": "tsx scripts/mcp-check.ts",
+    "ask": "tsx scripts/ask.ts"
   },
   "dependencies": {
     "@google/genai": "2.25.0",

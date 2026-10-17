@@ -8,13 +8,14 @@ import { TextStoreModule } from './ingest/text-store.module';
 import { JobsModule } from './jobs/jobs.module';
 import { LlmModule } from './llm/llm.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { AgentModule } from './agent/agent.module';
 import { McpModule } from './mcp/mcp.module';
 import { WhatIfModule } from './whatif/whatif.module';
 import { RetrievalModule } from './retrieval/retrieval.module';
 import { RedisModule } from './redis/redis.module';
 
 @Module({
-  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule],
+  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule, AgentModule],
   providers: [{ provide: APP_FILTER, useClass: ApiExceptionFilter }],
 })
 export class AppModule {}
