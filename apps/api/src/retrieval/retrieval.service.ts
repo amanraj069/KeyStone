@@ -18,6 +18,14 @@ export interface RetrievalSettings {
   embedModel: string;
 }
 
+/**
+ * With a day filter, the vector index is asked for this many times k neighbours
+ * (at most DAY_FILTER_MAX_K), because the filter can only run after the vector
+ * lookup and would otherwise leave few or no hits.
+ */
+const DAY_FILTER_OVERFETCH = 15;
+const DAY_FILTER_MAX_K = 400;
+
 /** Chunks per CREATE batch: each row carries a 768-number vector, so batches stay small. */
 const CHUNK_WRITE_BATCH = 200;
 
@@ -153,10 +161,13 @@ export class RetrievalService {
   async search(graphName: string, query: SearchQuery): Promise<SearchResponse> {
     const { vector, embedMs } = await this.embedQuery(graphName, query.q);
     const started = performance.now();
+    const dayFilter = query.asOfDay !== undefined || query.fromDay !== undefined;
     const rows = await this.graph.roQuery<HybridRow>(graphName, Q.HYBRID_SEARCH, {
-      k: query.k,
+      k: dayFilter ? Math.min(query.k * DAY_FILTER_OVERFETCH, DAY_FILTER_MAX_K) : query.k,
+      limit: query.k,
       q: vector,
       asOfDay: query.asOfDay ?? null,
+      fromDay: query.fromDay ?? null,
     });
     // The graph decided what is relevant; the TextStore supplies the words in one call.
     const texts = await this.textStore.getMany('chunks', rows.map((r) => r.chunkId));

@@ -1,3 +1,5 @@
+import type { RiskLevel } from '@keystone/shared';
+
 /** The people-and-systems projection that what-if and algorithms run on (AGENTS.md section 3). */
 export const PROJECTION_GRAPH = 'apex_proj';
 
@@ -29,7 +31,7 @@ export const EXPERT_SHARE_OF_TOP = 0.25;
 export const DONE_STATUSES = ['done', 'closed', 'resolved', "won't do", 'cancelled', 'canceled'];
 
 /** Bus factor risk levels by number of active experts. */
-export type RiskLevel = 'orphaned' | 'critical' | 'watch' | 'ok';
+export type { RiskLevel };
 
 export function riskLevel(experts: number): RiskLevel {
   if (experts === 0) return 'orphaned';

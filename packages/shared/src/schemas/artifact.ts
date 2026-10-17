@@ -23,3 +23,19 @@ export const ArtifactSchema = z.object({
 });
 
 export type Artifact = z.infer<typeof ArtifactSchema>;
+
+/** GET /artifacts/:id: what the UI shows when an artifact is opened (the body is an excerpt from the TextStore). */
+export const ArtifactDetailSchema = z.object({
+  id: z.string(),
+  /** The artifact's kind as a graph label: Ticket, Page, Thread, PR, Email, Meeting, Alert or Record. */
+  label: z.string().nullable(),
+  /** The OrgForge doc_type, e.g. jira, confluence, slack. */
+  type: z.string().nullable(),
+  title: z.string().nullable(),
+  day: z.number().int().nullable(),
+  /** People who wrote, reviewed, own or took part in it. */
+  people: z.array(z.string()),
+  excerpt: z.string().nullable(),
+  bodyLength: z.number().int().nullable(),
+});
+export type ArtifactDetail = z.infer<typeof ArtifactDetailSchema>;

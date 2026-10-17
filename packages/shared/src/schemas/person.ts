@@ -12,3 +12,13 @@ export const PersonSchema = z.object({
 });
 
 export type Person = z.infer<typeof PersonSchema>;
+
+/** GET /people: everyone in the graph, for pickers. */
+export const PersonListItemSchema = z.object({
+  name: z.string(),
+  dept: z.string().nullable(),
+  active: z.boolean(),
+  lastSeenDay: z.number().nullable(),
+  departedDay: z.number().nullable(),
+});
+export type PersonListItem = z.infer<typeof PersonListItemSchema>;

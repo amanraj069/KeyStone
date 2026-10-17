@@ -1,31 +1,11 @@
+import type { BridgeShift, Island, SimulationEdge, SimulationGraph, SimulationNode, SystemChange } from '@keystone/shared';
 import type { Bridge, BusFactorRow, DepartureImpact } from '../analytics/analytics.service';
+
+/** Shapes of the simulation result: Zod schemas in @keystone/shared (the web app parses them). */
+export type { BridgeShift, Island, SimulationEdge, SimulationGraph, SimulationNode, SystemChange };
 
 // Comparing the before/after results that FalkorDB computed (set differences
 // and look-ups only; every count, score and algorithm ran in Cypher).
-
-export interface SystemChange {
-  system: string;
-  /** Experts before the departure (the leaver included). */
-  expertsBefore: string[];
-  /** Experts left afterwards (empty for a newly orphaned system). */
-  expertsAfter: string[];
-  /** Artifact ids: the leaver's evidence, then the remaining expert's. */
-  evidence: string[];
-}
-
-export interface Island {
-  system: string;
-  /** The leaver's KNOWS evidence on it: the only knowledge there was. */
-  evidence: string[];
-}
-
-export interface BridgeShift {
-  person: string;
-  /** Betweenness in the top 10 before / after; null = not in the top 10 (or gone). */
-  before: number | null;
-  after: number | null;
-  evidence: string[];
-}
 
 const MAX_EVIDENCE = 5;
 
@@ -75,37 +55,6 @@ export function bridgeShift(before: readonly Bridge[], after: readonly Bridge[])
 }
 
 // ---------------------------------------------------------------- graph for the animation
-
-export interface SimulationNode {
-  id: string;
-  kind: 'person' | 'system' | 'ticket';
-  name: string;
-  /** Ticket id, so the UI can cite it. */
-  artifactId: string | null;
-  /** The person leaving: the UI fades this node. */
-  leaving: boolean;
-  /** Turns red: a system with no expert left, or a ticket whose owner leaves. */
-  orphaned: boolean;
-  /** A system left with exactly one expert. */
-  critical: boolean;
-  /** A system nobody knows at all any more (K9). */
-  island: boolean;
-}
-
-export interface SimulationEdge {
-  source: string;
-  target: string;
-  type: 'KNOWS' | 'ASSIGNED';
-  /** KNOWS score, when known. */
-  score: number | null;
-}
-
-export interface SimulationGraph {
-  nodes: SimulationNode[];
-  edges: SimulationEdge[];
-  /** True when the person knows more systems than the graph shows (fewest backups shown first). */
-  truncated: boolean;
-}
 
 /**
  * The before-subgraph around the leaver: the systems they are an expert on

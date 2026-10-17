@@ -109,6 +109,10 @@ describe('Stage 7 analytics on the fixture graph', () => {
     ]);
   });
 
+  it('lists systems with decisions, counting the ones that replaced an earlier decision', async () => {
+    await expect(analytics.systemsWithDecisions(fx.name)).resolves.toEqual([{ name: 'MobileApp', core: expect.any(Boolean), decisions: 2, changes: 1 }]);
+  });
+
   it('stale docs finds the page asserting the superseded decision (K10b)', async () => {
     await expect(analytics.staleDocs(fx.name)).resolves.toEqual([
       expect.objectContaining({ stalePage: 'P-3', outdatedId: 'D-1', currentId: 'D-2', decidedIn: 'M-1' }),
@@ -118,6 +122,8 @@ describe('Stage 7 analytics on the fixture graph', () => {
   it('summary counts people, risk levels, stale docs and open tickets', async () => {
     const summary = await analytics.summary(0.05, fx.name, projection());
     expect(summary).toMatchObject({
+      graph: fx.name,
+      day: 12, // the latest artifact day (PR-3)
       people: { active: 4, inactive: 1 },
       systems: { orphaned: 1, critical: 1, watch: 1, ok: 1 }, // TitanDB: watch (see the bus factor test)
       staleDocs: 1,

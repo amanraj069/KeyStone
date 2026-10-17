@@ -93,3 +93,34 @@ export function rolesFor(record: ArtifactRecord, roster: Roster): RoleRow[] {
 function unique(values: readonly string[]): string[] {
   return [...new Set(values.filter((v) => v.trim() !== ''))];
 }
+
+/**
+ * One "who could see it" edge (Person -> Artifact), kept apart from the role edges so
+ * expertise (KNOWS), collaboration (COLLAB) and activity never count it:
+ *   RECEIVED   an email's recipient (to_addr) or its liaison, when not the sender
+ *   LISTED_ON  anyone the dataset lists among an artifact's actors who has no other
+ *              edge to it: people a Slack thread mentions, silent meeting attendees,
+ *              people named on a PR or email
+ * Only employees get edges.
+ */
+export interface SeenRow {
+  rel: 'RECEIVED' | 'LISTED_ON';
+  person: string;
+  artifactId: string;
+  day: number | null;
+}
+
+/** The RECEIVED and LISTED_ON edges of one artifact, given the role edges it already has. */
+export function visibilityFor(record: ArtifactRecord, roster: Roster, roles: readonly RoleRow[]): SeenRow[] {
+  const covered = new Set(roles.filter((r) => r.artifactId === record.doc_id).map((r) => r.person));
+  const row = (rel: SeenRow['rel'], person: string): SeenRow => ({ rel, person, artifactId: record.doc_id, day: record.day });
+  const received: string[] = [];
+  if (record.doc_type === 'email') {
+    const candidates = [parseAddress(record.facts.to_addr)?.name, typeof record.facts.liaison === 'string' ? record.facts.liaison : undefined];
+    for (const name of candidates) {
+      if (name && roster.isEmployee(name) && !covered.has(name) && !received.includes(name)) received.push(name);
+    }
+  }
+  const listed = unique(record.actors).filter((name) => roster.isEmployee(name) && !covered.has(name) && !received.includes(name));
+  return [...received.map((p) => row('RECEIVED', p)), ...listed.map((p) => row('LISTED_ON', p))];
+}

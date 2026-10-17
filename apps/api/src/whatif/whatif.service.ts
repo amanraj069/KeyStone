@@ -1,22 +1,14 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import type { BeforeGraph, DepartureCandidate, DepartureSimulation } from '@keystone/shared';
 import { randomBytes } from 'node:crypto';
-import { EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE } from '../analytics/analytics.constants';
+import { DONE_STATUSES, EXPERT_SHARE_OF_TOP, MIN_EXPERT_SCORE } from '../analytics/analytics.constants';
 import { type Bridge, type BusFactorRow, AnalyticsService, type DepartureImpact } from '../analytics/analytics.service';
 import { PERSON_EXISTS } from '../analytics/queries/analytics.queries';
 import { GraphService } from '../graph/graph.service';
 import { ProjectionService } from '../projection/projection.service';
 import * as Q from './queries/whatif.queries';
 import { KeyedLock, Semaphore } from './semaphore';
-import {
-  type BridgeShift,
-  bridgeShift,
-  diffBusFactor,
-  type Island,
-  newIslands,
-  type SimulationGraph,
-  simulationGraph,
-  type SystemChange,
-} from './whatif-diff';
+import { bridgeShift, diffBusFactor, newIslands, simulationGraph } from './whatif-diff';
 import {
   CANDIDATES_TTL_MS,
   MAX_SUBGRAPH_SYSTEMS,
@@ -26,33 +18,6 @@ import {
   type WhatIfSettings,
 } from './whatif.constants';
 
-export interface DepartureSimulation {
-  person: string;
-  dept: string | null;
-  systemsNewlyOrphaned: SystemChange[];
-  systemsNewlyCritical: SystemChange[];
-  islandsCreated: Island[];
-  bridgeShift: BridgeShift[];
-  /** Open tickets the leaver owns, with suggested owners; `evidence` is the ticket id. */
-  orphanedTickets: (DepartureImpact['openTickets'][number] & { evidence: string[] })[];
-  /** Pages only the leaver has written or reviewed; `evidence` is the page id. */
-  soleAuthoredPages: (DepartureImpact['unsharedPages'][number] & { evidence: string[] })[];
-  /** Milliseconds per step: validate, ensureProjection, copy, before, removePerson, after, departureImpact, cleanup, total. */
-  timingsMs: Record<string, number>;
-  scratchGraph: string;
-  scratchGraphMemoryMb: number | null;
-  graph: SimulationGraph;
-}
-
-export interface DepartureCandidate {
-  person: string;
-  dept: string | null;
-  /** Core systems this person is the only expert on. */
-  orphaned: number;
-  systems: string[];
-  evidence: string[];
-}
-
 /**
  * "What if this person leaves?" Never touches the live graph: it copies the small
  * projection (apex_proj: Person, System, KNOWS, COLLAB) into a scratch graph with
@@ -61,6 +26,8 @@ export interface DepartureCandidate {
  * live graph, which those queries only parameterise by person. The scratch graph is
  * always deleted (finally), and sweepers remove anything a crash left behind.
  */
+export type { BeforeGraph, DepartureCandidate, DepartureSimulation };
+
 @Injectable()
 export class WhatIfService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WhatIfService.name);
@@ -85,6 +52,53 @@ export class WhatIfService implements OnModuleInit, OnModuleDestroy {
   /** At most maxConcurrent simulations at once; a second request for the same person shares the first. */
   simulateDeparture(person: string): Promise<DepartureSimulation> {
     return this.perPerson.run(person, () => this.semaphore.run(() => this.simulate(person)));
+  }
+
+  /**
+   * The graph around a person before anything is simulated: the systems they are an
+   * expert on (fewest other experts first), the other experts there, and their open
+   * tickets. Built like the simulation's graph (same node ids), so the web app can
+   * keep the layout when the simulation result arrives and only animate what changes.
+   */
+  async beforeGraph(person: string): Promise<BeforeGraph> {
+    const { sourceGraph, projectionGraph } = this.settings;
+    const started = performance.now();
+    const [who] = await this.graph.roQuery<{ name: string; dept: string | null; active: boolean }>(sourceGraph, PERSON_EXISTS, { person });
+    if (!who) throw new NotFoundException(`No person named "${person}"`);
+    await this.ensureFreshProjection();
+    const [busFactor, tickets] = await Promise.all([
+      this.analytics.busFactor(MIN_EXPERT_SCORE, projectionGraph, EXPERT_SHARE_OF_TOP),
+      this.graph.roQuery<{ ticket: string; title: string }>(sourceGraph, Q.OPEN_TICKETS_OF, { person, doneStatuses: DONE_STATUSES }),
+    ]);
+    const theirs = busFactor.filter((row) => row.names.includes(person)).sort((a, b) => a.experts - b.experts);
+    const impact: DepartureImpact = {
+      person,
+      dept: who.dept,
+      minScore: MIN_EXPERT_SCORE,
+      systems: theirs.map((row) => ({
+        system: row.system,
+        leaverScore: 0,
+        backups: row.experts - 1,
+        backupNames: row.names.filter((name) => name !== person),
+        evidence: row.evidence[row.names.indexOf(person)] ?? [],
+      })),
+      orphanedSystems: [],
+      openTickets: tickets.map((t) => ({ ticket: t.ticket, title: t.title, suggestedOwners: [], ownerEvidence: [] })),
+      unsharedPages: [],
+    };
+    const graph = simulationGraph({
+      person,
+      impact,
+      busFactorBefore: busFactor,
+      newlyOrphaned: [],
+      newlyCritical: [],
+      islands: [],
+      leaverScores: new Map(),
+      maxSystems: MAX_SUBGRAPH_SYSTEMS,
+    });
+    // Nothing is simulated yet: the leaver is not faded and the tickets are not orphaned.
+    for (const node of graph.nodes) Object.assign(node, { leaving: false, orphaned: false });
+    return { person, dept: who.dept, graph, timingsMs: { total: Math.round(performance.now() - started) } };
   }
 
   /** The 10 people whose departure would orphan the most core systems (K5 for everyone), cached 60 s. */

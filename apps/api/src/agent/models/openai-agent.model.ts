@@ -35,7 +35,17 @@ export class OpenAiAgentModel implements AgentModel {
     const toolCalls: ToolCall[] = (message?.tool_calls ?? []).flatMap((call) =>
       call.type === 'function' ? [{ id: call.id, name: call.function.name, args: parseArgs(call.function.arguments) }] : [],
     );
-    return { text: message?.content ?? null, toolCalls };
+    const usage = completion.usage;
+    return {
+      text: message?.content ?? null,
+      toolCalls,
+      usage: {
+        inputTokens: usage?.prompt_tokens ?? 0,
+        cachedInputTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
+        outputTokens: usage?.completion_tokens ?? 0,
+        reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+      },
+    };
   }
 }
 

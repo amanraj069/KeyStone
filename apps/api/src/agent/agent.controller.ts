@@ -1,13 +1,8 @@
 import { Body, Controller, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { AskRequestSchema } from '@keystone/shared';
 import { randomUUID } from 'node:crypto';
-import { z } from 'zod';
 import { AgentService } from './agent.service';
-
-const AskSchema = z.object({
-  question: z.string().trim().min(1).max(2000),
-  sessionId: z.string().trim().min(1).max(200).optional(),
-});
 
 /**
  * POST /agent/ask { question, sessionId? } -> Server-Sent Events, one JSON object per
@@ -19,7 +14,7 @@ export class AgentController {
 
   @Post('ask')
   async ask(@Body() body: unknown, @Req() req: Request, @Res() res: Response): Promise<void> {
-    const { question, sessionId } = AskSchema.parse(body);
+    const { question, sessionId } = AskRequestSchema.parse(body);
     res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.flushHeaders();
     let closed = false;

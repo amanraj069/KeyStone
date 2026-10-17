@@ -1,25 +1,10 @@
 import type { GraphPath } from '../graph/result-mapper';
 
-/** A node for the web graph canvas (react-force-graph): stable id, label and a readable name. */
-export interface ViewNode {
-  id: number;
-  label: string;
-  name: string;
-  /** Business id of an Artifact (its doc id), so the UI can cite it. */
-  artifactId: string | null;
-}
+import type { GraphView, ViewEdge, ViewNode } from '@keystone/shared';
 
-export interface ViewEdge {
-  id: number;
-  type: string;
-  source: number;
-  target: number;
-}
+/** The graph shapes the web canvas draws: Zod schemas in @keystone/shared. */
+export type { GraphView, ViewEdge, ViewNode };
 
-export interface GraphView {
-  nodes: ViewNode[];
-  edges: ViewEdge[];
-}
 
 /**
  * Merges several paths into one de-duplicated node/edge list. Labels: the most

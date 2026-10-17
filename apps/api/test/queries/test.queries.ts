@@ -258,3 +258,20 @@ export const BACKUP_FIXTURE = `
          (l)-[:KNOWS {score: 10.0, lastDay: 1, evidence: ['A-1']}]->(s),
          (o)-[:KNOWS {score: 2.0, lastDay: 1, evidence: ['B-1']}]->(s)
 `;
+
+/** Who is ASSIGNED Ticket $ticketId ({person, day, via, status}). */
+export const TICKET_ASSIGNEES = `
+  MATCH (p:Person)-[a:ASSIGNED]->(:Ticket {id: $ticketId})
+  RETURN p.name AS person, a.day AS day, a.via AS via, a.status AS status
+  ORDER BY person
+`;
+
+/** How many Action nodes exist ({actions}). */
+export const ACTION_COUNT = 'MATCH (a:Action) RETURN count(a) AS actions';
+
+/** Ingest test: every RECEIVED / LISTED_ON edge ({person, rel, artifact}), sorted. */
+export const SEEN_EDGES = `
+  MATCH (p:Person)-[r:RECEIVED|LISTED_ON]->(a:Artifact)
+  RETURN p.name AS person, type(r) AS rel, a.id AS artifact, r.day AS day
+  ORDER BY artifact, person
+`;

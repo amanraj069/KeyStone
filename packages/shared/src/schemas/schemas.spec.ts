@@ -14,7 +14,7 @@ describe('shared schemas', () => {
   });
 
   it('rejects an action with an empty reason', () => {
-    const result = ActionSchema.safeParse({ id: 'x', kind: 'runbook_task', status: 'proposed', day: 1, reason: '' });
+    const result = ActionSchema.safeParse({ id: 'x', kind: 'runbook', status: 'proposed', day: 1, reason: '' });
     expect(result.success).toBe(false);
   });
 

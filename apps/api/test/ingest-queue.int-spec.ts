@@ -68,4 +68,26 @@ describe('ingest queue, worker and progress stream', () => {
   it('getJob 404s for an unknown id', async () => {
     await expect(queue.getJob('does-not-exist')).rejects.toThrow(/No ingest job/);
   });
+
+  it('GET /ingest/events follows every job, and the stream ends on shutdown (so the server can close)', async () => {
+    // A second queue instance, so shutting it down does not affect the other tests.
+    const watcher = new IngestQueue(settings);
+    const seen: IngestEvent[] = [];
+    let ended = false;
+    watcher.allEvents$().subscribe({ next: (event) => seen.push(event), complete: () => (ended = true) });
+    await new Promise((resolve) => setTimeout(resolve, 300)); // QueueEvents is listening
+
+    const job = await queue.addReplay({ graph: 'apex_replay', fromDay: 1, toDay: 2, delayMs: 0, reset: true });
+    await firstValueFrom(queue.events$(job.jobId).pipe(toArray()));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(seen.filter((e) => e.jobId === job.jobId).map((e) => e.type)).toEqual(['progress', 'progress', 'completed']);
+
+    expect(ended).toBe(false);
+    await watcher.onModuleDestroy();
+    expect(ended).toBe(true);
+    // A browser's EventSource reconnects at once; during shutdown it gets an empty stream.
+    let reconnectEnded = false;
+    watcher.allEvents$().subscribe({ complete: () => (reconnectEnded = true) });
+    expect(reconnectEnded).toBe(true);
+  });
 });

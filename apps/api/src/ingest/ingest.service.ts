@@ -34,6 +34,12 @@ const MERGE_BY_ROLE = {
   PARTICIPATED: Q.MERGE_PARTICIPATED,
 } as const;
 
+/** Who could see an artifact without a role on it (not read by expertise). */
+const MERGE_BY_SEEN = {
+  RECEIVED: Q.MERGE_RECEIVED,
+  LISTED_ON: Q.MERGE_LISTED_ON,
+} as const;
+
 /** Bodies are written to the TextStore this many at a time. */
 const TEXT_WRITE_CONCURRENCY = 100;
 
@@ -135,7 +141,7 @@ export class IngestService {
     slice: IngestSlice,
     onStep?: (phase: string, percent: number, added: Record<string, number>) => Promise<unknown>,
   ): Promise<Record<string, number>> {
-    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, references: 0, fixes: 0, departures: 0 };
+    const added: Record<string, number> = { people: 0, artifacts: 0, roles: 0, seen: 0, references: 0, fixes: 0, departures: 0 };
     const step = async (phase: string, percent: number) => onStep?.(phase, percent, { ...added });
 
     await this.graph.batchWrite(graphName, Q.MERGE_DEPTS, slice.depts.map((name) => ({ name })));
@@ -154,6 +160,11 @@ export class IngestService {
       const rows = slice.roles.filter((role) => role.rel === rel);
       await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
       added.roles += rows.length;
+    }
+    for (const [rel, query] of Object.entries(MERGE_BY_SEEN)) {
+      const rows = slice.seen.filter((edge) => edge.rel === rel);
+      await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
+      added.seen += rows.length;
     }
     await step('roles', 75);
 
@@ -178,11 +189,21 @@ export class IngestService {
   async rewriteRoles(graphName: string, plan?: IngestPlan): Promise<Record<string, number>> {
     const company = plan ?? (await this.loadPlan());
     await this.graph.query(graphName, Q.DELETE_ROLE_EDGES);
+    await this.graph.query(graphName, Q.DELETE_SEEN_EDGES);
     await this.graph.query(graphName, Q.DELETE_DEPARTURE_EDGES);
     await this.graph.query(graphName, Q.CLEAR_DEPARTED_DAYS);
     const written: Record<string, number> = {};
     for (const [rel, query] of Object.entries(MERGE_BY_ROLE)) {
       const rows = company.roles.filter((role) => role.rel === rel);
+      await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
+      written[rel] = rows.length;
+    }
+    // Everyone a RECEIVED / LISTED_ON edge needs must exist (people who only ever received or were named).
+    const roster = new Map(company.roster.people.map((p) => [p.name, p]));
+    const seenPeople = [...new Set(company.seen.map((edge) => edge.person))].flatMap((name) => (roster.has(name) ? [roster.get(name)!] : []));
+    await this.graph.batchWrite(graphName, Q.MERGE_PEOPLE, seenPeople.map((p) => ({ name: p.name, dept: p.dept })));
+    for (const [rel, query] of Object.entries(MERGE_BY_SEEN)) {
+      const rows = company.seen.filter((edge) => edge.rel === rel);
       await this.graph.batchWrite(graphName, query, rows.map((r) => ({ ...r })));
       written[rel] = rows.length;
     }

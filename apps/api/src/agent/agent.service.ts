@@ -2,16 +2,19 @@ import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs
 import { z } from 'zod';
 import { GraphService } from '../graph/graph.service';
 import { LlmService } from '../llm/llm.service';
+import { type LlmTokenUsage, NO_TOKENS } from '../llm/llm.types';
 import {
   AGENT_MODEL,
   AGENT_TOOLS,
   CLASSIFY_SYSTEM_PROMPT,
   CLASSIFY_TASK,
   FINAL_ANSWER_PROMPT,
+  LABEL_HINTS,
   MAX_TOOL_RESULT_CHARS,
   NOT_IN_RECORDS,
   QUESTION_LABELS,
   SAYS_NOT_IN_RECORDS,
+  STARTS_WITH_VERDICT,
   type QuestionLabel,
   SYSTEM_PROMPT,
 } from './agent.constants';
@@ -32,6 +35,33 @@ export interface AgentSettings {
 }
 
 const ClassificationSchema = z.object({ label: z.enum(QUESTION_LABELS) });
+
+export interface RunOptions {
+  /** Called with the token usage of every LLM call the run makes (classification and model steps). */
+  onUsage?: (usage: LlmTokenUsage) => void;
+  /** Called with the evidence ids of every tool result (what the model had in front of it). */
+  onEvidence?: (ids: string[]) => void;
+}
+
+/** One question answered without streaming (AgentService.ask): what the event stream adds up to. */
+export interface AgentAnswer {
+  label: QuestionLabel;
+  /** The answer after the citation guardrail. */
+  answer: string;
+  citations: Citation[];
+  /** Tool names in call order (a tool called twice appears twice). */
+  toolsUsed: string[];
+  /** The same calls with their arguments. */
+  toolCalls: { name: string; args: Record<string, unknown> }[];
+  /** Every artifact id the tools returned as evidence, first-seen order. */
+  evidence: string[];
+  steps: number;
+  timings: Record<string, number>;
+  /** Summed over every LLM call of the run; zeros when the SDK reports nothing (or the call was cached). */
+  usage: LlmTokenUsage;
+  /** The run failed; `answer` is empty then. */
+  error: string | null;
+}
 
 /** Thrown when a step would run past the question's time budget. */
 class OutOfTime extends Error {}
@@ -64,7 +94,7 @@ export class AgentService implements OnApplicationBootstrap {
   }
 
   /** Answers one question, as a stream of events (see AgentEvent). Never throws: failures are an 'error' event. */
-  async *run(question: string, sessionId: string): AsyncGenerator<AgentEvent> {
+  async *run(question: string, sessionId: string, options: RunOptions = {}): AsyncGenerator<AgentEvent> {
     const started = Date.now();
     const deadline = started + this.settings.budgetMs;
     const timings = { classifyMs: 0, modelMs: 0, toolsMs: 0 };
@@ -80,13 +110,13 @@ export class AgentService implements OnApplicationBootstrap {
 
     try {
       const t0 = Date.now();
-      label = await this.classify(question);
+      label = await this.classify(question, options);
       timings.classifyMs = Date.now() - t0;
       yield { type: 'classified', label };
 
       const tools = await this.tools.list();
       const messages: AgentMessage[] = [
-        { role: 'user', text: `${question}\n\n(Question type: ${label}. Use it to choose tools; answer the question as asked.)` },
+        { role: 'user', text: withHint(question, label) },
       ];
       let answer: string | null = null;
 
@@ -105,6 +135,7 @@ export class AgentService implements OnApplicationBootstrap {
           forced = true;
           break;
         }
+        if (turn.usage) options.onUsage?.(turn.usage);
         if (turn.toolCalls.length === 0) {
           answer = turn.text ?? '';
           break;
@@ -121,6 +152,7 @@ export class AgentService implements OnApplicationBootstrap {
           yield { type: 'tool_call', name: call.name, args: call.args };
           const envelope = await this.callTool(call.name, call.args, timings, deadline);
           envelope.evidence.forEach((id) => evidence.add(id));
+          options.onEvidence?.(envelope.evidence);
           if (envelope.graphPath) graphPaths.push(envelope.graphPath);
           yield {
             type: 'tool_result',
@@ -139,6 +171,7 @@ export class AgentService implements OnApplicationBootstrap {
         const finalDeadline = Math.max(deadline, Date.now()) + this.settings.finalAnswerGraceMs;
         const turn = await this.timed(timings, 'modelMs', (signal) =>
           this.model.step({ system: SYSTEM_PROMPT, messages, tools, allowTools: false, signal }), finalDeadline);
+        if (turn.usage) options.onUsage?.(turn.usage);
         answer = turn.text ?? '';
       }
 
@@ -150,7 +183,8 @@ export class AgentService implements OnApplicationBootstrap {
       let text = checked.text;
       let cited = checked.valid;
       // A refusal is a refusal: the standard message, without citations that would make it look sourced.
-      if ((cited.length === 0 && label !== 'general') || text.length === 0 || SAYS_NOT_IN_RECORDS.test(sentences(text)[0] ?? '')) {
+      const refuses = !STARTS_WITH_VERDICT.test(text) && SAYS_NOT_IN_RECORDS.test(sentences(text)[0] ?? '');
+      if ((cited.length === 0 && label !== 'general') || text.length === 0 || refuses) {
         text = notInRecords(toolsUsed);
         cited = [];
         outcome = 'not_in_records';
@@ -189,14 +223,44 @@ export class AgentService implements OnApplicationBootstrap {
     }
   }
 
+  /**
+   * Non-streaming mode: runs the same loop as run() to the end and returns the
+   * answer, citations, tools, steps, timings and token usage in one object.
+   */
+  async ask(question: string, sessionId: string): Promise<AgentAnswer> {
+    const usage: LlmTokenUsage = { ...NO_TOKENS };
+    const evidence = new Set<string>();
+    const result: AgentAnswer = { label: 'general', answer: '', citations: [], toolsUsed: [], toolCalls: [], evidence: [], steps: 0, timings: {}, usage, error: null };
+    const onUsage = (add: LlmTokenUsage) => {
+      for (const field of Object.keys(usage) as (keyof LlmTokenUsage)[]) usage[field] += add[field] ?? 0;
+    };
+    const onEvidence = (ids: string[]) => ids.forEach((id) => evidence.add(id));
+    for await (const event of this.run(question, sessionId, { onUsage, onEvidence })) {
+      if (event.type === 'classified') result.label = event.label;
+      else if (event.type === 'tool_call') {
+        result.toolsUsed.push(event.name);
+        result.toolCalls.push({ name: event.name, args: event.args });
+      }
+      else if (event.type === 'answer_delta') result.answer += event.text;
+      else if (event.type === 'done') {
+        result.citations = event.citations;
+        result.timings = event.timings;
+        result.steps = event.timings.steps ?? 0;
+      } else if (event.type === 'error') result.error = event.message;
+    }
+    result.evidence = [...evidence];
+    return result;
+  }
+
   /** One cheap, cached call that labels the question; a failure falls back to 'general'. */
-  private async classify(question: string): Promise<QuestionLabel> {
+  private async classify(question: string, options: RunOptions): Promise<QuestionLabel> {
     try {
-      const { value } = await this.llm.generateObjectWithUsage(ClassificationSchema, {
+      const { value, usage } = await this.llm.generateObjectWithUsage(ClassificationSchema, {
         task: CLASSIFY_TASK,
         system: CLASSIFY_SYSTEM_PROMPT,
         prompt: question,
       });
+      options.onUsage?.(usage);
       return value.label;
     } catch (error) {
       this.logger.warn(`Classification failed, using "general": ${String(error)}`);
@@ -265,6 +329,12 @@ export function summarize(envelope: ToolEnvelope): string {
     return [];
   });
   return parts.length > 0 ? parts.join('; ') : `${envelope.evidence.length} evidence ids`;
+}
+
+/** The question as the model sees it: with its type and, for some types, how to use the tools. */
+export function withHint(question: string, label: QuestionLabel): string {
+  const hint = LABEL_HINTS[label];
+  return `${question}\n\n(Question type: ${label}. ${hint ?? 'Use it to choose tools; answer the question as asked.'})`;
 }
 
 /** The fallback answer when nothing in the records supports one. */

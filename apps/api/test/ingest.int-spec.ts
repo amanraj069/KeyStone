@@ -9,7 +9,7 @@ import { IngestService } from '../src/ingest/ingest.service';
 import { LocalTextStore } from '../src/ingest/text-store';
 import { connectTestGraphService, testGraphName } from './graph-test-utils';
 import { MINI_RECORDS, record } from './ingest-records';
-import { ARTIFACT_LINKS, BO_ACTIVITY, BO_ON_DAY_9_THREAD, DEPARTURES, PEOPLE_SUMMARY, PEOPLE_TO_TICKETS_PAGES_THREADS } from './queries/test.queries';
+import { ARTIFACT_LINKS, BO_ACTIVITY, SEEN_EDGES, BO_ON_DAY_9_THREAD, DEPARTURES, PEOPLE_SUMMARY, PEOPLE_TO_TICKETS_PAGES_THREADS } from './queries/test.queries';
 import { calendarFrom } from '../src/ingest/calendar';
 import { buildPlan } from '../src/ingest/ingest-plan';
 import { UPDATE_PERSON_ACTIVITY } from '../src/ingest/queries/ingest.queries';
@@ -46,6 +46,17 @@ describe('IngestService against a real FalkorDB', () => {
     expect(totals).toEqual({ people: 3, artifacts: 12, edges: expect.any(Number) });
     expect(events.map((e) => e.phase)).toEqual(['reset', 'people', 'artifacts', 'roles', 'links', 'done']);
     expect(events.at(-1)!.percent).toBe(100);
+  });
+
+  it('MERGE_RECEIVED / MERGE_LISTED_ON: recipients and listed-only people, rewritten by rewriteRoles (DELETE_SEEN_EDGES) without duplicates', async () => {
+    // What the plan derives (visibilityFor has its own unit tests); the graph must hold exactly that.
+    const expected = buildPlan(MINI_RECORDS).seen.map((e) => ({ person: e.person, rel: e.rel, artifact: e.artifactId, day: e.day }));
+    expect(expected).toEqual(expect.arrayContaining([{ person: 'Ada', rel: 'RECEIVED', artifact: 'email_in', day: 3 }]));
+    const sorted = (rows: { artifact: string; person: string }[]) => [...rows].sort((a, b) => `${a.artifact}${a.person}`.localeCompare(`${b.artifact}${b.person}`));
+    expect(sorted(await graph.roQuery(fullGraph, SEEN_EDGES))).toEqual(sorted(expected));
+    const written = await service.rewriteRoles(fullGraph);
+    expect((written.RECEIVED ?? 0) + (written.LISTED_ON ?? 0)).toBe(expected.length);
+    expect(sorted(await graph.roQuery(fullGraph, SEEN_EDGES))).toEqual(sorted(expected));
   });
 
   it('connects people to tickets, pages and threads (what FalkorDB Browser shows)', async () => {
@@ -92,7 +103,8 @@ describe('IngestService against a real FalkorDB', () => {
     const days = events.filter((e) => e.phase === 'day');
     expect(days.map((e) => e.day)).toEqual([1, 2, 3]);
     expect(days.map((e) => e.totals.artifacts)).toEqual([3, 6, 9]);
-    expect(days[0].totals.people).toBe(2); // Ada and Bo on day 1; Cy first speaks on day 2
+    // Ada and Bo work on day 1; Cy first speaks on day 2 but already RECEIVED the day-1 offer email.
+    expect(days[0].totals.people).toBe(3);
     expect(days[1].totals.people).toBe(3);
     expect(events.at(-1)!.phase).toBe('done');
   });
