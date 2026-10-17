@@ -15,6 +15,13 @@ export interface WhatIfSettings {
 export const DEFAULT_WHATIF_MAX_CONCURRENT = 2;
 export const SCRATCH_PREFIX = 'apex_whatif_';
 
+/**
+ * A scratch graph older than this is a leftover. Simulations take well under a
+ * second; the margin keeps a sweeper in one process (the API, or the stdio MCP
+ * server) from deleting a copy another process is still using.
+ */
+export const SCRATCH_MAX_AGE_MS = 10 * 60 * 1000;
+
 /** The hourly sweeper's interval. */
 export const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 

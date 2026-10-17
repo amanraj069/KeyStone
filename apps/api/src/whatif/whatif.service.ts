@@ -17,7 +17,14 @@ import {
   simulationGraph,
   type SystemChange,
 } from './whatif-diff';
-import { CANDIDATES_TTL_MS, MAX_SUBGRAPH_SYSTEMS, SWEEP_INTERVAL_MS, WHATIF_SETTINGS, type WhatIfSettings } from './whatif.constants';
+import {
+  CANDIDATES_TTL_MS,
+  MAX_SUBGRAPH_SYSTEMS,
+  SCRATCH_MAX_AGE_MS,
+  SWEEP_INTERVAL_MS,
+  WHATIF_SETTINGS,
+  type WhatIfSettings,
+} from './whatif.constants';
 
 export interface DepartureSimulation {
   person: string;
@@ -91,9 +98,18 @@ export class WhatIfService implements OnModuleInit, OnModuleDestroy {
     return value;
   }
 
-  /** Deletes leftover scratch graphs (not ones in use). Returns their names. */
-  async sweep(): Promise<string[]> {
-    const leftovers = (await this.graph.listGraphs()).filter((g) => g.startsWith(this.settings.scratchPrefix) && !this.inUse.has(g));
+  /**
+   * Deletes leftover scratch graphs: not in use here, and older than SCRATCH_MAX_AGE_MS
+   * (or with no readable creation time), so a copy another process is still using
+   * survives. Returns their names.
+   */
+  async sweep(now = Date.now()): Promise<string[]> {
+    const { scratchPrefix } = this.settings;
+    const leftovers = (await this.graph.listGraphs()).filter((g) => {
+      if (!g.startsWith(scratchPrefix) || this.inUse.has(g)) return false;
+      const created = scratchCreatedAt(g.slice(scratchPrefix.length));
+      return created === null || now - created > SCRATCH_MAX_AGE_MS;
+    });
     for (const name of leftovers) await this.graph.deleteGraph(name);
     if (leftovers.length > 0) this.logger.warn(`Deleted ${leftovers.length} leftover what-if graph(s): ${leftovers.join(', ')}`);
     return leftovers;
@@ -137,7 +153,7 @@ export class WhatIfService implements OnModuleInit, OnModuleDestroy {
     await time('ensureProjection', () => this.ensureFreshProjection());
 
     // b. Scratch copy of the projection (never of the live graph).
-    const scratch = `${scratchPrefix}${randomBytes(4).toString('hex')}`;
+    const scratch = `${scratchPrefix}${scratchId()}`;
     this.inUse.add(scratch);
     try {
       await time('copy', () => this.graph.copyGraph(projectionGraph, scratch));
@@ -223,4 +239,17 @@ export class WhatIfService implements OnModuleInit, OnModuleDestroy {
       this.graph.roQuery<{ orphanedSystem: string }>(graphName, Q.K9_KNOWLEDGE_ISLANDS).then((rows) => rows.map((r) => r.orphanedSystem)),
     ]);
   }
+}
+
+/** Scratch id "<creation time in base 36>_<random>", e.g. "mgx1k2p0_8c172e81". */
+export function scratchId(now = Date.now()): string {
+  return `${now.toString(36)}_${randomBytes(4).toString('hex')}`;
+}
+
+/** The creation time (epoch ms) in a scratch id, or null when it has none. */
+export function scratchCreatedAt(id: string): number | null {
+  const match = /^([0-9a-z]+)_[0-9a-f]+$/.exec(id);
+  if (!match) return null;
+  const time = parseInt(match[1], 36);
+  return Number.isSafeInteger(time) ? time : null;
 }
