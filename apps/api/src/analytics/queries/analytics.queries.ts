@@ -245,13 +245,19 @@ export const K7_DEPARTURE_PAGES = `
 // ---------------------------------------------------------------- bridges (apex_proj or a copy)
 
 /**
- * K8b. Bridge people: betweenness centrality on the collaboration graph. Unchanged.
+ * K8b. Bridge people: betweenness centrality on the collaboration graph.
  * Run it on apex_proj, where COLLAB exists in both directions: FalkorDB's
  * betweenness follows edge direction (checked: x->y<-z gives y 0; with reverse
  * edges y gets 2), so on apex's one-way COLLAB edges the scores would be skewed.
+ * CHANGE: samplingSize 1000 and a fixed samplingSeed. FalkorDB estimates
+ * betweenness from randomly sampled start nodes (with replacement, so no setting is
+ * exact), and by default the scores changed every time apex_proj was rebuilt (Priya
+ * 88, 95, 92, 108). A fixed seed makes the result repeatable; 1000 samples (about
+ * 23 per person) keep the ranking stable. Scores scale with samplingSize, so only
+ * compare scores computed with the same settings (what-if does).
  */
 export const K8B_BRIDGES = `
-  CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB']})
+  CALL algo.betweenness({nodeLabels:['Person'], relationshipTypes:['COLLAB'], samplingSize: 1000, samplingSeed: 7})
   YIELD node, score
   RETURN node.name AS person, score
   ORDER BY score DESC LIMIT 10
