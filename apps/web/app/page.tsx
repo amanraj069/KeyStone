@@ -36,7 +36,6 @@ export default function OrgPulsePage() {
   return (
     <PageContainer>
       <PageHeader
-        className="animate-fade-up"
         title="Org Pulse"
         description="Where Apex's knowledge is thin. A system is at risk when too few active people know it, judged from who wrote, reviewed and worked on what."
         action={<OptionPills label="Graph" options={VIEWS} value={graph} onChange={setGraph} size="md" />}

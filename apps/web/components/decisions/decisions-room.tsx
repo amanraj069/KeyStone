@@ -33,17 +33,17 @@ export function DecisionsRoom() {
   return (
     <PageContainer>
       <PageHeader
-        className="animate-fade-up"
+        eyebrow={info ? (info.core ? "Core system" : "System") : undefined}
         title={system ?? "Decisions"}
         description={
           info
-            ? `${info.core ? "Core system" : "System"} · what was decided about it, where, and what replaced what, newest first.${staleLine}`
+            ? `What was decided about it, where, and what replaced what, newest first.${staleLine}`
             : "What was decided about each system, where, and what replaced it."
         }
       />
 
       <div className="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start">
-        <Panel className="h-80 overflow-hidden lg:sticky lg:top-8 lg:h-[calc(100dvh-4rem)]" aria-label="Systems">
+        <Panel className="h-80 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-6.5rem)]" aria-label="Systems">
           <SystemPicker systems={systems.data} selected={system} onSelect={select} error={systems.error} />
         </Panel>
 

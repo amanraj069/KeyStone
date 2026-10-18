@@ -34,19 +34,19 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
   return (
     <>
       <Sheet open={row !== null} onOpenChange={(open) => !open && onClose()}>
-        <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-xl">
+        <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-2xl">
           {row && (
             <>
-              <SheetHeader className="gap-1 px-6 pt-7 pb-5">
-                <p className="text-xs font-bold text-muted-foreground">{RISK_COPY[row.riskLevel].title}</p>
-                <SheetTitle className="text-2xl font-extrabold tracking-tight">{row.system}</SheetTitle>
+              <SheetHeader className="gap-1 border-b px-8 pt-7 pb-5">
+                <p className="text-xs font-semibold text-muted-foreground">{RISK_COPY[row.riskLevel].title}</p>
+                <SheetTitle className="text-2xl font-semibold tracking-tight">{row.system}</SheetTitle>
                 <SheetDescription className="font-light">
                   {row.experts === 0 ? "No active expert." : `${row.experts} active expert${row.experts === 1 ? "" : "s"}.`}
                   {shown?.evidencePath && ` The graph shows ${shown.evidencePath.person}'s most recent work on it.`}
                 </SheetDescription>
               </SheetHeader>
-              <div className="px-6">
-                <div className="h-72 overflow-hidden rounded-2xl border bg-surface">
+              <div className="px-8 pt-6">
+                <div className="h-80 overflow-hidden rounded-xl border bg-surface">
                   <GraphCanvas
                     className="h-full"
                     nodes={canvas.nodes}
@@ -56,22 +56,22 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
                   />
                 </div>
               </div>
-              <div className="px-6 pt-7 pb-8">
+              <div className="px-8 pt-7 pb-8">
                 <p className="section-label mb-4">Who knows it</p>
                 {experts.error && <ErrorState message={experts.error} />}
                 {experts.loading && !shown && <SkeletonRows count={3} rowClassName="h-16" />}
-                {shown && top.length === 0 && <p className="text-sm font-light text-muted-foreground">Nobody has worked on this system enough to count.</p>}
+                {shown && top.length === 0 && <p className="text-sm text-muted-foreground">Nobody has worked on this system enough to count.</p>}
                 <ol className="space-y-5">
                   {top.map((expert) => (
                     <li key={expert.person}>
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="text-sm font-semibold">{expert.person}</span>
-                        <span className="text-xs font-light text-muted-foreground tabular-nums">
+                        <span className="text-xs text-muted-foreground tabular-nums">
                           score {expert.score.toFixed(1)} · last active day {expert.lastActive}
                         </span>
                       </div>
                       <Meter className="mt-2" percent={(expert.score / maxScore) * 100} label={`${expert.person}'s score`} />
-                      <div className="mt-2.5 flex flex-wrap gap-1">
+                      <div className="mt-2.5 flex flex-wrap gap-1.5">
                         {expert.evidence.slice(0, 5).map((id) => (
                           <EvidenceChip key={id} id={id} onOpen={setOpenArtifact} />
                         ))}

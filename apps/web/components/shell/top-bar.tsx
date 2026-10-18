@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, SquareTerminal } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import ThemeToggle from "@/components/theme-toggle";
 import { useLiveGraph } from "@/contexts/live-graph";
 import { cn } from "@/lib/utils";
@@ -10,7 +10,7 @@ import { pageName } from "./nav-items";
 
 /**
  * The desktop bar above every page: where you are on the left; on the right, whether
- * the graph is reachable and which day it shows, the developer console and the theme.
+ * the graph is reachable and which day it shows, and the theme.
  */
 export function TopBar() {
   const pathname = usePathname();
@@ -21,30 +21,23 @@ export function TopBar() {
   const state = summaryError && !summary ? "down" : summary ? "up" : "checking";
 
   return (
-    <header className="sticky top-0 z-30 hidden h-14 shrink-0 items-center justify-between gap-6 border-b bg-background/85 px-8 backdrop-blur-md lg:flex">
+    <header className="sticky top-0 z-30 hidden h-14 shrink-0 items-center justify-between gap-6 border-b bg-background/75 px-8 backdrop-blur-xl backdrop-saturate-150 lg:flex">
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
-        <Link href="/" className="shrink-0 font-medium text-muted-foreground transition-colors hover:text-foreground">
+        <Link href="/" className="shrink-0 text-muted-foreground transition-colors hover:text-foreground">
           Apex Athletics
         </Link>
         <ChevronRight className="size-3.5 shrink-0 text-faint" aria-hidden />
-        <span className="truncate font-semibold" aria-current="page">
+        {/* Keyed by page, so the name slides in when you move. */}
+        <span key={pathname} className="animate-page-in truncate font-medium" aria-current="page">
           {pageName(pathname)}
         </span>
       </nav>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-3">
         <span
-          className="flex h-8 items-center gap-2 rounded-md border bg-card px-2.5 text-xs font-medium text-muted-foreground"
+          className={cn("flex h-7 items-center rounded-full border bg-card px-3 text-xs text-muted-foreground shadow-card", state === "down" && "text-signal")}
           title={state === "down" ? (summaryError ?? "The graph is unreachable") : "The company graph Keystone reasons over"}
         >
-          <span
-            className={cn(
-              "size-2 rounded-full",
-              state === "up" ? "bg-[var(--node-system)]" : state === "down" ? "bg-signal" : "bg-faint",
-              live && "live-dot",
-            )}
-            aria-hidden
-          />
           {state === "down" ? (
             "Graph offline"
           ) : (
@@ -53,17 +46,7 @@ export function TopBar() {
             </span>
           )}
         </span>
-        <Link
-          href="/ingest"
-          title="Developer console"
-          aria-label="Developer console"
-          className={cn(
-            "flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground",
-            pathname === "/ingest" && "bg-foreground/[0.07] text-foreground",
-          )}
-        >
-          <SquareTerminal className="size-4" />
-        </Link>
+        <span className="h-4 w-px bg-border" aria-hidden />
         <div className="flex size-8 items-center justify-center">
           <ThemeToggle />
         </div>

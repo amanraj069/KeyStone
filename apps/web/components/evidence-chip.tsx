@@ -15,8 +15,8 @@ export function EvidenceChip({ id, onOpen, active = false, title }: EvidenceChip
       title={title ?? `Open ${id}`}
       onClick={() => onOpen(id)}
       className={cn(
-        "code-id inline-flex items-center rounded-md border px-1.5 py-px align-baseline transition-colors",
-        active ? "border-signal bg-signal-soft text-foreground" : "border-border bg-muted/50 text-muted-foreground hover:border-foreground/30 hover:text-foreground",
+        "code-id inline-block max-w-full truncate rounded-[5px] border px-1.5 py-px align-baseline transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97]",
+        active ? "border-signal/60 bg-signal-soft text-foreground" : "border-border bg-surface text-muted-foreground hover:border-input hover:bg-card hover:text-foreground",
       )}
     >
       {id}

@@ -1,4 +1,5 @@
 import type { AnalyticsSummary } from "@keystone/shared";
+import { CountUp } from "@/components/ui/count-up";
 import { Panel } from "@/components/ui/panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -12,10 +13,10 @@ export function RiskOverview({ summary }: { summary: AnalyticsSummary | null }) 
   return (
     <Panel className="p-5 sm:p-8 lg:p-10">
       <div className="grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-14">
-        <div className="lg:border-r lg:pr-12">{summary ? <RiskHeadline summary={summary} /> : <HeadlineSkeleton />}</div>
+        <div className="lg:border-r lg:pr-14">{summary ? <RiskHeadline summary={summary} /> : <HeadlineSkeleton />}</div>
         <div>
-          <p className="section-label mb-4">The company</p>
-          <div className="flex flex-col gap-2.5">
+          <p className="section-label mb-2">The company</p>
+          <div className="flex flex-col divide-y">
             {summary ? (
               <>
                 <StatRow label="People" value={summary.people.active} note={summary.people.inactive > 0 ? `${summary.people.inactive} departed` : "all active"} />
@@ -28,7 +29,7 @@ export function RiskOverview({ summary }: { summary: AnalyticsSummary | null }) 
                 />
               </>
             ) : (
-              Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-[3.6rem] rounded-xl" />)
+              Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="my-2 h-11 rounded-lg" />)
             )}
           </div>
         </div>
@@ -44,25 +45,33 @@ function RiskHeadline({ summary }: { summary: AnalyticsSummary }) {
   return (
     <div>
       <p className="section-label">Bus factor</p>
-      <p className="mt-4 flex items-baseline gap-3">
-        <span className={cn("text-6xl font-extrabold tracking-tighter tabular-nums sm:text-7xl", atRisk > 0 && "text-signal")}>{atRisk}</span>
-        <span className="text-lg font-bold text-muted-foreground">of {total} systems</span>
+      <p className="mt-3 flex items-baseline gap-3">
+        <span className={cn("text-6xl leading-none font-semibold tracking-[-0.04em] tabular-nums sm:text-7xl", atRisk > 0 && "text-signal")}>
+          <CountUp value={atRisk} />
+        </span>
+        <span className="text-base text-muted-foreground">of {total} systems</span>
       </p>
-      <p className="mt-2 max-w-md text-sm leading-relaxed font-light text-muted-foreground">
+      <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
         core systems depend on a single person, or on nobody who is still here.
       </p>
-      <div className="mt-6 flex h-2 overflow-hidden rounded-full bg-foreground/5" role="img" aria-label="Systems by risk level">
+      {/* The bar, split by level; each level's label and count sit under its own segment colour. */}
+      <div className="mt-7 flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-foreground/5" role="img" aria-label="Systems by risk level">
         {total > 0 &&
           RISK_ORDER.map((level) => (
-            <div key={level} className={cn("h-full", RISK_BAR[level])} style={{ width: `${(systems[level] / total) * 100}%` }} />
+            <div
+              key={level}
+              className={cn("h-full rounded-full transition-[width] duration-1000 ease-out-expo", RISK_BAR[level])}
+              style={{ width: `${(systems[level] / total) * 100}%` }}
+            />
           ))}
       </div>
-      <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
+      <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
         {RISK_ORDER.map((level) => (
-          <div key={level} className="flex items-center gap-2 text-xs">
-            <span className={cn("size-2 rounded-full", RISK_BAR[level])} />
-            <dt className="whitespace-nowrap text-muted-foreground">{RISK_COPY[level].tab}</dt>
-            <dd className="font-bold tabular-nums">{systems[level]}</dd>
+          <div key={level} className="min-w-0">
+            <dt className="truncate text-xs text-muted-foreground">{RISK_COPY[level].tab}</dt>
+            <dd className={cn("mt-0.5 text-lg font-semibold tabular-nums", (level === "orphaned" || level === "critical") && systems[level] > 0 && "text-signal")}>
+              {systems[level]}
+            </dd>
           </div>
         ))}
       </dl>
@@ -72,12 +81,14 @@ function RiskHeadline({ summary }: { summary: AnalyticsSummary }) {
 
 function StatRow({ label, value, note }: { label: string; value: number | string; note: string }) {
   return (
-    <div className="flex items-center gap-4 rounded-xl bg-surface px-4 py-2.5">
+    <div className="flex items-center gap-4 py-3">
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{label}</p>
-        <p className="truncate text-xs font-light text-muted-foreground">{note}</p>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="truncate text-xs text-muted-foreground">{note}</p>
       </div>
-      <p className="text-xl font-extrabold tracking-tight tabular-nums">{value}</p>
+      <p className="text-xl font-semibold tracking-tight tabular-nums">
+        <CountUp value={value} />
+      </p>
     </div>
   );
 }

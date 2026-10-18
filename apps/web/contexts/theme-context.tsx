@@ -46,14 +46,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Sync dark class and colorScheme on <html> and persist to localStorage
   useEffect(() => {
     if (!mounted) return;
-    const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-      root.style.colorScheme = "dark";
-    } else {
-      root.classList.remove("dark");
-      root.style.colorScheme = "light";
-    }
+    applyTheme(theme);
     localStorage.setItem("theme", theme);
   }, [theme, mounted]);
 
@@ -68,6 +61,16 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       {children}
     </ThemeContext.Provider>
   );
+}
+
+/**
+ * Puts a theme on <html> right away. The provider calls it after a change; the toggle
+ * also calls it inside a view transition, which must see the new colours synchronously.
+ */
+export function applyTheme(theme: Theme) {
+  const root = document.documentElement;
+  root.classList.toggle("dark", theme === "dark");
+  root.style.colorScheme = theme;
 }
 
 export function useTheme(): ThemeContextValue {

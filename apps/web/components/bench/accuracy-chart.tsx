@@ -10,16 +10,11 @@ const SERIES = [
   { key: "baseline", label: "Vector-only", color: "var(--series-baseline)" },
 ] as const;
 
-/** The hindsight reference (always the most common gold answer): neutral grey, drawn after both systems. */
-const REFERENCE = { key: "majority", label: "Most common answer (hindsight)", color: "var(--series-reference)" } as const;
-
 interface Datum {
   type: string;
   n: number;
   keystone: number;
   baseline: number;
-  /** null when the type's gold answers are not yes/no. */
-  majority: number | null;
   /** 95% interval as distances below and above the bar, in points (ErrorBar's format). */
   keystoneErr: [number, number] | null;
   baselineErr: [number, number] | null;
@@ -30,13 +25,12 @@ interface Datum {
 }
 
 /**
- * Accuracy per question type, Keystone and the vector-only baseline side by side.
- * Each group is labelled with its sample size and the legend names the series. Exact
- * values and intervals are in the tooltip and in AccuracyTable under the chart (value
- * labels at the bar tips would collide with the interval whiskers). A 0% bar keeps a
- * 2px stub (minPointSize) so it reads as zero, not as missing. A grey third bar is the
- * hindsight reference (always the most common gold answer), not a system. Whiskers show
- * each system's 95% confidence interval.
+ * Accuracy per question type, Keystone and the vector-only baseline side by side —
+ * just the two systems, for a direct comparison. Each group is labelled with its
+ * sample size and the legend names the series. Exact values and intervals are in the
+ * tooltip and in AccuracyTable under the chart (value labels at the bar tips would
+ * collide with the interval whiskers). A 0% bar keeps a 2px stub (minPointSize) so it
+ * reads as zero, not as missing. Whiskers show each system's 95% confidence interval.
  */
 export function AccuracyChart({ rows }: { rows: AccuracyRow[] }) {
   const points = (ci: [number, number] | null | undefined): [number, number] | null => (ci ? [Math.round(ci[0] * 100), Math.round(ci[1] * 100)] : null);
@@ -55,7 +49,6 @@ export function AccuracyChart({ rows }: { rows: AccuracyRow[] }) {
     baselineCi,
     keystoneErr: below(keystone, keystoneCi),
     baselineErr: below(baseline, baselineCi),
-    majority: r.majority === null ? null : Math.round(r.majority * 100),
     keystoneCorrect: r.keystoneCorrect,
     baselineCorrect: r.baselineCorrect,
     };
@@ -80,12 +73,10 @@ export function AccuracyChart({ rows }: { rows: AccuracyRow[] }) {
               tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
             />
             <Tooltip cursor={{ fill: "var(--foreground)", fillOpacity: 0.04 }} content={<ChartTooltip />} />
-            {[...SERIES, REFERENCE].map((s) => (
+            {SERIES.map((s) => (
               <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} maxBarSize={24} minPointSize={2} radius={[4, 4, 0, 0]} isAnimationActive={false}>
-                {s.key !== "majority" && (
-                  // The 95% interval: a thin whisker in neutral ink, so it reads as uncertainty, not as a series.
-                  <ErrorBar dataKey={`${s.key}Err`} width={6} strokeWidth={1.25} stroke="var(--muted-foreground)" direction="y" />
-                )}
+                {/* The 95% interval: a thin whisker in neutral ink, so it reads as uncertainty, not as a series. */}
+                <ErrorBar dataKey={`${s.key}Err`} width={6} strokeWidth={1.25} stroke="var(--muted-foreground)" direction="y" />
               </Bar>
             ))}
           </BarChart>
@@ -98,7 +89,7 @@ export function AccuracyChart({ rows }: { rows: AccuracyRow[] }) {
 function Legend() {
   return (
     <ul className="mb-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground">
-      {[...SERIES, REFERENCE].map((s) => (
+      {SERIES.map((s) => (
         <li key={s.key} className="flex items-center gap-2">
           <span className="size-2.5 rounded-[3px]" style={{ background: s.color }} aria-hidden />
           {s.label}
@@ -145,13 +136,6 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: { paylo
           </span>
         </p>
       ))}
-      {datum.majority !== null && (
-        <p className="mt-1 flex items-center gap-2">
-          <span className="size-2 rounded-[2px]" style={{ background: REFERENCE.color }} aria-hidden />
-          <span className="text-muted-foreground">{REFERENCE.label}</span>
-          <span className="ml-auto pl-4 font-semibold tabular-nums">{pct(datum.majority / 100)}</span>
-        </p>
-      )}
     </div>
   );
 }

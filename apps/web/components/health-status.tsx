@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { HealthResponse } from "@keystone/shared";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Panel, PanelHeading } from "@/components/ui/panel";
 import { API_BASE_URL, api } from "@/lib/api";
 import { StatusPill, type PillState } from "./status-pill";
 
@@ -40,14 +40,16 @@ export function HealthStatus() {
   const redisState: PillState = health ? health.redis : apiState === "checking" ? "checking" : "down";
 
   return (
-    <Card className="w-full max-w-xl">
-      <CardHeader>
-        <CardTitle>System status</CardTitle>
-        <CardDescription>
-          Live from <code className="font-mono">{API_BASE_URL}/health</code>, refreshed every {POLL_MS / 1000}s.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
+    <Panel className="p-5 sm:p-6">
+      <PanelHeading
+        title="System status"
+        description={
+          <>
+            Live from <code className="code-id">{API_BASE_URL}/health</code>, refreshed every {POLL_MS / 1000}s.
+          </>
+        }
+      />
+      <div className="mt-5 flex flex-col gap-4">
         <div className="flex flex-wrap gap-2">
           <StatusPill label="API" state={apiState} />
           <StatusPill label="FalkorDB" state={falkorState} />
@@ -70,7 +72,7 @@ export function HealthStatus() {
             )}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }

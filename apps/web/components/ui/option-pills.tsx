@@ -15,21 +15,24 @@ interface OptionPillsProps<T extends string> {
   onChange: (value: T) => void;
   size?: "sm" | "md";
   className?: string;
+  /** Stretch to fill the width of its container, spacing options evenly instead of hugging their labels. */
+  fill?: boolean;
 }
 
 /**
- * A segmented control with a sliding ink indicator under the chosen option
- * (Intake's OptionPills). Used for every "one of a few" choice: graph, tabs, filters.
+ * A segmented control: a recessed track with a raised thumb that glides to the chosen
+ * option (Intake's OptionPills). Used for every "one of a few" choice: graph, tabs,
+ * filters. A trailing number in a label ("Change 2") is set apart as a count.
  */
-export function OptionPills<T extends string>({ label, options, value, onChange, size = "sm", className }: OptionPillsProps<T>) {
+export function OptionPills<T extends string>({ label, options, value, onChange, size = "sm", className, fill }: OptionPillsProps<T>) {
   const container = useRef<HTMLDivElement>(null);
-  const [indicator, setIndicator] = useState({ left: 0, width: 0 });
+  const [indicator, setIndicator] = useState({ left: 0, width: 0, animate: false });
 
   useLayoutEffect(() => {
     const update = () => {
       const index = options.findIndex((o) => o.value === value);
       const button = container.current?.querySelectorAll("button")[index];
-      if (button) setIndicator({ left: button.offsetLeft, width: button.offsetWidth });
+      if (button) setIndicator((current) => ({ left: button.offsetLeft, width: button.offsetWidth, animate: current.width > 0 }));
     };
     update();
     const observer = new ResizeObserver(update);
@@ -43,18 +46,23 @@ export function OptionPills<T extends string>({ label, options, value, onChange,
       role="radiogroup"
       aria-label={label}
       className={cn(
-        "relative inline-flex items-center overflow-hidden rounded-xl border bg-card p-1 shadow-2xs dark:shadow-none",
-        size === "sm" ? "h-9" : "h-11",
+        "relative items-center rounded-lg bg-foreground/[0.05] p-0.5 dark:bg-foreground/[0.06]",
+        fill ? "flex" : "inline-flex",
+        size === "sm" ? "h-8" : "h-9",
         className,
       )}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute top-1 bottom-1 rounded-lg bg-primary shadow-sm transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)]"
+        className={cn(
+          "pointer-events-none absolute top-0.5 bottom-0.5 rounded-md bg-card shadow-raised ring-1 ring-black/[0.04] dark:bg-foreground/[0.11] dark:ring-white/[0.06]",
+          indicator.animate && "transition-[left,width] duration-300 ease-out-expo",
+        )}
         style={{ left: indicator.left, width: indicator.width, opacity: indicator.width > 0 ? 1 : 0 }}
       />
       {options.map((option) => {
         const selected = option.value === value;
+        const [, text, count] = /^(.*?)(?:\s+(\d+))?$/.exec(option.label) ?? [];
         return (
           <button
             key={option.value}
@@ -63,12 +71,14 @@ export function OptionPills<T extends string>({ label, options, value, onChange,
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              "relative z-10 flex h-full items-center rounded-lg font-semibold whitespace-nowrap transition-colors duration-200 select-none",
-              size === "sm" ? "px-3.5 text-xs" : "px-5 text-sm",
-              selected ? "text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              "relative z-10 flex h-full items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors duration-200 select-none",
+              fill ? "flex-1 justify-center" : undefined,
+              size === "sm" ? "px-3 text-xs" : "px-3.5 text-[13px]",
+              selected ? "text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {option.label}
+            {text}
+            {count !== undefined && <span className={cn("tabular-nums transition-colors", selected ? "text-muted-foreground" : "text-faint")}>{count}</span>}
           </button>
         );
       })}

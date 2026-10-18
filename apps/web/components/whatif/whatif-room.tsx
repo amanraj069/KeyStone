@@ -149,7 +149,7 @@ export function WhatIfRoom() {
         <Panel className="flex min-h-0 flex-col overflow-hidden" aria-label="Impact">
           <div className="flex items-center justify-between gap-3 border-b px-5 py-3.5">
             {plan.status === "idle" ? (
-              <h2 className="text-base font-bold tracking-tight">Impact</h2>
+              <h2 className="text-[15px] font-semibold tracking-tight">Impact</h2>
             ) : (
               <OptionPills
                 label="Report"
@@ -200,7 +200,7 @@ function BeatCaption({ beat, person }: { beat: number; person: string | null }) 
         <span
           key={n}
           className={cn(
-            "rounded-full border bg-card/90 px-2.5 py-1 text-xs font-semibold shadow-2xs backdrop-blur-sm transition-all duration-300",
+            "rounded-full border bg-card/85 px-2.5 py-1 text-xs font-medium shadow-raised backdrop-blur-md transition-all duration-500 ease-out-expo",
             beat >= n ? "translate-y-0 opacity-100" : "-translate-y-1 opacity-0",
           )}
         >

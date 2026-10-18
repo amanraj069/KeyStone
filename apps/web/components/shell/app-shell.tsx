@@ -1,16 +1,19 @@
 "use client";
 
-import { type ReactNode, useCallback, useState } from "react";
-import { Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { ChevronsLeft, Menu, X } from "lucide-react";
 import ThemeToggle from "@/components/theme-toggle";
+import { useModKey } from "@/hooks/use-mod-key";
 import { useSidebarExpansion } from "@/hooks/use-sidebar-expansion";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./brand-mark";
 import { CompanyBlock } from "./company-block";
 import { SidebarNav } from "./sidebar-nav";
+import { SidebarTooltip } from "./sidebar-tooltip";
 import { TopBar } from "./top-bar";
 
-const ICON_BUTTON = "flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground";
+const ICON_BUTTON =
+  "flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-hover hover:text-foreground active:scale-95";
 
 /** Every page's content column, Ask and What-if included, so all pages line up. */
 const COLUMN = "mx-auto w-full max-w-7xl";
@@ -20,20 +23,36 @@ const GUTTER = "px-4 sm:px-6 lg:px-8";
  * Every page's frame: a permanent sidebar from lg up, which retracts to an icon rail,
  * with a top bar (breadcrumb, graph status, theme) over the page; below lg, a
  * slide-in drawer opened from a mobile top bar.
+ *
+ * The rail keeps every icon at the same spot in both widths (each sits 24px from the
+ * edge), so collapsing only clips the labels; the one toggle lives at the foot of the
+ * sidebar in both states, and Cmd/Ctrl+B does the same.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const { expanded: storedExpanded, toggle } = useSidebarExpansion();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const mod = useModKey();
   // In the drawer the labels are always shown.
   const expanded = storedExpanded || drawerOpen;
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        toggle();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggle]);
 
   return (
     <div className="min-h-dvh">
       {/* Phones and tablets: a top bar that opens the drawer. */}
-      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-card/95 px-4 backdrop-blur-md lg:hidden">
+      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background/80 px-4 backdrop-blur-xl lg:hidden">
         <button type="button" onClick={() => setDrawerOpen(true)} aria-label="Open navigation" aria-expanded={drawerOpen} className={ICON_BUTTON}>
-          <Menu className="size-5" />
+          <Menu className="size-[18px]" />
         </button>
         <BrandMark />
         <ThemeToggle />
@@ -42,49 +61,63 @@ export function AppShell({ children }: { children: ReactNode }) {
       <button
         type="button"
         aria-label="Close navigation"
+        tabIndex={drawerOpen ? 0 : -1}
         onClick={closeDrawer}
         className={cn(
-          "fixed inset-0 z-40 cursor-default bg-black/35 backdrop-blur-[2px] transition-opacity duration-300 lg:hidden",
+          "fixed inset-0 z-40 cursor-default bg-black/30 backdrop-blur-[2px] transition-opacity duration-300 lg:hidden",
           drawerOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
         )}
       />
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col border-r bg-card transition-[width,transform] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] max-lg:w-72 max-lg:shadow-xl lg:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r bg-card transition-[width,transform] duration-300 ease-out-expo max-lg:w-72 max-lg:shadow-overlay lg:translate-x-0",
           storedExpanded ? "lg:w-60" : "lg:w-16",
           drawerOpen ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className={cn("flex h-14 shrink-0 items-center border-b", expanded ? "justify-between px-4" : "justify-center")}>
+        <div className="flex h-14 shrink-0 items-center justify-between px-4">
           <BrandMark showName={expanded} onNavigate={closeDrawer} />
-          {expanded && (
-            <button type="button" onClick={toggle} aria-label="Collapse sidebar" title="Collapse sidebar" className={cn(ICON_BUTTON, "hidden lg:flex")}>
-              <PanelLeftClose className="size-4" />
-            </button>
-          )}
           <button type="button" onClick={closeDrawer} aria-label="Close navigation" className={cn(ICON_BUTTON, "lg:hidden")}>
             <X className="size-4" />
           </button>
         </div>
 
         <SidebarNav expanded={expanded} onNavigate={closeDrawer} />
-        {!expanded && (
-          <div className="hidden justify-center pb-2 lg:flex">
-            <button type="button" onClick={toggle} aria-label="Expand sidebar" title="Expand sidebar" className={ICON_BUTTON}>
-              <PanelLeftOpen className="size-4" />
+
+        <div className="hidden shrink-0 px-3 pb-1 lg:block">
+          <SidebarTooltip
+            show={!expanded}
+            label={
+              <>
+                Expand <span className="kbd ml-1">{mod}B</span>
+              </>
+            }
+          >
+            <button
+              type="button"
+              onClick={toggle}
+              aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+              aria-expanded={expanded}
+              className="flex h-9 w-full items-center gap-3 rounded-lg px-3 text-sm text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+            >
+              <ChevronsLeft className={cn("size-4 shrink-0 transition-transform duration-300 ease-out-expo", !expanded && "rotate-180")} />
+              <span
+                className={cn(
+                  "flex flex-1 items-center justify-between whitespace-nowrap transition-opacity duration-200",
+                  expanded ? "opacity-100 delay-75" : "opacity-0",
+                )}
+              >
+                Collapse
+                <span className="kbd">{mod}B</span>
+              </span>
             </button>
-          </div>
-        )}
+          </SidebarTooltip>
+        </div>
         <CompanyBlock expanded={expanded} onNavigate={closeDrawer} />
       </aside>
 
-      <main
-        className={cn(
-          "flex min-h-dvh flex-col pt-14 transition-[margin] duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] lg:pt-0",
-          storedExpanded ? "lg:ml-60" : "lg:ml-16",
-        )}
-      >
+      <main className={cn("flex min-h-dvh flex-col pt-14 transition-[margin] duration-300 ease-out-expo lg:pt-0", storedExpanded ? "lg:ml-60" : "lg:ml-16")}>
         <TopBar />
         {children}
       </main>
@@ -95,7 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 /** A normal page: the shared column, scrolling with the window. */
 export function PageContainer({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn(GUTTER, "py-6 lg:py-8")}>
+    <div className={cn(GUTTER, "py-8 lg:py-10")}>
       <div className={cn(COLUMN, "space-y-6 pb-16 sm:space-y-8", className)}>{children}</div>
     </div>
   );

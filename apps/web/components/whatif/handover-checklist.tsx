@@ -21,7 +21,7 @@ export function HandoverChecklist({ plan, onChange, onOpenArtifact }: HandoverCh
   return (
     <div className="space-y-5">
       <div className="rounded-xl bg-surface p-4">
-        <p className="text-xs font-bold text-muted-foreground">
+        <p className="text-xs font-semibold text-muted-foreground">
           {plan.created ? "New plan" : "Open plan"} · {done} of {plan.children.length} decided
         </p>
         <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-foreground/[0.07]" role="progressbar" aria-valuemin={0} aria-valuemax={plan.children.length} aria-valuenow={done} aria-label="Items decided">
@@ -35,12 +35,12 @@ export function HandoverChecklist({ plan, onChange, onOpenArtifact }: HandoverCh
         if (items.length === 0) return null;
         return (
           <section key={kind}>
-            <h3 className="mb-2.5 text-sm font-bold">
+            <h3 className="mb-2.5 text-sm font-semibold">
               {KIND_LABEL[kind]} <span className="text-xs font-semibold text-muted-foreground tabular-nums">{items.length}</span>
             </h3>
-            <ul className="divide-y overflow-hidden rounded-xl border">
+            <ul className="divide-y overflow-hidden rounded-lg border">
               {items.map((item) => (
-                <li key={item.id} className="flex items-start gap-3 px-3 py-2.5">
+                <li key={item.id} className="flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-surface">
                   <StatusIcon status={item.status} />
                   <div className="min-w-0 flex-1">
                     <ActionLine action={item} />

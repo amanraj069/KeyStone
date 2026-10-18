@@ -18,9 +18,9 @@ interface AuditFiltersProps {
 /** Status and kind filters, each a segmented control. */
 export function AuditFilters({ status, kind, onStatus, onKind }: AuditFiltersProps) {
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <OptionPills<StatusFilter> label="Status" options={STATUS_OPTIONS} value={status} onChange={onStatus} />
-      <OptionPills<KindFilter> label="Kind" options={KIND_OPTIONS} value={kind} onChange={onKind} className="max-w-full overflow-x-auto" />
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <OptionPills<StatusFilter> label="Status" options={STATUS_OPTIONS} value={status} onChange={onStatus} className="shrink-0" />
+      <OptionPills<KindFilter> label="Kind" options={KIND_OPTIONS} value={kind} onChange={onKind} fill className="min-w-0 flex-1" />
     </div>
   );
 }

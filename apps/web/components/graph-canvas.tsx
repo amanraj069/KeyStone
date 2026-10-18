@@ -79,9 +79,9 @@ export function GraphCanvas({
         )}
       </div>
       {nodes.length > 0 && (
-        <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-end justify-between gap-4">
+        <div className="pointer-events-none absolute inset-x-4 bottom-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
           <GraphLegend nodes={nodes} />
-          <span className="shrink-0 text-[0.7rem] text-faint">{nodes.length} nodes · hover an artifact for its title, click to open it</span>
+          <span className="truncate text-[0.7rem] text-faint">{nodes.length} nodes · hover an artifact for its title, click to open it</span>
         </div>
       )}
       <ArtifactSheet artifactId={openArtifact} onClose={() => setOpenArtifact(null)} />

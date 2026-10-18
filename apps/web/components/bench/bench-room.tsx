@@ -9,7 +9,6 @@ import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api";
 import { AccuracyChart } from "./accuracy-chart";
 import { AccuracyTable } from "./accuracy-table";
-import { DepartureTable } from "./departure-table";
 import { pct, seconds, withCi } from "./format";
 
 /** Below this many questions the page says the sample is small. */
@@ -46,7 +45,7 @@ export function BenchRoom() {
 }
 
 function Results({ data }: { data: BenchResults }) {
-  const { b1, b2 } = data;
+  const { b2 } = data;
   return (
     <>
       {b2 && (
@@ -61,12 +60,18 @@ function Results({ data }: { data: BenchResults }) {
               floor; read them as a direction, not a result.
             </p>
           )}
-          {b2.overall.n < SMALL_SAMPLE && (
-            <p className="rounded-xl border bg-surface px-4 py-3 text-sm leading-relaxed">
-              <span className="font-bold">Small sample:</span> {b2.overall.n} questions, so one question moves a type by about{" "}
-              {Math.round(100 / Math.max(1, Math.min(...b2.byType.map((r) => r.n))))} points. Read the differences as a direction.
-            </p>
-          )}
+          {(() => {
+            const minTypeN = Math.min(...b2.byType.map((r) => r.n));
+            return (
+              minTypeN < SMALL_SAMPLE && (
+                <p className="rounded-xl border bg-surface px-4 py-3 text-sm leading-relaxed">
+                  <span className="font-bold">Small sample:</span> the smallest question type has only {minTypeN} questions ({b2.overall.n} total),
+                  so one question moves that type&apos;s accuracy by about {Math.round(100 / Math.max(1, minTypeN))} points. Read the differences as a
+                  direction, not a precise score — this question bank is fixed at {b2.overall.n} questions, so this will not shrink on its own.
+                </p>
+              )
+            );
+          })()}
           <AccuracyChart rows={b2.byType} />
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <Stat
@@ -99,15 +104,6 @@ function Results({ data }: { data: BenchResults }) {
             <Stat label="Context budget" keystone={`${(b2.contextBudgetChars / 1000).toFixed(0)}k chars`} baseline={`top ${b2.baselineK} chunks`} note="same for both" />
           </div>
           <AccuracyTable rows={b2.byType} overall={b2.overall} />
-        </Panel>
-      )}
-      {b1 && (
-        <Panel className="space-y-5 p-5 sm:p-6">
-          <PanelHeading
-            title="Departure prediction (B1)"
-            description={`Departure impact (K5, minScore ${b1.minScore}) on a projection as of the day before each departure, against the domains the person actually took with them.`}
-          />
-          <DepartureTable b1={b1} />
         </Panel>
       )}
     </>
