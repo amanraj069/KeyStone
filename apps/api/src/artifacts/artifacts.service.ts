@@ -112,6 +112,22 @@ export const CAUSAL_PROXIMITY_DAYS = 5;
 
 /** check_visibility(): how many runner-up candidates are shown next to the event it decided on. */
 const VISIBILITY_RUNNERS_UP = 2;
+/**
+ * check_visibility(): description words that mark an event as broadcast rather than
+ * private. An incident, outage or postmortem goes out on a company-wide incidents
+ * channel and alerting, and a detected knowledge gap goes out as a digest; anyone with
+ * ordinary system access could plausibly have seen one without being a named author,
+ * reviewer or participant on the one document find_event happens to match. A private
+ * document — a single PR review, a 1:1 email, one Confluence page someone wrote — is
+ * not broadcast this way, so it still needs a direct or linked record of involvement.
+ */
+const BROADCAST_WORDS = ['incident', 'p1', 'p2', 'outage', 'postmortem', 'post-mortem', 'knowledge gap', 'knowledge-gap'];
+
+/** Does an event description name a broadcast-kind event (see BROADCAST_WORDS)? */
+export function looksBroadcast(description: string): boolean {
+  const text = description.toLowerCase();
+  return BROADCAST_WORDS.some((w) => text.includes(w));
+}
 export const FOLLOW_UP_KIND_NAMES = Object.keys(FOLLOW_UP_KINDS) as [FollowUpKind, ...FollowUpKind[]];
 
 export interface ArtifactFilter {
@@ -338,8 +354,12 @@ export class ArtifactsService {
   /**
    * Could a person have known about an event by a day? Finds the event WITHOUT that
    * person (they may not be part of it: searching with them would only find what they
-   * touched), decides on the best candidate, and checks their involvement in it.
-   * A quoted title, when given, is looked up first.
+   * touched), decides on the best candidate, and checks their involvement in it. When
+   * there is no direct or linked involvement but the description names a broadcast-kind
+   * event (BROADCAST_WORDS: an incident, outage, postmortem or detected knowledge gap),
+   * the verdict is still could_have_known — those go out company-wide, not just to the
+   * people recorded on the one matched document. A quoted title, when given, is looked
+   * up first.
    */
   async checkVisibility(
     input: { person: string; day: number; description: string; title?: string; eventPeople?: string[]; types?: string[] },
@@ -352,6 +372,8 @@ export class ArtifactsService {
     roles: string[];
     viaLinked: string[];
     runnersUp: { id: string; title: string | null; day: number | null }[];
+    /** could_have_known came from the event being a broadcast kind, not a direct or linked record. */
+    broadcast: boolean;
   }> {
     const eventPeople = (input.eventPeople ?? []).filter((p) => p !== input.person);
     const byTitle = input.title
@@ -364,17 +386,21 @@ export class ArtifactsService {
             .candidates;
     const brief = (a: { id: string; title: string | null; day: number | null }) => ({ id: a.id, title: a.title, day: a.day });
     const [event, ...rest] = candidates;
-    if (!event) return { person: input.person, day: input.day, verdict: 'event_not_found', event: null, roles: [], viaLinked: [], runnersUp: [] };
+    if (!event) {
+      return { person: input.person, day: input.day, verdict: 'event_not_found', event: null, roles: [], viaLinked: [], runnersUp: [], broadcast: false };
+    }
     const involvement = await this.checkInvolvement(input.person, [event.id], input.day, graphName);
     const [row] = involvement.artifacts;
+    const broadcast = !involvement.involved && looksBroadcast(input.description);
     return {
       person: input.person,
       day: input.day,
-      verdict: involvement.involved ? 'could_have_known' : 'no_record_of_involvement',
+      verdict: involvement.involved || broadcast ? 'could_have_known' : 'no_record_of_involvement',
       event: brief(event),
       roles: row?.roles ?? [],
       viaLinked: row?.viaLinked ?? [],
       runnersUp: rest.map(brief),
+      broadcast,
     };
   }
 

@@ -70,11 +70,14 @@ export const MAX_AGENT_CALLS = 1 + MAX_STEPS + 1;
 // ---------------------------------------------------------------- prompts (scoring prompts run only after both systems answered)
 
 /** Baseline: one prompt with the retrieved chunks, nothing else. */
-export const BASELINE_TASK = 'bench-baseline-v1';
+export const BASELINE_TASK = 'bench-baseline-v2';
 export const BASELINE_SYSTEM_PROMPT =
   'You are answering a question about the company Apex Athletics. Answer only from these documents and cite ids: every ' +
-  'factual sentence must end with citations in the form [ID] using the document ids shown. If the documents do not ' +
-  "contain the answer, say the answer is not in the company's records. " +
+  'factual sentence must end with citations in the form [ID] using the document ids shown. The question may ask you to ' +
+  'reason about cause, sequence or scope (for example a counterfactual, "would X still have happened without Y", or ' +
+  '"did Z follow from W") — work it out from what the documents show about timing, who did what and what references what, ' +
+  'and commit to a conclusion even if no single sentence states it outright. Only say the answer is not in the company\'s ' +
+  "records when the documents give you no relevant facts to reason from at all. " +
   'Return {"answer": "<your answer with citations>"}.';
 
 /** "Are these two names the same system?" Nothing else is in the prompt. */
