@@ -32,16 +32,21 @@
 |---|---|
 | **Live app** | **https://keystone.aman-raj.me** |
 | **Live API and MCP server** | https://15-252-22-37.sslip.io (`GET /health`; MCP over Streamable HTTP at `POST /mcp`) |
-<!-- | **Demo video** | add the link here | -->
 | **Tracks** | 03 Company Brain (primary) · 01 Agents That Act on Connected Data |
 | **Why a graph** | Same model, same context budget: **72%** correct against **24%** for vector-only retrieval on 78 questions (paired sign test p < 0.001). See [Benchmark](#benchmark) |
 | **Data** | The public, synthetic [OrgForge](https://huggingface.co/datasets/aeriesec/orgforge) company "Apex Athletics" (MIT licence); no real personal data |
 | **AI assistance** | Built with Claude Code, disclosed in [AI_USAGE.md](AI_USAGE.md) |
 
+<br/>
+
 <p align="center">
-  <img src="docs/media/ask-demo.gif" width="900" alt="Asking Keystone what breaks if Priya leaves: the agent calls simulate_departure on a scratch copy of the graph, the step shows its Cypher, the agent's path is drawn, and the answer cites 30 sources">
-  <br><sub>The live app: the agent picks <code>simulate_departure</code> through MCP, the step shows its Cypher, the graph it walked is drawn, and every claim is cited (recorded on keystone.aman-raj.me, waits shortened).</sub>
+  <img src="docs/media/ask-demo.gif" width="900" alt="Asking Keystone what breaks if Priya leaves: the agent calls simulate_departure through MCP, its Cypher shows GRAPH.COPY to a scratch graph, bus factor and betweenness, the agent's path is drawn, and each source shows the sentence that backs the answer">
 </p>
+<p align="center">
+  <sub>In the app: the agent picks <code>simulate_departure</code> through MCP, the step shows its Cypher (<code>GRAPH.COPY</code> to a scratch graph, bus factor, betweenness), the graph it walked is drawn, and every source shows the sentence that backs the claim. Waits shortened.</sub>
+</p>
+
+<br/>
 
 ---
 

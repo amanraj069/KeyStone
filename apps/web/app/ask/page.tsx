@@ -15,6 +15,10 @@ import { cn } from "@/lib/utils";
 const COLUMN = "mx-auto w-full max-w-6xl";
 /** Scrolling to within this many pixels of the top opens the next earlier exchanges. */
 const LOAD_EARLIER_AT_PX = 120;
+/** A question just asked is scrolled to this far below the top of the thread. */
+const PINNED_GAP_PX = 24;
+/** The thread's bottom padding (pb-10), which sits under the asked turn. */
+const THREAD_BOTTOM_PX = 40;
 
 /**
  * Ask: a full-height chat, laid out like Intake's assistant. Each answer carries the
@@ -61,15 +65,34 @@ export default function AskPage() {
     setCitation(null);
   }, [latestId]);
 
-  // Keep the newest text in view while it streams. A new newest turn jumps there at once,
-  // so the scroll never passes the top, where it would load earlier exchanges.
+  // A question just asked moves to the top of the view and its answer fills in under it, with
+  // no scrolling while it streams, so the answer reads from its start. That turn is given the
+  // view's height, so even a short answer leaves room for the question to reach the top.
+  // Any other new newest turn (a restored chat, a deletion) jumps to the end at once, so the
+  // scroll never passes the top, where it would load earlier exchanges.
   const latest = turns.at(-1);
   const lastScrolledTo = useRef<string | null>(null);
+  const [pinned, setPinned] = useState<{ id: string; minHeight: number } | null>(null);
+  const pinnedTurn = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const jump = lastScrolledTo.current !== latestId;
+    const box = scroller.current;
+    if (!box || lastScrolledTo.current === latestId) return;
     lastScrolledTo.current = latestId;
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: jump ? "auto" : "smooth" });
-  }, [latestId, latest?.answer, latest?.steps.length, latest?.paths.length]);
+    if (latestId && latest?.status === "streaming") {
+      setPinned({ id: latestId, minHeight: box.clientHeight - PINNED_GAP_PX - THREAD_BOTTOM_PX });
+    } else {
+      box.scrollTo({ top: box.scrollHeight });
+    }
+  }, [latestId, latest?.status]);
+
+  // Once the asked turn has its height, scroll its question to the top.
+  useEffect(() => {
+    const box = scroller.current;
+    const turn = pinnedTurn.current;
+    if (!box || !turn) return;
+    const top = box.scrollTop + turn.getBoundingClientRect().top - box.getBoundingClientRect().top - PINNED_GAP_PX;
+    box.scrollTo({ top, behavior: "smooth" });
+  }, [pinned?.id]);
 
   // Earlier exchanges were added above: move down by their height, so nothing on screen moves,
   // or, after "Load previous chats", to the end of the thread. Before paint, so nothing flickers.
@@ -175,19 +198,24 @@ export default function AskPage() {
                 {showingPreviousChats && t.chatId !== turns[index - 1]?.chatId && (
                   <ChatDivider askedAt={t.askedAt} current={t.chatId === chatId} />
                 )}
-                <TurnView
-                  turn={t}
-                  active={t.id === activeTurnId}
-                  activeCitation={citation}
-                  onCite={onCite}
-                  onSelect={(id) => {
-                    setActiveTurnId(id);
-                    setCitation(null);
-                  }}
-                  onClearCitation={() => setCitation(null)}
-                  onDelete={deleteMessage}
-                  onRate={rate}
-                />
+                <div
+                  ref={t.id === pinned?.id ? pinnedTurn : undefined}
+                  style={t.id === pinned?.id ? { minHeight: pinned.minHeight } : undefined}
+                >
+                  <TurnView
+                    turn={t}
+                    active={t.id === activeTurnId}
+                    activeCitation={citation}
+                    onCite={onCite}
+                    onSelect={(id) => {
+                      setActiveTurnId(id);
+                      setCitation(null);
+                    }}
+                    onClearCitation={() => setCitation(null)}
+                    onDelete={deleteMessage}
+                    onRate={rate}
+                  />
+                </div>
               </Fragment>
             ))}
           </div>
