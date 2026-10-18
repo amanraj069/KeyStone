@@ -28,6 +28,11 @@ export interface GraphCanvasProps {
   animationMs?: number;
   /** Shown when there are no nodes. */
   emptyHint?: string;
+  /**
+   * False inside a scrolling page (the Ask thread): the wheel scrolls the page instead
+   * of zooming, and the background cannot be dragged. Default true.
+   */
+  interactive?: boolean;
   className?: string;
 }
 
@@ -47,6 +52,7 @@ export function GraphCanvas({
   pulseIds = NONE,
   animationMs = 300,
   emptyHint,
+  interactive = true,
   className,
 }: GraphCanvasProps) {
   const [openArtifact, setOpenArtifact] = useState<string | null>(null);
@@ -73,6 +79,7 @@ export function GraphCanvas({
             redIds={red}
             pulseIds={pulse}
             animationMs={animationMs}
+            interactive={interactive}
             onArtifactClick={setOpenArtifact}
             />
           </div>
@@ -81,7 +88,7 @@ export function GraphCanvas({
       {nodes.length > 0 && (
         <div className="pointer-events-none absolute inset-x-4 bottom-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
           <GraphLegend nodes={nodes} />
-          <span className="truncate text-[0.7rem] text-faint">{nodes.length} nodes · hover an artifact for its title, click to open it</span>
+          {interactive && <span className="truncate text-[0.7rem] text-faint">{nodes.length} nodes · hover an artifact for its title, click to open it</span>}
         </div>
       )}
       <ArtifactSheet artifactId={openArtifact} onClose={() => setOpenArtifact(null)} />
