@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Citation, QuestionLabel } from "@keystone/shared";
 import { ChevronDown, ChevronRight, CircleAlert, History } from "lucide-react";
 import { KeystoneIcon } from "@/components/shell/brand-mark";
@@ -51,6 +51,7 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
   // Until "done", any id-shaped token counts as cited; after it, only what the API confirmed.
   const cited = useMemo(() => (turn.status === "done" ? new Set(turn.citations.map((c) => c.id)) : null), [turn.status, turn.citations]);
   const numbers = useMemo(() => citationNumbers(turn.answer, cited), [turn.answer, cited]);
+  const sourcesById = useMemo(() => new Map(turn.citations.map((c) => [c.id, c])), [turn.citations]);
 
   return (
     <article className="space-y-3">
@@ -108,12 +109,18 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
             )}
             {(streaming || stepsOpen) && <StepList steps={turn.steps} />}
 
-            {thinking && <TypingDots label={turn.steps.length === 0 ? "Reading the question" : "Walking the graph"} />}
+            {thinking && (
+              <div className="flex items-center gap-2">
+                <TypingDots label={turn.steps.length === 0 ? "Reading the question" : "Walking the graph"} />
+                <Elapsed />
+              </div>
+            )}
             {turn.answer && (
               <AnswerText
                 text={turn.answer}
                 cited={cited}
                 numbers={numbers}
+                sources={sourcesById}
                 activeId={active ? activeCitation : null}
                 onCite={(id) => onCite(turn.id, id)}
               />
@@ -210,7 +217,15 @@ function Sources({ citations, numbers, activeId, onCite, feedback }: SourcesProp
                 {numbers.get(citation.id) ?? "•"}
               </span>
               <span className="code-id max-w-[40%] shrink-0 truncate text-muted-foreground">{citation.id}</span>
-              <span className="min-w-0 flex-1 truncate font-medium">{citation.title ?? citation.type ?? ""}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{citation.title ?? citation.type ?? ""}</span>
+                {/* The sentence that names what the answer is about: why this source backs the claim. */}
+                {citation.passage && (
+                  <span className="mt-0.5 line-clamp-2 block font-light text-muted-foreground" title={citation.passage}>
+                    &ldquo;{citation.passage}&rdquo;
+                  </span>
+                )}
+              </span>
               {citation.day !== null && <span className="shrink-0 font-light text-faint tabular-nums">day {citation.day}</span>}
             </button>
           </li>
@@ -258,6 +273,18 @@ function MemoryLine({ memory }: { memory: NonNullable<AgentTurn["memory"]> }) {
       )}
     </div>
   );
+}
+
+/** Seconds since the answer started, so a long wait reads as work in progress. Shown from 2 s on. */
+function Elapsed() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const started = Date.now();
+    const timer = window.setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (seconds < 2) return null;
+  return <span className="text-xs text-faint tabular-nums">{seconds} s</span>;
 }
 
 function TypingDots({ label }: { label: string }) {

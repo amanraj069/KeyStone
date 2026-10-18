@@ -17,7 +17,7 @@ import { BEAT_MS, useDepartureBeats } from "@/hooks/use-departure-beats";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { departureCanvas, departureKeys } from "@/lib/whatif";
-import { HandoverChecklist } from "./handover-checklist";
+import { ApproveAll, HandoverChecklist } from "./handover-checklist";
 import { ImpactPreview } from "./impact-preview";
 import { ImpactReport } from "./impact-report";
 import { PersonPicker } from "./person-picker";
@@ -135,6 +135,7 @@ export function WhatIfRoom() {
             edges={canvas.edges}
             fadedIds={beats.faded}
             redIds={beats.red}
+            redLabel="No expert left"
             pulseIds={beats.pulse}
             highlightedIds={beats.highlighted}
             animationMs={beats.beat === 1 ? BEAT_MS : 300}
@@ -185,6 +186,11 @@ export function WhatIfRoom() {
               <HandoverChecklist plan={plan.value} onChange={updateItem} onOpenArtifact={setOpenArtifact} />
             ) : null}
           </div>
+          {tab === "plan" && plan.status === "done" && plan.value.children.some((c) => c.status === "proposed") && (
+            <div className="border-t p-4">
+              <ApproveAll items={plan.value.children} onChange={updateItem} />
+            </div>
+          )}
         </Panel>
       </div>
       <ArtifactSheet artifactId={openArtifact} onClose={() => setOpenArtifact(null)} />
