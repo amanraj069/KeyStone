@@ -32,7 +32,6 @@ __pycache__/
 docs/development-notes.md
 AGENTS.md
 CLAUDE.md
-AI_USAGE.md
 
 # Optional Caddy sites enabled on the server (only the .example files are committed)
 deploy/caddy/sites/*.caddy
