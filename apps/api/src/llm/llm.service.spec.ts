@@ -170,6 +170,23 @@ describe('LlmService', () => {
     expect(llm.usage()).toMatchObject({ embedCalls: 2, embedCacheHits: 2 });
   });
 
+  it('reads cached vectors back in input order across several read batches', async () => {
+    const provider = fakeProvider();
+    // Each vector holds its text's number, so the order can be checked.
+    provider.vectors.mockImplementation(async (texts: string[], dim: number) => ({
+      vectors: texts.map((text) => Array.from({ length: dim }, () => Number(text.slice(1)))),
+      inputTokens: texts.length,
+    }));
+    const texts = Array.from({ length: 600 }, (_, i) => `t${i}`); // more than 2 x 256 cache files
+    await new LlmService(settings(dir), provider).embed(texts);
+
+    const fresh = new LlmService(settings(dir), provider);
+    const result = await fresh.embed(texts);
+    expect(result.map((vector) => vector[0])).toEqual(texts.map((_, i) => i));
+    expect(fresh.usage()).toMatchObject({ embedCalls: 0, embedCacheHits: 600 });
+    expect(await fresh.uncachedEmbeddings(['t5', 'new', 't599', 'other'])).toEqual([1, 3]);
+  });
+
   it('rejects vectors of the wrong size', async () => {
     const provider = fakeProvider();
     provider.vectors.mockResolvedValueOnce({ vectors: [[1, 2]], inputTokens: 1 });
