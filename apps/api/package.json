@@ -25,6 +25,7 @@
     "bench": "tsx scripts/bench.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1152.0",
     "@google/genai": "2.25.0",
     "@keystone/shared": "workspace:*",
     "@modelcontextprotocol/sdk": "1.32.1",

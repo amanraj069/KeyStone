@@ -11,7 +11,7 @@ import type { MemoryReport } from '@keystone/shared';
 import { closeWithin } from '../common/close-within';
 import { backoffDelay, sleep } from './backoff';
 import { toBatches } from './batch';
-import { DEFAULT_BATCH_SIZE, FALKOR_SETTINGS, type FalkorSettings, SLOW_QUERY_MS } from './graph.constants';
+import { DEFAULT_BATCH_SIZE, FALKOR_SETTINGS, type FalkorSettings, INCOMING_SUFFIX, SLOW_QUERY_MS } from './graph.constants';
 import { mapRows } from './result-mapper';
 
 /**
@@ -182,6 +182,39 @@ export class GraphService implements OnModuleInit, OnModuleDestroy {
   async copyGraph(src: string, dst: string): Promise<void> {
     const db = await this.requireDb();
     await this.timed('copy', src, `GRAPH.COPY ${src} ${dst}`, () => db.selectGraph(src).copy(dst));
+  }
+
+  /**
+   * Makes `dst` an exact copy of `src` (backup, restore) without ever leaving `dst`
+   * missing: GRAPH.COPY into "<dst>_incoming", then renameGraph over `dst`. If the copy
+   * fails, `dst` is untouched (a failed backup keeps the old backup). Needs memory for
+   * one extra copy of `src` while it runs.
+   */
+  async replaceGraph(src: string, dst: string): Promise<void> {
+    const incoming = `${dst}${INCOMING_SUFFIX}`;
+    if (await this.graphExists(incoming)) await this.deleteGraph(incoming); // left by a crashed run
+    try {
+      await this.copyGraph(src, incoming);
+    } catch (error) {
+      if (await this.graphExists(incoming).catch(() => false)) await this.deleteGraph(incoming).catch(() => undefined);
+      throw error;
+    }
+    await this.renameGraph(incoming, dst);
+  }
+
+  /**
+   * Redis RENAME on the graph key: `src` becomes `dst` in one atomic step, replacing
+   * (and freeing) any graph already called `dst`. Indexes come along. Checked on
+   * falkordb/falkordb:v4.22.1 (test/backup.int-spec.ts); GRAPH.COPY has no such option.
+   */
+  async renameGraph(src: string, dst: string): Promise<void> {
+    const connection = await (await this.requireDb()).connection;
+    await this.timed('rename', src, `RENAME ${src} ${dst}`, () => connection.sendCommand(['RENAME', src, dst]));
+  }
+
+  /** True if a graph called `name` exists (GRAPH.LIST). */
+  async graphExists(name: string): Promise<boolean> {
+    return (await this.listGraphs()).includes(name);
   }
 
   /** Memory of one graph in MB (GRAPH.MEMORY USAGE), or null if unsupported. */

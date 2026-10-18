@@ -18,6 +18,15 @@ export interface FalkorSettings {
 /** The main company graph (AGENTS.md section 5). */
 export const APEX_GRAPH = 'apex';
 
+/** Copy of apex taken every 6 hours by the worker, restored by POST /admin/restore. */
+export const BACKUP_GRAPH = 'apex_backup';
+
+/**
+ * The seed command builds the new company graph here and only renames it over apex
+ * once every stage succeeded, so a failed seed never leaves apex half-built.
+ */
+export const SEED_STAGING_GRAPH = 'apex_seed';
+
 /**
  * Tiny, always-empty graph that GET /health runs `RETURN 1` against.
  * Read-only queries fail on a graph that does not exist yet, so health uses a
@@ -34,3 +43,6 @@ export const SLOW_QUERY_MS = 500;
 
 /** Rows per UNWIND batch in batchWrite: big enough to be fast, small enough to keep queries short. */
 export const DEFAULT_BATCH_SIZE = 500;
+
+/** replaceGraph copies into "<target>_incoming" first, then renames it over the target. */
+export const INCOMING_SUFFIX = '_incoming';
