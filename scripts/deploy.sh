@@ -27,6 +27,12 @@ fail() {
   exit 1
 }
 
+# The image build skips type checking (it needs more memory than a 1 GB instance has),
+# so check the types here first.
+echo "==> Type-checking the API (laptop)"
+pnpm --filter @keystone/shared build >/dev/null || fail "packages/shared does not build"
+pnpm --filter @keystone/api typecheck || fail "type errors in apps/api (output above); fix them before deploying"
+
 echo "==> Deploying to $HOST:~/$DIR"
 # The remote script is quoted ('REMOTE'), so nothing in it is expanded here; DIR is passed as $1.
 "${SSH[@]}" "$HOST" bash -s -- "$DIR" <<'REMOTE' || fail "the remote build or restart failed (output above)"
@@ -36,6 +42,13 @@ cd "$HOME/$1"
 # docker compose reads FALKOR_PASSWORD and API_DOMAIN from .env for interpolation.
 [[ -e .env ]] || ln -s .env.prod .env
 [[ -f data/artifacts.jsonl ]] || { echo "data/artifacts.jsonl is missing: copy data/ first (docs/deploy.md)" >&2; exit 1; }
+# Below 2 GB of RAM the build next to the running stack needs swap, or it is OOM-killed.
+mem_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
+if (( mem_kb < 2000000 && swap_kb < 1000000 )); then
+  echo "This instance has $((mem_kb / 1024)) MB of RAM and $((swap_kb / 1024)) MB of swap: add a 2 GB swap file first (docs/deploy.md, \"Small instances\")" >&2
+  exit 1
+fi
 echo "--> git pull"
 git pull --ff-only
 echo "--> docker compose up -d --build"

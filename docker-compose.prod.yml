@@ -10,6 +10,10 @@
 # Security (AGENTS.md section 3): falkordb and redis publish NO ports. They are only
 # reachable on the internal Docker network, by api and worker. Only caddy is exposed
 # to the internet (80/443) and proxies to api:4000.
+#
+# Memory: sized to run on a 1 GB instance with 2 GB of swap (docs/deploy.md, "Small
+# instances"). Measured on the full graph: falkordb ~285 MB, api ~80 MB (~335 MB while
+# it seeds), worker ~60 MB, redis ~12 MB. The limits below are ceilings, not reservations.
 
 name: keystone-prod
 
@@ -30,6 +34,14 @@ x-api-common: &api-common
     INGEST_WORKER_INLINE: "false"
     # The agent reaches its own MCP endpoint in-process, not through Caddy.
     API_BASE_URL: http://localhost:4000
+    # FalkorDB memory guards, in MB of used_memory: kept below falkordb's mem_limit
+    # (640m, ~80 MB of it is overhead), so a stage stops before the container is killed.
+    MEMORY_WARN_MB: "400"
+    MEMORY_MAX_MB: "480"
+    # Node's heap cap: V8 collects garbage before the container limit is reached
+    # (the seed needs ~180 MB of heap; without a cap V8 lets it grow to ~600 MB RSS).
+    NODE_OPTIONS: --max-old-space-size=256
+  mem_limit: 448m
   volumes:
     # TextStore, extraction and LLM caches, and exports live on the instance's disk.
     - ${KEYSTONE_DATA_DIR:-./data}:/repo/data
@@ -51,7 +63,9 @@ services:
     volumes:
       # The image keeps its RDB snapshots in FALKORDB_DATA_PATH=/var/lib/falkordb/data.
       - falkordb_data:/var/lib/falkordb/data
-    mem_limit: 4g
+    # The full graph plus apex_backup uses ~200 MB (used_memory) and ~285 MB RSS.
+    # MEMORY_WARN_MB / MEMORY_MAX_MB on api and worker (above) must stay below this.
+    mem_limit: 640m
     # Redis writes a final snapshot on shutdown; give it time before Docker kills it.
     stop_grace_period: 2m
     healthcheck:
@@ -66,6 +80,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
+    mem_limit: 64m
     volumes:
       - redis_data:/data
     healthcheck:
@@ -93,6 +108,7 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    mem_limit: 128m
     ports:
       - "80:80"
       - "443:443"

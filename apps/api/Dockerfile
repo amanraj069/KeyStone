@@ -25,7 +25,12 @@ COPY packages/shared/package.json packages/shared/
 RUN pnpm install --frozen-lockfile --filter @keystone/api...
 COPY packages/shared packages/shared
 COPY apps/api apps/api
-RUN pnpm --filter @keystone/shared build && pnpm --filter @keystone/api build
+# build:docker emits the same JavaScript as `nest build` but skips type checking, which
+# needs ~530 MB of heap (openai, aws-sdk, MCP types) and dies on a 1 GB instance.
+# Type errors are caught on the laptop instead: scripts/deploy.sh runs `typecheck` first.
+# build:docker peaks around 400 MB of heap; the cap stops it from growing past that.
+RUN pnpm --filter @keystone/shared build && \
+    NODE_OPTIONS=--max-old-space-size=512 pnpm --filter @keystone/api build:docker
 
 # ---------------------------------------------------------------- prod-deps: runtime node_modules only
 FROM base AS prod-deps

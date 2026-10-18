@@ -53,7 +53,9 @@ and on your laptop the `data/` folder that built your graph (with `cache/` and `
 2. **EC2 → Instances → Launch instances**
    - Name: `keystone`
    - AMI: **Ubuntu Server 24.04 LTS (HVM), SSD Volume Type**, 64-bit (x86)
-   - Instance type: **t3.large** (2 vCPU, 8 GB RAM)
+   - Instance type: **t3.large** (2 vCPU, 8 GB RAM), or a 1 GB **t3.micro** / **t2.micro**
+     (free tier): the stack fits, but only with the swap file from
+     [Small instances](#small-instances-1-gb-ram) at the end of step 2
    - Key pair: **Create new key pair** → `keystone`, RSA, `.pem` → it downloads `keystone.pem`
    - Network settings → **Edit** → *Create security group* named `keystone-sg` with exactly these inbound rules:
 
@@ -118,6 +120,54 @@ ssh -i ~/.ssh/keystone.pem ubuntu@$EIP
 # (server)
 docker version --format '{{.Server.Version}}' && docker compose version
 systemctl is-enabled docker        # enabled
+```
+
+### Small instances (1 GB RAM)
+
+`docker-compose.prod.yml` is sized for 1 GB. Measured on the full graph:
+
+| Container | Typical | Peak | `mem_limit` |
+|---|---|---|---|
+| falkordb (`apex` + `apex_backup`) | ~285 MB | ~330 MB during a backup copy | 640m |
+| api | ~80 MB | ~335 MB while it seeds (first start only) | 448m |
+| worker | ~60 MB | an ingest or extract job | 448m |
+| redis | ~12 MB | | 64m |
+| caddy | ~30 MB | | 128m |
+
+The limits are ceilings, so they add up to more than 1 GB. Node runs with a 256 MB
+heap cap (`NODE_OPTIONS`), so V8 collects garbage instead of growing to the limit.
+`MEMORY_WARN_MB` / `MEMORY_MAX_MB` are set in the compose file, below FalkorDB's limit,
+so any value in `.env.prod` is ignored.
+
+**Swap is required below 2 GB.** `docker compose up --build` compiles the API (about 450 MB)
+while the old containers are still running, and `scripts/deploy.sh` refuses to start without
+swap. Add a 2 GB swap file once:
+
+```bash
+# (server) works on Ubuntu and Amazon Linux (dd rather than fallocate: XFS rejects sparse swap files)
+sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 status=progress
+sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab        # keep it after a reboot
+# FalkorDB saves its snapshot by forking: let the fork succeed (Redis's own advice),
+# and swap only under real pressure.
+printf 'vm.overcommit_memory = 1\nvm.swappiness = 10\n' | sudo tee /etc/sysctl.d/99-keystone.conf
+sudo sysctl --system >/dev/null
+free -m                                                         # Swap: 2047 total
+```
+
+The image build skips type checking (`build:docker`; the full `nest build` needs ~530 MB of heap
+and died with `JavaScript heap out of memory`, exit code 134). `scripts/deploy.sh` type-checks on
+your laptop before it deploys.
+
+**Optional: build on the laptop instead.** This keeps the instance free during deploys. Pick the
+instance's CPU: `amd64` for t2/t3, `arm64` for t4g.
+
+```bash
+# (laptop, repo root)
+docker buildx build --platform linux/amd64 -f apps/api/Dockerfile -t keystone-api:local --load .
+docker save keystone-api:local | gzip | ssh -i ~/.ssh/keystone.pem ubuntu@$EIP 'gunzip | docker load'
+# (server)
+cd ~/keystone && docker compose -f docker-compose.prod.yml up -d --no-build
 ```
 
 ---
@@ -397,6 +447,8 @@ for the host to `~/.ssh/config` to skip `DEPLOY_SSH_KEY`.)
 | Symptom | Check |
 |---|---|
 | `curl: (35) SSL` / no certificate | Ports 80 and 443 open to 0.0.0.0/0? `API_DOMAIN` resolves to the Elastic IP? `docker compose -f docker-compose.prod.yml logs caddy` |
+| Build fails with `JavaScript heap out of memory` / `exit code: 134`, or the instance freezes during a deploy | Not enough memory: add the swap file from [Small instances](#small-instances-1-gb-ram) (`free -m` shows it), or build on the laptop |
+| A container keeps restarting and `docker inspect --format '{{.State.OOMKilled}}' keystone-prod-api-1` says `true` | It hit its `mem_limit` in `docker-compose.prod.yml`: check `docker stats --no-stream` and raise that limit if the instance has room |
 | `502 Bad Gateway` | The API is starting or crashed: `docker compose -f docker-compose.prod.yml logs --tail 100 api` (a bad `.env.prod` value is reported by name, never by value) |
 | `"status":"degraded"` | The seed failed: `seed.error` / `seed.missing` in `/health`; see step 6 |
 | `"status":"down"` | `docker compose -f docker-compose.prod.yml ps`: is falkordb or redis unhealthy? |
