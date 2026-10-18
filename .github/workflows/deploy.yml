@@ -33,6 +33,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
+          # v5 turns on caching by itself when package.json has "packageManager", which needs
+          # pnpm on the PATH before the next step installs it.
+          package-manager-cache: false
 
       # The exact pnpm the lockfile was made with (package.json "packageManager"), as in apps/api/Dockerfile.
       - name: Install dependencies
