@@ -1,5 +1,20 @@
-# SKELETON: completed in Stage 14. Replace the host with the real API domain.
-# Caddy gets HTTPS certificates automatically and proxies to the api container.
-api.example.com {
-	reverse_proxy api:4000
+# Caddy for the production stack (docker-compose.prod.yml).
+# API_DOMAIN comes from .env.prod, e.g. keystone.example.com or 203-0-113-10.sslip.io.
+# Caddy gets and renews the HTTPS certificate automatically (ports 80 and 443 must be open).
+
+{$API_DOMAIN} {
+	# Server-Sent Events and MCP streams: send every byte as soon as the API writes it.
+	@streams path /agent/ask /ingest/events /ingest/jobs/*/events /mcp
+	handle @streams {
+		reverse_proxy api:4000 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		reverse_proxy api:4000
+	}
 }
+
+# Optional extra sites (the FalkorDB Browser), off unless a file is copied into deploy/caddy/sites/.
+import /etc/caddy/sites/*.caddy

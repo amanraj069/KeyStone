@@ -1,0 +1,13 @@
+# Optional: FalkorDB Browser behind basic auth on a second subdomain.
+# Enable (docs/deploy.md, "Optional: FalkorDB Browser"):
+#   cp deploy/caddy/browser.caddy.example deploy/caddy/sites/browser.caddy
+#   set BROWSER_DOMAIN, BROWSER_USER and BROWSER_PASSWORD_HASH in .env.prod
+#   docker compose -f docker-compose.prod.yml --profile browser up -d
+# In the Browser's login form use host "falkordb", port 6379 and FALKOR_PASSWORD.
+
+{$BROWSER_DOMAIN} {
+	basic_auth {
+		{$BROWSER_USER} {$BROWSER_PASSWORD_HASH}
+	}
+	reverse_proxy falkordb-browser:3000
+}

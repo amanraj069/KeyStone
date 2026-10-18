@@ -1,85 +1,131 @@
-# Production stack for the single EC2 instance. SKELETON: completed in Stage 14
-# (Dockerfiles, worker entrypoint, Caddyfile, backups).
+# Production stack for the single EC2 instance (docs/deploy.md).
 #
-# Security rule (AGENTS.md section 3): falkordb and redis publish NO ports.
-# They are reachable only on the internal Docker network, by api and worker.
-# Only caddy is exposed to the internet (80/443) and proxies to api:4000.
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Configuration comes from .env.prod (copy .env.prod.example). Compose itself reads
+# FALKOR_PASSWORD and API_DOMAIN from `.env` for the ${...} values below, so on the
+# server .env is a symlink to .env.prod (ln -s .env.prod .env): one file, and only
+# api/worker receive the LLM keys.
+#
+# Security (AGENTS.md section 3): falkordb and redis publish NO ports. They are only
+# reachable on the internal Docker network, by api and worker. Only caddy is exposed
+# to the internet (80/443) and proxies to api:4000.
 
 name: keystone-prod
 
+x-api-common: &api-common
+  build:
+    context: .
+    dockerfile: apps/api/Dockerfile
+  image: keystone-api:local
+  restart: unless-stopped
+  env_file: ${KEYSTONE_ENV_FILE:-.env.prod}
+  environment:
+    # Service names on the internal network; these win over .env.prod.
+    FALKOR_HOST: falkordb
+    FALKOR_PORT: "6379"
+    REDIS_URL: redis://redis:6379
+    DATA_DIR: /repo/data
+    # Jobs run in the worker container, never inside the API.
+    INGEST_WORKER_INLINE: "false"
+    # The agent reaches its own MCP endpoint in-process, not through Caddy.
+    API_BASE_URL: http://localhost:4000
+  volumes:
+    # TextStore, extraction and LLM caches, and exports live on the instance's disk.
+    - ${KEYSTONE_DATA_DIR:-./data}:/repo/data
+  depends_on:
+    falkordb: { condition: service_healthy }
+    redis: { condition: service_healthy }
+
 services:
   falkordb:
+    # Pinned to an exact tag, never `latest`.
     image: falkordb/falkordb:v4.22.1
     restart: unless-stopped
     environment:
-      REDIS_ARGS: "--requirepass ${FALKOR_PASSWORD:?Set FALKOR_PASSWORD}"
-      FALKOR_PASSWORD: ${FALKOR_PASSWORD}
-      BROWSER: "0" # no FalkorDB Browser UI in production
+      # run.sh passes REDIS_ARGS to redis-server. "--save 60 1": snapshot within a
+      # minute of any change, so an approval survives a crash or reboot.
+      REDIS_ARGS: "--requirepass ${FALKOR_PASSWORD:?Set FALKOR_PASSWORD in .env.prod (and ln -s .env.prod .env)} --save 60 1"
+      FALKOR_PASSWORD: ${FALKOR_PASSWORD} # used only by the healthcheck
+      BROWSER: "0" # the image's built-in Browser stays off (see falkordb-browser below)
     volumes:
+      # The image keeps its RDB snapshots in FALKORDB_DATA_PATH=/var/lib/falkordb/data.
       - falkordb_data:/var/lib/falkordb/data
     mem_limit: 4g
+    # Redis writes a final snapshot on shutdown; give it time before Docker kills it.
+    stop_grace_period: 2m
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$FALKOR_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 3s
-      retries: 10
+      retries: 30
     # no `ports:` on purpose
 
   redis:
+    # BullMQ only (FalkorDB is never used as a queue). AOF so scheduled jobs survive restarts.
     image: redis:7-alpine
     restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
-      retries: 10
+      retries: 30
     # no `ports:` on purpose
 
   api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile # TODO Stage 14
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      INGEST_WORKER_INLINE: "false" # jobs run in the worker container
-      FALKOR_HOST: falkordb
-      FALKOR_PORT: "6379"
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      falkordb: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    <<: *api-common
+    healthcheck:
+      # Healthy once the HTTP server answers (a seed in progress still counts).
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
 
   worker:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile # same image as api, different command
-    command: ["node", "dist/worker.js"] # BullMQ ingest worker (apps/api/src/worker.ts)
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      FALKOR_HOST: falkordb
-      FALKOR_PORT: "6379"
-      REDIS_URL: redis://redis:6379
-    depends_on:
-      falkordb: { condition: service_healthy }
-      redis: { condition: service_healthy }
+    <<: *api-common
+    # Same image: BullMQ ingest worker + the 6-hourly backup and actions export.
+    command: ["node", "dist/worker.js"]
 
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?Set API_DOMAIN in .env.prod (and ln -s .env.prod .env)}
+      # Only used by deploy/caddy/sites/browser.caddy (optional, off by default).
+      BROWSER_DOMAIN: ${BROWSER_DOMAIN:-}
+      BROWSER_USER: ${BROWSER_USER:-}
+      BROWSER_PASSWORD_HASH: ${BROWSER_PASSWORD_HASH:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./deploy/caddy/sites:/etc/caddy/sites:ro
+      # Certificates and ACME account: keep them, or Let's Encrypt rate limits may bite.
       - caddy_data:/data
+      - caddy_config:/config
     depends_on:
       - api
+
+  # Optional FalkorDB Browser, OFF by default. Enable with the `browser` profile and
+  # deploy/caddy/sites/browser.caddy (docs/deploy.md, "Optional: FalkorDB Browser").
+  # Same pinned image, but only its bundled Browser runs (no second database).
+  falkordb-browser:
+    profiles: ["browser"]
+    image: falkordb/falkordb:v4.22.1
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "cd \"$$FALKORDB_BROWSER_PATH\" && HOSTNAME=0.0.0.0 exec ./docker-entrypoint.sh node server.js"]
+    depends_on:
+      falkordb: { condition: service_healthy }
+    # no `ports:`: only caddy reaches it, behind basic auth
 
 volumes:
   falkordb_data:
   redis_data:
   caddy_data:
+  caddy_config:

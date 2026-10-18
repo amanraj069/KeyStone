@@ -8,8 +8,10 @@ loadEnvConfig(path.resolve(__dirname, "../.."));
 
 const nextConfig: NextConfig = {
   env: {
-    // Exposed to the browser: the only API the web app talks to.
-    NEXT_PUBLIC_API_BASE_URL: process.env.API_BASE_URL ?? "http://localhost:4000",
+    // Exposed to the browser: the only API the web app talks to. On Vercel set
+    // NEXT_PUBLIC_API_BASE_URL (https://API_DOMAIN); locally API_BASE_URL from the root .env.
+    NEXT_PUBLIC_API_BASE_URL:
+      process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.API_BASE_URL ?? "http://localhost:4000",
   },
   // The dev badge sits on top of the graph canvas; the overlay still shows errors.
   devIndicators: false,

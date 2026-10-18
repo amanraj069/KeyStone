@@ -90,8 +90,9 @@ Keystone ingests `data/artifacts.jsonl` — pages, PRs, Slack threads, emails, t
 | `packages/shared` | Zod schemas and types shared by both apps. |
 | `scripts/` | Python data preparation (`prepare_orgforge.py`). |
 | `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3100) and Redis for BullMQ (6380). |
-| `docker-compose.prod.yml` | Production stack. |
-| `docs/` | Cypher query reference, MCP integration guide, development notes. |
+| `docker-compose.prod.yml` | Production stack on one EC2 instance: FalkorDB, Redis, API, worker, Caddy ([docs/deploy.md](docs/deploy.md)). |
+| `deploy/` | Caddyfile (HTTPS, SSE) and the optional FalkorDB Browser site. |
+| `docs/` | Cypher query reference, MCP integration guide, deployment guide, development notes. |
 
 ---
 
@@ -142,6 +143,7 @@ Open **http://localhost:3000** for the Org Pulse dashboard, **http://localhost:3
 | `pnpm extract [--dry-run]` | Extract systems and decisions with the LLM (cached) |
 | `pnpm embed [--dry-run]` | Build retrieval chunks and embeddings (cached) |
 | `pnpm reingest-roles` | Rewrite person–artifact role edges, then refresh expertise |
+| `pnpm seed [--force]` | Rebuild `apex` from files only (zero LLM/embedding calls); `--force` even if it has data. Runs compiled: `pnpm --filter @keystone/api build` first |
 | `pnpm ask "question"` | Ask the agent from the command line (API must be running) |
 | `pnpm bench [--only=b1\|b2] [--dry-run] [--yes] [--out=name]` | Benchmark: departure prediction (B1) and question answering vs a vector-only baseline (B2) |
 | `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio |
@@ -165,6 +167,13 @@ Everything is rebuilt from `data/artifacts.jsonl` and the caches in `DATA_DIR` (
 7. `pnpm expertise` — final refresh of `KNOWS`, `COLLAB` and `apex_proj`
 
 Set `LLM_CACHE_ONLY=yes` to turn any cache miss into an error, proving a run made no LLM calls.
+
+**In one command: `pnpm seed`.** It runs the same stages (plus restoring approved actions from
+`DATA_DIR/exports/actions-latest.jsonl`) into a staging graph `apex_seed` and renames it over `apex`
+only when everything succeeded. Its LLM layer is cache-only with a provider that cannot reach any
+API, and every extraction and embedding entry is checked before the first write: if one is missing,
+it stops with the full list of missing ids and leaves `apex` untouched. The API runs it by itself at
+startup when `apex` is empty and there is no `apex_backup` to restore (`GET /health` says `"seeding"`).
 
 ---
 
@@ -377,11 +386,27 @@ Copy `.env.example` to `.env`. Key variables:
 | `CORE_MIN_MENTIONS` | `5` | Minimum artifact mentions for a system to be "core" |
 | `WHATIF_MAX_CONCURRENT` | `2` | Maximum simultaneous departure simulations |
 | `LLM_CACHE_ONLY` | `no` | `yes` to make a cache miss an error (proves zero LLM calls) |
-| `ADMIN_TOKEN` | — | When set, `POST /ingest/*` and `POST /actions/:id/approve` require `x-admin-token` |
+| `ADMIN_TOKEN` | — | When set, `POST /ingest/*` and `POST /actions/:id/approve` require `x-admin-token`; `POST /admin/*` is disabled until it is set |
 | `TEXT_STORE` | `local` | `local` or `s3` (artifact bodies and chunk text live here, not in the graph) |
 | `BENCH_PER_TYPE` | `15` | Benchmark questions sampled per question type |
 | `BENCH_SEED` | `13` | Benchmark sampling seed (same seed, same questions) |
 | `BENCH_JUDGE_MODEL` | the system model | Optional: the model that judges answers and checks B1 names |
+
+---
+
+## Deployment
+
+One EC2 instance runs `docker-compose.prod.yml`; the web app runs on Vercel. Step by step:
+**[docs/deploy.md](docs/deploy.md)**. Redeploy with `scripts/deploy.sh ubuntu@<elastic-ip>`.
+
+| Endpoint / job | What it does |
+|---|---|
+| `GET /health` | `status`: `up`, `seeding` (apex being restored or rebuilt), `degraded` (apex empty) or `down` |
+| `POST /admin/backup` | Copy `apex` to `apex_backup` now; the old backup is replaced only once the copy succeeded (the worker also does it every 6 hours) |
+| `POST /admin/restore` | Replace `apex` with `apex_backup`, merge the latest actions export back, rebuild `apex_proj` |
+| `POST /admin/export-actions` | Write every Action with its edges to `exports/actions-<timestamp>.jsonl` and `actions-latest.jsonl` (also every 6 hours) |
+
+All `/admin/*` endpoints need `x-admin-token: <ADMIN_TOKEN>`.
 
 ---
 
