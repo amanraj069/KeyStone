@@ -19,9 +19,26 @@ export const LivePostSchema = z
   .refine((post) => post.type === 'slack' || !!post.title, { message: 'A page needs a title', path: ['title'] });
 export type LivePost = z.infer<typeof LivePostSchema>;
 
-export const LIVE_STEPS = ['ingest', 'extract', 'embed', 'refresh', 'diff'] as const;
+export const LIVE_STEPS = ['ingest', 'extract', 'embed', 'refresh', 'diff', 'act'] as const;
 export const LiveStepSchema = z.enum(LIVE_STEPS);
 export type LiveStep = z.infer<typeof LiveStepSchema>;
+
+/**
+ * A proposal the risk watcher made by itself after a change, with nobody asking: a
+ * runbook for a system that lost its backups, a review of a page that went stale, a
+ * new owner for a ticket of someone who left. A person still approves it on Audit.
+ */
+export const WatcherProposalSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['reassign', 'runbook', 'review_doc']),
+  /** Ticket id, system name or page id. */
+  target: z.string(),
+  assignee: z.string().nullable(),
+  reason: z.string(),
+  /** False when an open proposal for the same target already existed (it is returned instead). */
+  created: z.boolean(),
+});
+export type WatcherProposal = z.infer<typeof WatcherProposalSchema>;
 
 /** What changed in the company graph because of one live document. */
 export const LiveResultSchema = z.object({
@@ -39,6 +56,8 @@ export const LiveResultSchema = z.object({
   riskChanges: z.array(z.object({ system: z.string(), before: RiskLevelSchema.nullable(), after: RiskLevelSchema.nullable(), expertsAfter: z.array(z.string()) })),
   /** People the document announces as leaving, now inactive. */
   newlyInactive: z.array(z.string()),
+  /** What the risk watcher proposed because of these changes. */
+  proposals: z.array(WatcherProposalSchema).default([]),
   llmCalls: z.number().int(),
   embedCalls: z.number().int(),
   ms: z.number(),

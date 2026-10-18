@@ -96,6 +96,10 @@ export const EnvSchema = z
     // When set, POST /ingest/* requires the header `x-admin-token: <value>`.
     ADMIN_TOKEN: optionalText,
 
+    // POST /agent/ask limits (it spends LLM calls): per visitor per minute, and for everyone per hour.
+    AGENT_RATE_PER_MINUTE: z.coerce.number().int().min(1).default(6),
+    AGENT_RATE_PER_HOUR: z.coerce.number().int().min(1).default(300),
+
     // HTTP.
     WEB_ORIGIN: z.url().default('http://localhost:3000'),
     API_BASE_URL: z.url().default('http://localhost:4000'),

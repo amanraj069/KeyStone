@@ -105,6 +105,14 @@ describe('Stage 7 analytics on the fixture graph', () => {
     expect(result.evidencePath?.edges).toHaveLength(8);
   });
 
+  it("expert sources give each evidence id its title and the person's roles, in evidence order (K3c)", async () => {
+    const sources = await analytics.expertSources([{ person: 'Ada', evidence: ['PR-1', 'NOPE', 'T-1'] }], fx.name);
+    expect(sources.get('Ada')).toEqual([
+      { id: 'PR-1', title: 'Fix TitanDB connection pool', type: 'pr', day: 4, roles: ['reviewed'] },
+      { id: 'T-1', title: 'TitanDB latency spike', type: 'jira', day: 3, roles: ['authored'] },
+    ]);
+  });
+
   it('decision trace shows what replaced what, with the source and its authors (K10a)', async () => {
     const trace = await analytics.decisions('MobileApp', fx.name);
     expect(trace).toEqual([

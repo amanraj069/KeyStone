@@ -112,13 +112,29 @@ describe('Keystone MCP server on the fixture graph', () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'bridge_people', 'bus_factor', 'central_people', 'check_causal_link', 'check_follow_up', 'check_involvement', 'check_visibility', 'create_runbook_task',
-      'draft_handover', 'find_artifacts', 'find_event', 'find_stale_docs', 'get_artifact', 'how_connected', 'list_people', 'list_systems', 'propose_reassignment', 'recall_memory', 'search_knowledge', 'simulate_departure', 'trace_decision', 'what_followed', 'who_knows',
+      'draft_handover', 'find_artifacts', 'find_event', 'find_stale_docs', 'get_artifact', 'how_connected', 'list_people', 'list_systems', 'propose_reassignment', 'recall_memory', 'search_knowledge', 'simulate_departure', 'trace_decision', 'triage_incident', 'what_followed', 'who_knows',
     ]);
     for (const tool of tools) {
       expect(tool.description!.length).toBeGreaterThan(80);
       expect(tool.inputSchema.type).toBe('object');
     }
     expect(tools.find((t) => t.name === 'who_knows')!.inputSchema.required).toEqual(['system']);
+  });
+
+  it('triage_incident: from a ticket to its systems, the active people who know them, and earlier incidents on them', async () => {
+    const { envelope } = await call<{
+      systems: string[];
+      responders: { person: string; relativeScore: number }[];
+      pastIncidents: { id: string; shared: string[] }[];
+    }>('triage_incident', { incident: 'T-4' });
+    expectEnvelope(envelope);
+    // T-4 names TitanDB and MobileApp; T-1 (TitanDB) and T-3 (MobileApp) are the earlier incidents on them.
+    expect(envelope.data.systems.sort()).toEqual(['MobileApp', 'TitanDB']);
+    expect(envelope.data.pastIncidents.map((p) => p.id).sort()).toEqual(['T-1', 'T-3']);
+    expect(envelope.data.responders.length).toBeGreaterThan(0);
+    expect(envelope.data.responders[0]).toMatchObject({ relativeScore: 1 });
+    expect(envelope.data.responders.map((r) => r.person)).not.toContain('Cara'); // left the company
+    expect(envelope.evidence).toEqual(expect.arrayContaining(['T-4', 'T-1', 'T-3']));
   });
 
   it('central_people: PageRank on the collaboration network, the most central first (algo.pageRank)', async () => {
@@ -152,6 +168,10 @@ describe('Keystone MCP server on the fixture graph', () => {
     const { envelope } = await call<{ experts: Record<string, unknown>[] }>('who_knows', { system: 'TitanDB' });
     expect(envelope.data.experts[0]).toMatchObject({ person: 'Ada', relativeScore: 1 });
     for (const expert of envelope.data.experts) expect(expert).not.toHaveProperty('score');
+    // Every evidence id comes with its title, so the answer can say what the expert did.
+    const top = envelope.data.experts[0] as { evidence: string[]; sources: { id: string; title: string | null }[] };
+    expect(top.sources.map((s) => s.id)).toEqual(top.evidence);
+    expect(top.sources.every((s) => s.title)).toBe(true);
   });
 
   it('recall_memory: approved notes (citable as evidence) and how often a subject was asked about', async () => {

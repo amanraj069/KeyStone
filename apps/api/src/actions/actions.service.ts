@@ -1,7 +1,7 @@
 import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import type { ActionRow, GraphView, HandoverPlan } from '@keystone/shared';
+import type { ActionRow, GraphView, HandoverPlan, LiveResult, WatcherProposal } from '@keystone/shared';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { pathsToGraphView } from '../analytics/graph-view';
 import { LAST_ARTIFACT_DAY, PERSON_EXISTS, SYSTEM_EXISTS } from '../analytics/queries/analytics.queries';
@@ -19,6 +19,8 @@ import {
   HANDOVER_SUMMARY_PROMPT,
   HANDOVER_SUMMARY_TASK,
   MAX_LISTED_ACTIONS,
+  MAX_WATCHER_PROPOSALS,
+  WATCHER,
 } from './actions.constants';
 import * as Q from './queries/actions.queries';
 
@@ -75,6 +77,19 @@ export class ActionsService {
     return this.writes.run(() => this.handover(person));
   }
 
+  /**
+   * The risk watcher: after a change to the graph (a live document), proposes the
+   * follow-up work by itself, from what the graph says changed. A person who just
+   * left gets new owners for their open tickets (K6), a system that just lost its
+   * backups gets a runbook task for whoever still knows it, and a page that just went
+   * stale gets a review by the author of the change. Each proposal is BASED_ON its
+   * evidence (including the document that caused it) and marked createdBy 'watcher';
+   * nothing is approved here. One failed proposal never stops the others.
+   */
+  reactToChange(change: WatchedChange): Promise<WatcherProposal[]> {
+    return this.writes.run(() => this.watch(change));
+  }
+
   // ------------------------------------------------------------------ decisions (people only, never a tool)
 
   /** Approves a proposed action; an approved reassignment moves the ticket's ASSIGNED edge. */
@@ -117,19 +132,83 @@ export class ActionsService {
     return row;
   }
 
+  // ------------------------------------------------------------------ the risk watcher (callers hold `writes`)
+
+  private async watch(change: WatchedChange): Promise<WatcherProposal[]> {
+    const proposals: WatcherProposal[] = [];
+    const attempt = async (kind: WatcherProposal['kind'], target: string, work: () => Promise<Proposal>) => {
+      try {
+        const { action, created } = await work();
+        proposals.push({ id: action.id, kind, target, assignee: action.assignee ?? null, reason: action.reason, created });
+      } catch (error) {
+        this.logger.warn(`Watcher: no ${kind} proposal for ${target}: ${String(error)}`);
+      }
+    };
+
+    // Someone left: their open tickets need a new owner.
+    for (const person of change.newlyInactive) {
+      const impact = await this.analytics.departureImpact(person, undefined, this.settings.graph);
+      for (const ticket of impact.openTickets.slice(0, MAX_WATCHER_PROPOSALS)) {
+        const owner = ticket.suggestedOwners[0];
+        if (!owner) continue;
+        await attempt('reassign', ticket.ticket, () =>
+          this.reassign({
+            ticketId: ticket.ticket,
+            person: owner,
+            reason: `${person} has left the company (${change.sourceId}); ${owner} knows the systems this ticket names best.`,
+            fromPerson: person,
+            planId: null,
+            evidenceIds: [change.sourceId, ...(ticket.ownerEvidence?.[0] ?? [])],
+            createdBy: WATCHER,
+          }),
+        );
+      }
+    }
+
+    // A system lost its backups: get the knowledge written down while someone still has it.
+    for (const risk of watchedRiskChanges(change.riskChanges).slice(0, MAX_WATCHER_PROPOSALS)) {
+      const reason =
+        risk.after === 'critical'
+          ? `${risk.system} went from ${risk.before ?? 'not core'} to critical after ${change.sourceId}: only ${risk.expertsAfter[0] ?? 'one person'} knows it now; a runbook spreads that knowledge.`
+          : `${risk.system} went from ${risk.before ?? 'not core'} to orphaned after ${change.sourceId}: nobody left meets the expert bar, so whoever knows it best of those still here writes the runbook.`;
+      await attempt('runbook', risk.system, () => this.runbook({ system: risk.system, planId: null, reason, createdBy: WATCHER }));
+    }
+
+    // A page now states a replaced decision: whoever made the change reviews it.
+    for (const doc of change.newlyStale.slice(0, MAX_WATCHER_PROPOSALS)) {
+      await attempt('review_doc', doc.stalePage, () =>
+        this.reviewDoc({
+          pageId: doc.stalePage,
+          assignee: change.author,
+          reason: `"${doc.pageTitle}" still states "${doc.outdatedClaim}", which a newer decision replaced: "${doc.currentDecision}". Update the page.`,
+          evidenceIds: unique([doc.stalePage, change.sourceId, doc.decidedIn ?? '']),
+          planId: null,
+          createdBy: WATCHER,
+        }),
+      );
+    }
+
+    this.logger.log(`Watcher after ${change.sourceId}: ${proposals.filter((p) => p.created).length} new proposals, ${proposals.length} in all`);
+    return proposals;
+  }
+
   // ------------------------------------------------------------------ creating (callers hold `writes`)
 
-  private async reassign(input: { ticketId: string; person: string; reason: string; fromPerson: string | null; planId: string | null; evidenceIds?: string[] }): Promise<Proposal> {
+  private async reassign(input: { ticketId: string; person: string; reason: string; fromPerson: string | null; planId: string | null; evidenceIds?: string[]; createdBy?: string }): Promise<Proposal> {
     const existing = await this.openAction('reassign', input.ticketId);
     if (existing) return { action: existing, created: false };
     const [ticket] = await this.graph.roQuery(this.settings.graph, Q.TICKET_EXISTS, { ticketId: input.ticketId });
     if (!ticket) throw new NotFoundException(`No ticket ${input.ticketId}`);
     await this.requireActivePerson(input.person);
     const evidenceIds = input.evidenceIds ?? (await this.reassignEvidence(input.ticketId, input.person));
-    return this.create(Q.CREATE_REASSIGN_PROPOSAL, { ticketId: input.ticketId, person: input.person, reason: input.reason, fromPerson: input.fromPerson, planId: input.planId, evidenceIds });
+    return this.create(
+      Q.CREATE_REASSIGN_PROPOSAL,
+      { ticketId: input.ticketId, person: input.person, reason: input.reason, fromPerson: input.fromPerson, planId: input.planId, evidenceIds },
+      input.createdBy,
+    );
   }
 
-  private async runbook(input: { system: string; planId: string | null; assignee?: string | null; evidenceIds?: string[]; reason?: string }): Promise<Proposal> {
+  private async runbook(input: { system: string; planId: string | null; assignee?: string | null; evidenceIds?: string[]; reason?: string; createdBy?: string }): Promise<Proposal> {
     const existing = await this.openAction('runbook', input.system);
     if (existing) return { action: existing, created: false };
     const [system] = await this.graph.roQuery(this.settings.graph, SYSTEM_EXISTS, { system: input.system });
@@ -148,13 +227,14 @@ export class ActionsService {
           ? `${input.system} has a single expert (${sole}); a runbook makes their knowledge available to others.`
           : `${input.system} has ${row?.experts ?? 'no counted'} experts (${row?.riskLevel ?? 'not a core system'}); a runbook spreads the knowledge.`;
     }
-    return this.create(Q.CREATE_RUNBOOK_TASK, { system: input.system, assignee: assignee ?? null, reason, planId: input.planId, evidenceIds });
+    return this.create(Q.CREATE_RUNBOOK_TASK, { system: input.system, assignee: assignee ?? null, reason, planId: input.planId, evidenceIds }, input.createdBy);
   }
 
-  private async reviewDoc(input: { pageId: string; assignee: string | null; reason: string; evidenceIds: string[]; planId: string }): Promise<Proposal> {
+  private async reviewDoc(input: { pageId: string; assignee: string | null; reason: string; evidenceIds: string[]; planId: string | null; createdBy?: string }): Promise<Proposal> {
     const existing = await this.openAction('review_doc', input.pageId);
     if (existing) return { action: existing, created: false };
-    return this.create(Q.CREATE_REVIEW_DOC_TASK, { ...input });
+    const { createdBy, ...params } = input;
+    return this.create(Q.CREATE_REVIEW_DOC_TASK, params, createdBy);
   }
 
   private async handover(person: string): Promise<HandoverPlan> {
@@ -227,13 +307,13 @@ export class ActionsService {
   }
 
   /** Runs one CREATE query with the shared fields, then reads the action back. */
-  private async create(cypher: string, params: Record<string, unknown>): Promise<Proposal> {
+  private async create(cypher: string, params: Record<string, unknown>, createdBy: string = CREATED_BY): Promise<Proposal> {
     const id = `act-${randomBytes(6).toString('hex')}`;
     const [row] = await this.graph.query<{ id: string }>(this.settings.graph, cypher, {
       ...params,
       id,
       today: await this.today(),
-      createdBy: CREATED_BY,
+      createdBy,
       createdAt: Date.now(),
     } as never);
     if (!row) throw new NotFoundException('The target of this action was not found');
@@ -321,6 +401,25 @@ export class ActionsService {
     const [row] = await this.graph.roQuery<{ day: number | null }>(this.settings.graph, LAST_ARTIFACT_DAY);
     return row?.day ?? 0;
   }
+}
+
+/** A change the risk watcher reacts to: what a live document did to the graph, and who posted it. */
+export interface WatchedChange {
+  /** The document that caused the change (cited as evidence on every proposal). */
+  sourceId: string;
+  /** Its author: they review the pages their change made stale. */
+  author: string;
+  newlyStale: LiveResult['newlyStale'];
+  riskChanges: LiveResult['riskChanges'];
+  newlyInactive: string[];
+}
+
+/** Risk changes worth a runbook: a system that became critical or orphaned (worse than before). */
+export function watchedRiskChanges(changes: LiveResult['riskChanges']): LiveResult['riskChanges'] {
+  const rank = { orphaned: 0, critical: 1, watch: 2, ok: 3 } as const;
+  return changes.filter(
+    (c) => (c.after === 'orphaned' || c.after === 'critical') && (c.before === null || rank[c.after] < rank[c.before]),
+  );
 }
 
 function unique(values: readonly string[]): string[] {

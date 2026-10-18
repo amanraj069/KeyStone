@@ -18,6 +18,7 @@ import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
 import { falkorSettingsFromEnv } from '../src/graph/falkor-settings';
 import { GraphService } from '../src/graph/graph.service';
+import { LocalTextStore } from '../src/ingest/text-store';
 import { ProjectionService } from '../src/projection/projection.service';
 
 async function main(): Promise<void> {
@@ -29,7 +30,8 @@ async function main(): Promise<void> {
     const asOfDay = index >= 0 ? Number(process.argv[index + 1]) : undefined;
     const env = validateEnv(process.env);
     const catalog = new CatalogService(graph, { coreMinMentions: env.CORE_MIN_MENTIONS, coreMinAuthors: CORE_MIN_AUTHORS });
-    const refreshed = await new ExpertiseService(graph, catalog).refresh({ asOfDay });
+    // With the TextStore, the refresh also counts how often each body names its systems (K2's evidence order).
+    const refreshed = await new ExpertiseService(graph, catalog, new LocalTextStore(env.DATA_DIR)).refresh({ asOfDay });
     const projected = await new ProjectionService(graph).rebuild();
 
     const d = refreshed.distribution;

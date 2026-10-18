@@ -25,6 +25,28 @@ export interface DepartureImpact {
   unsharedPages: { page: string; title: string }[];
 }
 
+/** One piece of an expert's evidence (K3c): what the document is and how they worked on it. */
+export interface ExpertSource {
+  id: string;
+  title: string | null;
+  type: string | null;
+  day: number | null;
+  /** authored, reviewed, assigned and/or participated. */
+  roles: string[];
+}
+
+/** Incident triage (triageIncident): the incident, its systems, who can respond, and what fixed it before. */
+export interface IncidentTriage {
+  incident: { id: string; title: string | null; type: string | null; day: number | null; isIncident: boolean; linked: string[] };
+  systems: string[];
+  responders: { person: string; dept: string | null; score: number; knows: string[]; evidence: string[] }[];
+  pastIncidents: { id: string; title: string | null; day: number | null; shared: string[]; fixes: { id: string; authors: string[] }[] }[];
+}
+
+/** Triage looks at the incident's most strongly named systems, and returns this many responders and past incidents. */
+const TRIAGE_MAX_SYSTEMS = 5;
+const TRIAGE_LIMIT = 5;
+
 /** Edges a chain between two people may use: collaboration only, so each step is two colleagues. */
 const PEOPLE_PATH_RELS = ['COLLAB'];
 /** Edges a chain to or between systems may use: work on artifacts, what they mention, collaboration. */
@@ -62,6 +84,22 @@ export class AnalyticsService {
     const view = pathsToGraphView(paths.map((row) => row.path));
     const evidence = view.nodes.flatMap((node) => (node.artifactId ? [node.artifactId] : []));
     return { system, experts, evidencePath: { person: top.person, ...view, evidence } };
+  }
+
+  /** K3c: each expert's evidence with title, type, day and their roles on it, in evidence order. */
+  async expertSources(experts: Pick<Expert, 'person' | 'evidence'>[], graphName = APEX_GRAPH): Promise<Map<string, ExpertSource[]>> {
+    const rows = await this.graph.roQuery<ExpertSource & { person: string }>(graphName, Q.K3C_EXPERT_SOURCES, {
+      experts: experts.map(({ person, evidence }) => ({ person, evidence })),
+    });
+    return new Map(
+      experts.map(({ person, evidence }) => [
+        person,
+        evidence.flatMap((id) => {
+          const row = rows.find((r) => r.person === person && r.id === id);
+          return row ? [{ id: row.id, title: row.title, type: row.type, day: row.day, roles: row.roles }] : [];
+        }),
+      ]),
+    );
   }
 
   /** K4: experts per system with a risk level (0 orphaned, 1 critical, 2 watch, 3+ ok). */
@@ -122,6 +160,31 @@ export class AnalyticsService {
       openTickets,
       unsharedPages,
     };
+  }
+
+  /**
+   * T1-T3, incident triage: from an incident, alert or thread to the systems it is
+   * about (through what it references), to who can respond now (active people by
+   * KNOWS on those systems), and to earlier incidents on the same systems with the
+   * PRs that fixed them and their authors. Every step is a graph hop; nothing is guessed.
+   */
+  async triageIncident(id: string, graphName = APEX_GRAPH): Promise<IncidentTriage> {
+    const [incident] = await this.graph.roQuery<IncidentTriage['incident'] & { systems: string[] }>(graphName, Q.T1_TRIAGE_INCIDENT, {
+      id,
+      maxSystems: TRIAGE_MAX_SYSTEMS,
+    });
+    if (!incident) throw new NotFoundException(`No artifact ${id}`);
+    const { systems, ...about } = incident;
+    if (systems.length === 0) return { incident: about, systems, responders: [], pastIncidents: [] };
+    const [responders, pastIncidents] = await Promise.all([
+      this.graph.roQuery<IncidentTriage['responders'][number]>(graphName, Q.T2_TRIAGE_RESPONDERS, { systems, limit: TRIAGE_LIMIT }),
+      this.graph.roQuery<IncidentTriage['pastIncidents'][number]>(graphName, Q.T3_TRIAGE_PAST_INCIDENTS, {
+        systems,
+        skip: [about.id, ...about.linked],
+        limit: TRIAGE_LIMIT,
+      }),
+    ]);
+    return { incident: about, systems, responders, pastIncidents };
   }
 
   /** K10a: decisions about a system, newest first, with the artifact each was made in. */
