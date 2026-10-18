@@ -1,19 +1,21 @@
 <h1 align="center">Keystone</h1>
 
-<p align="center"><b>Your company's memory, made searchable. Know who knows what, before it walks out the door.</b></p>
+<p align="center"><b>A company brain that knows who knows what, before it walks out the door. Built on FalkorDB.</b></p>
 
 <p align="center">
-  Keystone builds a living knowledge graph of your organisation — people, artifacts, systems, decisions —
-  so you can answer <em>who knows this</em>, <em>what breaks if this person leaves</em>,
-  and <em>why was this decided</em>, with cited sources.
+  Keystone turns a company's Slack threads, pull requests, docs, tickets, emails and meetings into a FalkorDB knowledge graph
+  of people, documents, systems and decisions. An agent answers through that graph with cited sources: <em>who knows this</em>,
+  <em>what breaks if this person leaves</em>, <em>why was this decided</em>. Then it proposes the follow-up work, such as
+  handover plans and ticket reassignments, for a person to approve.
 </p>
 
 <p align="center">
+  <a href="https://keystone.aman-raj.me"><b>Live app</b></a> ·
+  <a href="#the-graph"><b>The graph</b></a> ·
+  <a href="#how-the-agent-queries-the-graph"><b>How the agent queries it</b></a> ·
+  <a href="#the-graph-does-the-work"><b>The graph does the work</b></a> ·
   <a href="#quick-start"><b>Quick start</b></a> ·
-  <a href="#how-it-works"><b>How it works</b></a> ·
-  <a href="#the-web-app"><b>Web app</b></a> ·
-  <a href="#mcp-server"><b>MCP server</b></a> ·
-  <a href="#rebuilding-the-graph"><b>Rebuilding</b></a>
+  <a href="AI_USAGE.md"><b>AI usage</b></a>
 </p>
 
 <p align="center">
@@ -21,15 +23,25 @@
   <img alt="API" src="https://img.shields.io/badge/api-NestJS%2011-E0234E">
   <img alt="Web" src="https://img.shields.io/badge/web-Next.js%2015-black">
   <img alt="LLM" src="https://img.shields.io/badge/llm-OpenAI%20%7C%20Gemini-5A2D82">
-  <img alt="Queue" src="https://img.shields.io/badge/queue-BullMQ-orange">
+  <img alt="MCP" src="https://img.shields.io/badge/agent-MCP-555">
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-brightgreen">
 </p>
+
+| | |
+|---|---|
+| **Live app** | **https://keystone.aman-raj.me** |
+| **Live API and MCP server** | https://15-252-22-37.sslip.io (`GET /health`; MCP over Streamable HTTP at `POST /mcp`) |
+<!-- | **Demo video** | add the link here | -->
+| **Tracks** | 03 Company Brain (primary) · 01 Agents That Act on Connected Data |
+| **Why a graph** | Same model, same context budget: **72%** correct against **24%** for vector-only retrieval on 78 questions (paired sign test p < 0.001). See [Benchmark](#benchmark) |
+| **Data** | The public, synthetic [OrgForge](https://huggingface.co/datasets/aeriesec/orgforge) company "Apex Athletics" (MIT licence); no real personal data |
+| **AI assistance** | Built with Claude Code, disclosed in [AI_USAGE.md](AI_USAGE.md) |
 
 ---
 
 ## The problem
 
-When someone leaves a company, knowledge leaves with them. Most of what your team knows lives in Slack threads, pull requests, emails, tickets and Confluence pages — not in anyone's head. Keystone reads all of it, builds a graph of who knows what, and answers questions with citations to the actual artifacts.
+When someone leaves a company, knowledge leaves with them. Most of what your team knows lives in Slack threads, pull requests, emails, tickets and Confluence pages, not in anyone's head. Keystone reads all of it, builds a graph of who knows what, and answers questions with citations to the actual artifacts.
 
 > *"Who is our last expert on the TitanDB migrations? If they left tomorrow, what would break, and who could cover?"*
 
@@ -59,27 +71,175 @@ flowchart LR
 
 ---
 
-## How it works
+## The graph
 
-### Graph model
+One FalkorDB graph, `apex`, holds the whole company. Documents are ingested without any LLM call. An LLM (cached, so a
+rebuild costs nothing) only reads which **systems** and **decisions** each document mentions. Everything after that,
+including expertise, risk, staleness and suggested owners, is computed by Cypher inside FalkorDB.
 
-Keystone ingests `data/artifacts.jsonl` — pages, PRs, Slack threads, emails, tickets, meetings — without any LLM call. Then an LLM (cached, so a rebuild costs zero calls) extracts the **systems** and **decisions** each artifact mentions.
+```mermaid
+flowchart LR
+    D[Dept]
+    P((Person))
+    A["Artifact<br/>Page · Ticket · Thread · PR<br/>Email · Meeting · Alert · Record"]
+    S[System]
+    Dc[Decision]
+    C["Chunk<br/>vecf32 embedding"]
+
+    P -->|MEMBER_OF| D
+    P -->|"AUTHORED · REVIEWED · ASSIGNED<br/>PARTICIPATED {messages}<br/>DEPARTURE_ANNOUNCED_IN"| A
+    P ==>|"KNOWS {score, evidence}"| S
+    P -.->|"COLLAB {weight}"| P
+    A -->|"MENTIONS {weight}"| S
+    A -->|"REFERENCES · FIXES"| A
+    Dc -->|DECIDED_IN| A
+    Dc -->|ABOUT| S
+    Dc -->|"SUPERSEDES {day}"| Dc
+    A -->|"ASSERTS (pages)"| Dc
+    C -->|PART_OF| A
+```
+
+The thick and dotted edges are computed by Cypher; the rest come from the documents. `Ticket`, `Page` and the other
+document types are extra labels on `Artifact`.
+
+What the agent and people write into the same graph: proposals with their evidence, and the agent's memory.
+
+```mermaid
+flowchart LR
+    Ac["Action<br/>reassign · runbook · review_doc · handover"]
+    Ac -->|PART_OF_PLAN| H["Action: handover plan"]
+    Ac -->|TARGETS| A[Ticket / Page / Person / System]
+    Ac -->|ASSIGNS_TO| P((Person))
+    Ac -->|BASED_ON| E[Artifact]
+
+    U[User] -->|STARTED| Se[Session]
+    Se -->|HAS_TURN| T[Turn]
+    T -->|NEXT| T
+    T -->|CITED| E
+    T -->|CONCERNS| S[System / Person]
+    N["Note<br/>a person approves it"] -->|CORRECTS| T
+    N -->|CONCERNS| S
+    N -->|BASED_ON| E
+```
+
+Every label and property is listed in [docs/spec-queries.md](docs/spec-queries.md) (K1).
+
+### Where each edge comes from
+
+| Edge | Meaning | Written by |
+|---|---|---|
+| `AUTHORED` · `REVIEWED` · `ASSIGNED` · `PARTICIPATED {messages}` | Who did what on a document | Ingest, from document metadata (no LLM) |
+| `DEPARTURE_ANNOUNCED_IN` | An HR announcement in the documents says this person leaves | Ingest |
+| `MENTIONS {weight}` · `DECIDED_IN` · `ABOUT` | Which systems and decisions a document talks about | LLM extraction, cached |
+| `SUPERSEDES` · `ASSERTS` | A later decision replaces an earlier one; a page still states a decision | LLM second pass per system, cached |
+| **`KNOWS {score, lastDay, evidence}`** | How much a person knows a system | **Cypher (K2)**: authored 3, reviewed 2, assigned 1, participated 0.5 × min(messages, 4) / 4, with a 30-day exponential decay |
+| **`COLLAB {weight}`** | Two people work on the same documents | **Cypher (K8a)** |
+| `PART_OF` (+ vector index) | A ~800-character chunk of a document with its embedding | `pnpm embed`, cached |
+| `TARGETS` · `ASSIGNS_TO` · `BASED_ON` · `PART_OF_PLAN` | A proposal, who it assigns, and the evidence behind it | Agent and handover planner; a person approves |
+| `STARTED` · `HAS_TURN` · `NEXT` · `CITED` · `CONCERNS` · `CORRECTS` | The agent's memory of each conversation and approved corrections | Agent after each answer; people for notes |
+
+### Rules that turn documents into knowledge
 
 - **Who did what.** `AUTHORED` = real authorship (one page, PR, email creator, single thread writer). People in multi-person threads or meetings get `PARTICIPATED {messages}`. `REVIEWED` = PR review. `ASSIGNED` = ticket ownership.
 - **Departures** come from HR announcements in the documents themselves ("X's last day is …"). They set `departedDay`, keep the announcing artifact as evidence, and make the person inactive from that day on. Their past work stays in the graph.
-- **Expertise (`KNOWS`).** Each person–system pair is scored from the artifacts that mention the system: authored 3, reviewed 2, assigned 1, participated 0.5 × min(messages, 4) / 4 — each with a 30-day exponential decay.
 - **Core systems.** A system is *core* when at least 5 artifacts mention it, written by at least 2 people. Bus factor, departure impact and the projection use core systems only.
 - **Experts.** A person is an expert on a core system when their score is ≥ 0.4 and at least 25 % of that system's top score.
 - **Evidence.** Each `KNOWS` edge keeps the five artifacts most *about* the system: weighted by mention strength, ×4 when the title names the system, divided by how many systems the artifact mentions, so a stack list naming eight systems never leads. Agents see `relativeScore` (1 = the top expert), never the raw score.
-- **Memory.** The agent's chats live in the same graph: `(:User)-[:STARTED]->(:Session)-[:HAS_TURN]->(:Turn)`, each Turn `CITED` the artifacts it used and `CONCERNS` the systems and people it was about. A user's correction is a `(:Note)` that `CORRECTS` the Turn, `CONCERNS` the same subjects and is `BASED_ON` its artifacts; only notes a person approved reach the agent. See [Memory](#memory).
+- **Memory.** A user's correction is a `(:Note)` that `CORRECTS` the Turn, `CONCERNS` the same subjects and is `BASED_ON` its artifacts; only notes a person approved reach the agent. See [Memory](#memory).
 
-### Retrieval
+### Several graphs in one FalkorDB instance
 
-`pnpm embed` splits every artifact body into ~800-character chunks (100-character overlap), embeds them, and writes `(:Chunk)-[:PART_OF]->(:Artifact)` into FalkorDB. Search is hybrid: nearest-neighbour vector lookup plus graph-expansion over `REFERENCES` edges and author links.
+| Graph | What it is for |
+|---|---|
+| `apex` | The company graph (about 46 MB) |
+| `apex_proj` | Small projection: Person, core System, `KNOWS`, `COLLAB` (about 1 MB). Graph algorithms and what-if run here |
+| `apex_whatif_<id>` | Scratch `GRAPH.COPY` of `apex_proj` for one departure simulation, always deleted afterwards |
+| `apex_replay` | The company replayed day by day for the demo |
+| `apex_backup` · `apex_seed` | Backup every 6 hours; staging graph that a rebuild renames over `apex` only when it succeeded |
+| `bench_proj_<day>` | Projection as of a past day, for the departure-prediction benchmark |
 
-### The agent
+---
 
-`POST /agent/ask` answers any question as a stream of Server-Sent Events. It uses the API's own `/mcp` as its tool server, classifies the question (who_knows, why, what_if, freshness, event, visibility, counterfactual, general; event, visibility and counterfactual come with a short tool recipe that ends in a verdict tool, so the graph decides the yes/no), runs up to 5 tool calls, then applies a citation guardrail: artifact ids that no tool returned as evidence are removed. An answer left with no valid citation becomes *"The answer is not in the company's records."* Yes/no questions are answered with Yes or No first; an answer that something did not happen cites the documents that were checked.
+## How the agent queries the graph
+
+`POST /agent/ask` streams an answer as Server-Sent Events. The agent is an **MCP client of Keystone's own MCP server**:
+each tool is a thin wrapper over named Cypher queries, and the agent picks the tools itself.
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent (LLM)
+    participant M as MCP server /mcp
+    participant F as FalkorDB
+    U->>A: "Who knows TitanDB best, and what breaks if they leave?"
+    A->>F: memory: approved Notes that CONCERN the same systems or people
+    A->>A: classify the question (who_knows, why, what_if, freshness, ...)
+    loop up to 5 tool calls
+        A->>M: who_knows("TitanDB")
+        M->>F: K3a experts + K3b evidence path
+        F-->>M: rows, evidence ids, path
+        M-->>A: data, evidence, graphPath
+        A->>M: simulate_departure("Priya")
+        M->>F: GRAPH.COPY apex_proj → remove Priya → K4 · K8b · K9 · K5–K7
+        F-->>M: before / after diff
+        M-->>A: data, evidence, graphPath
+    end
+    A->>A: citation guardrail: drop every id no tool returned
+    A->>F: store the Turn, CITED artifacts, CONCERNS subjects
+    A-->>U: answer + citations + the graph path it walked
+```
+
+| The question is about… | Tools the agent calls | Cypher they run ([docs/spec-queries.md](docs/spec-queries.md)) |
+|---|---|---|
+| Who knows a system, who is the backup | `who_knows` | K3a experts, K3b evidence path |
+| What breaks if someone leaves | `simulate_departure` | `GRAPH.COPY` → remove the person → K4 bus factor, K8b betweenness, K9 `algo.WCC` islands, K5–K7 impact |
+| Why a decision was made, which page is stale | `trace_decision`, `find_stale_docs` | K10a decision trace, K10b stale pages |
+| Could X have known Y by day N? Did a response follow? | `check_visibility`, `check_involvement`, `check_follow_up`, `check_causal_link` | Verdict queries over involvement edges and days: the graph says yes or no |
+| How two people or systems are connected | `how_connected` | `algo.SPpaths` shortest paths, plus the documents on each step |
+| Who connects teams, who is central | `bridge_people`, `central_people` | `algo.betweenness`, `algo.pageRank` on `COLLAB` |
+| Anything else | `search_knowledge`, `find_artifacts`, `get_artifact`, `what_followed`, `find_event` | K11: vector index (`db.idx.vector.queryNodes`) plus graph expansion over `REFERENCES` and authors |
+| Getting work done | `draft_handover`, `propose_reassignment`, `create_runbook_task` | K5–K7, then `Action` nodes `BASED_ON` their evidence |
+| What colleagues taught it | `recall_memory` | Approved `Note`s that `CONCERN` the subject |
+
+The question classifier gives yes/no, event and counterfactual questions a short tool recipe that ends in a verdict tool,
+so **the graph decides the answer and the LLM only words it**. After at most 5 tool calls, a **citation guardrail** removes
+any artifact id that no tool returned as evidence; an answer left with no valid citation becomes *"The answer is not in
+the company's records."*
+
+**See it yourself:** in Ask, each step of an answer has a *Cypher* chip that shows the exact queries it ran.
+`GET /queries` returns the same map ([`apps/api/src/mcp/tool-queries.ts`](apps/api/src/mcp/tool-queries.ts)).
+
+---
+
+## The graph does the work
+
+Every decision Keystone shows comes from a graph query, not from the LLM's judgement:
+
+| What Keystone decides | Where it comes from in FalkorDB |
+|---|---|
+| Who the expert is | `KNOWS` scores computed in Cypher (K2) and the expert rule; the LLM only sees `relativeScore` |
+| Which systems are at risk (orphaned, critical, watch) | K4 counts the experts per core system on `apex_proj` |
+| What breaks if someone leaves | A `GRAPH.COPY` scratch graph with the person removed; bus factor, betweenness and `algo.WCC` islands compared before and after |
+| Yes or no to "could X have known about Y by day N?" | Verdict tools that check involvement edges and days |
+| Which page is out of date | K10b: a `Page` that `ASSERTS` a `Decision` that has been `SUPERSEDED` |
+| Which sources may be cited | Only artifact ids that a graph tool returned survive the guardrail |
+| Who should take over a ticket | K6: `KNOWS` weighted by how rare the system is; the proposal is an `Action` `BASED_ON` its evidence, and approving it moves the real `ASSIGNED` edge |
+| Why something was suggested | One traversal (`WHY_SUGGESTED`) from the `Action` to its target, plan, evidence and the assignee's `KNOWS` |
+| What the agent remembers | Approved `Note`s found through `CONCERNS` edges to the same systems and people |
+
+**Without the graph there is no answer:** every tool is Cypher, so an agent without FalkorDB has nothing to cite and
+declines. The benchmark measures exactly this against a vector-only baseline that uses the same model and context budget:
+
+| | Keystone (graph + agent) | Vector-only RAG |
+|---|---:|---:|
+| Accuracy on 78 questions (95% CI) | **72%** (61–81) | 24% (16–35) |
+| Right where the other is wrong | **42** | 5 (sign test p < 0.001) |
+| Answer key's evidence in front of the model | **53%** | 17% |
+| Declined to answer | 1 | 27 |
+
+**FalkorDB features used:** Cypher with parameters everywhere, `algo.betweenness`, `algo.pageRank`, `algo.WCC`,
+`algo.SPpaths`, the vector index (`vecf32`, `db.idx.vector.queryNodes`), `GRAPH.COPY` scratch graphs, several graphs
+in one instance, and the FalkorDB Browser for inspection.
 
 ---
 
@@ -143,13 +303,28 @@ by `pnpm seed` and `POST /admin/restore`.
 | `docker-compose.yml` | Local FalkorDB (6379 + Browser on 3100) and Redis for BullMQ (6380). |
 | `docker-compose.prod.yml` | Production stack on one EC2 instance: FalkorDB, Redis, API, worker, Caddy ([docs/deploy.md](docs/deploy.md)). |
 | `deploy/` | Caddyfile (HTTPS, SSE) and the optional FalkorDB Browser site. |
-| `docs/` | Cypher query reference, MCP integration guide, deployment guide, development notes. |
+| `docs/` | Cypher query reference ([spec-queries.md](docs/spec-queries.md)), MCP integration guide, deployment guide. |
+| `AI_USAGE.md` | Which AI tools were used, for what, and what the author did ([AI_USAGE.md](AI_USAGE.md)). |
 
 ---
 
 ## Quick start
 
-Needs **Node ≥ 22**, **pnpm ≥ 10**, and **Docker**.
+No setup is needed to try it: open the **[live app](https://keystone.aman-raj.me)**, or point any MCP client at
+`https://15-252-22-37.sslip.io/mcp`. To run it yourself you need **Node ≥ 22**, **pnpm ≥ 10**, **Docker** and
+**Python 3.12**.
+
+The dataset is not committed (`data/` is gitignored). Download and prepare it from the public OrgForge dataset first;
+this splits it into the documents Keystone may load and the answer key only the benchmark may read
+([scripts/README.md](scripts/README.md)):
+
+```bash
+python3.12 -m venv scripts/.venv
+scripts/.venv/bin/pip install -r scripts/requirements.txt
+scripts/.venv/bin/python scripts/prepare_orgforge.py   # writes data/artifacts.jsonl, data/calendar.json, data/answer_key/
+```
+
+Then start the stack:
 
 ```bash
 cp .env.example .env          # set FALKOR_PASSWORD and an LLM key (GEMINI_API_KEYS or OPENAI_API_KEY)
@@ -176,6 +351,9 @@ pnpm embed
 # 5. Final expertise refresh
 pnpm expertise
 ```
+
+On a fresh clone, steps 2 and 4 call the LLM once per document and cache the results in `data/`. After that,
+`pnpm seed` rebuilds everything from the caches with zero LLM calls (see [Rebuilding the graph](#rebuilding-the-graph)).
 
 Open **http://localhost:3000** for the Org Pulse dashboard, **http://localhost:3100** for the FalkorDB Browser.
 
@@ -236,7 +414,7 @@ All LLM calls go through `LlmService` (`apps/api/src/llm/`):
 | Provider | Env vars | Default models |
 |---|---|---|
 | **OpenAI** | `USE_OPENAI=yes`, `OPENAI_API_KEY` | `gpt-5-nano` (extraction), `text-embedding-3-small` (embeddings) |
-| **Gemini** (default) | `GEMINI_API_KEYS` (comma-separated, rotated) | `gemini-2.5-flash`, `gemini-embedding-001` |
+| **Gemini** (default) | `GEMINI_API_KEYS` (comma-separated, rotated) | `gemini-3.7-flash`, `gemini-embedding-001` |
 
 Every response is Zod-validated and cached in `DATA_DIR/llm-cache`. Embeddings are shortened to `EMBED_DIM` (768) on both providers. Verify setup with `pnpm llm-check`.
 
@@ -324,6 +502,13 @@ full report: [`apps/api/bench-results/results.md`](apps/api/bench-results/result
 | Declined to answer | 1 of 78 | 27 of 78 |
 
 Keystone is ahead on every question type: counterfactual 62% vs 14%, perspective 80% vs 27%, silence 70% vs 30%.
+Keystone is also slower: a median 5.9 s per answer against 1.6 s.
+
+**Read these numbers with their limits:**
+
+- The agent's prompts and tool recipes were improved between runs while looking at results on these same questions,
+  so treat this as a development-set score, not a held-out test. The baseline's prompt was improved in the same runs.
+- B1 (departure prediction) has only two departures inside the simulated days. It is reported as worked examples, not as a score.
 
 `pnpm bench` measures Keystone against the OrgForge answer key. `apps/api/src/bench/` is the **only** code allowed to
 read `data/answer_key/`: an ESLint rule (API and web) and a repo-wide Jest test (`answer-key-guard.spec.ts`) fail if
@@ -358,8 +543,7 @@ answers after both systems have answered; it never reaches the graph, the agent'
   same questions: how many only Keystone got right, how many only the baseline did, and an exact sign-test p-value.
   `BENCH_PER_TYPE=30` runs all 78 questions of the answer key (21 counterfactual, 30 perspective, 27 silence).
 - Every run also records, per question, the tool calls and the artifact ids each system had in front of it, and the
-  **evidence recall** (share of the answer key's evidence artifacts among them), plus a hindsight reference row:
-  the accuracy of always giving each type's most common gold yes/no.
+  **evidence recall** (share of the answer key's evidence artifacts among them).
 - The judge (and B1's "same system?" checks) uses the systems' model unless `BENCH_JUDGE_MODEL` names another.
 - B1 also scores a second predictor next to K5, **knowledge share**: systems (core or not, named in 3+ documents)
   where the person holds at least a quarter of everyone's knowledge as of the day before, thread participation included.
@@ -432,6 +616,32 @@ Every tool returns `{ data, evidence, graphPath? }`. `evidence` holds artifact i
 
 ---
 
+## Cypher queries
+
+Every query Keystone runs is a named, commented string constant in one `queries/` file per module, with `$parameters`
+for every value (no string-built Cypher). **[docs/spec-queries.md](docs/spec-queries.md)** is the reference: the queries
+the product depends on (K1 to K11, memory M, live documents L, paths P), what each one returns and why, and every change
+FalkorDB required.
+
+| File | Queries | What they cover |
+|---|---:|---|
+| [`analytics.queries.ts`](apps/api/src/analytics/queries/analytics.queries.ts) | 37 | K2 `KNOWS`, K3 experts and evidence, K4 bus factor, K5–K7 departure impact, K8 `COLLAB`, betweenness and PageRank, K10 decisions and stale pages, shortest paths |
+| [`ingest.queries.ts`](apps/api/src/ingest/queries/ingest.queries.ts) | 25 | People, artifacts, roles, links, departures |
+| [`extract.queries.ts`](apps/api/src/extract/queries/extract.queries.ts) | 30 | Systems, decisions, `MENTIONS`, `SUPERSEDES`, `ASSERTS` |
+| [`retrieval.queries.ts`](apps/api/src/retrieval/queries/retrieval.queries.ts) | 8 | Chunks, vector index, K11 hybrid search |
+| [`projection.queries.ts`](apps/api/src/projection/queries/projection.queries.ts) | 16 | Building `apex_proj` |
+| [`whatif.queries.ts`](apps/api/src/whatif/queries/whatif.queries.ts) | 5 | K9 `algo.WCC` knowledge islands, removing a person from the scratch copy |
+| [`artifacts.queries.ts`](apps/api/src/artifacts/queries/artifacts.queries.ts) | 11 | Document lookup and the verdict queries |
+| [`actions.queries.ts`](apps/api/src/actions/queries/actions.queries.ts) | 14 | Proposals, approval (moves `ASSIGNED`), `WHY_SUGGESTED` |
+| [`memory.queries.ts`](apps/api/src/memory/queries/memory.queries.ts) | 18 | Sessions, turns, feedback, notes, recall |
+| [`catalog.queries.ts`](apps/api/src/catalog/queries/catalog.queries.ts) | 13 | Core systems, merges, `idf` |
+| [`live.queries.ts`](apps/api/src/live/queries/live.queries.ts) | 5 | Live documents and their undo |
+| [`schema.queries.ts`](apps/api/src/graph/queries/schema.queries.ts), `backup`, `bench`, `agent`, `graph` | 27 | Indexes (including the vector index), backup and restore, benchmark projections |
+
+The queries are tested with Jest against a small fixture company in a real FalkorDB (`pnpm --filter @keystone/api test:int`).
+
+---
+
 ## Ingestion
 
 Deterministic, no LLM: `data/artifacts.jsonl` → FalkorDB through a BullMQ queue on a separate Redis.
@@ -500,8 +710,27 @@ All `/admin/*` endpoints need `x-admin-token: <ADMIN_TOKEN>`.
 | Queue | BullMQ on Redis 7 |
 | Web | Next.js 15 (App Router), Tailwind CSS, shadcn/ui |
 | Graph visualisation | react-force-graph-2d |
-| LLM (extraction + agent) | OpenAI `gpt-5-nano` or Gemini `gemini-2.5-flash` |
+| LLM (extraction + agent) | OpenAI `gpt-5-nano` or Gemini `gemini-3.7-flash` |
 | Embeddings | OpenAI `text-embedding-3-small` or Gemini `gemini-embedding-001` |
 | MCP | [Model Context Protocol](https://modelcontextprotocol.io) — Streamable HTTP + stdio |
 | Monorepo | pnpm workspaces |
 | Container | Docker Compose |
+
+---
+
+## Data
+
+Keystone runs on [OrgForge](https://huggingface.co/datasets/aeriesec/orgforge) (MIT licence), a public, fully synthetic
+company: 60 business days of Slack, PRs, Confluence, Jira and Zendesk tickets, emails, Zoom transcripts, alerts and
+records at "Apex Athletics". It contains no real personal data. `scripts/prepare_orgforge.py` keeps the documents and
+moves the simulator's ground truth into `data/answer_key/`, which only the benchmark may read.
+
+---
+
+## AI usage
+
+Keystone was built with **Claude Code** (Claude Opus 5.5 and Claude Sonnet 5), working from a stage-by-stage brief.
+The author designed the graph model and Cypher queries, made the modelling and data decisions, reviewed every commit,
+and deployed and ran the product. At runtime the product uses `gpt-5-nano` (or Gemini) for extraction and wording
+answers, never to decide them. The full disclosure, with a per-stage log of what the AI produced and what the author
+did, is in **[AI_USAGE.md](AI_USAGE.md)**.
