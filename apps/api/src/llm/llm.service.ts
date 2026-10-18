@@ -32,6 +32,12 @@ export interface LlmUsage {
 /** Texts per embedding request (both vendors accept at least 100). */
 const EMBED_BATCH = 100;
 
+/**
+ * Embedding cache files read at the same time. Each file is ~17 KB of JSON, so reading
+ * all ~12k at once held ~300 MB; 256 at a time keeps the seed inside a 1 GB instance.
+ */
+const CACHE_READ_BATCH = 256;
+
 /** Tries per request for rate limits and server errors (1 + 4 retries with backoff). */
 const TRANSIENT_ATTEMPTS = 5;
 
@@ -148,7 +154,7 @@ export class LlmService implements OnModuleInit {
     const dim = this.settings.embedDim;
     const keys = this.embedKeys(provider, texts);
 
-    const vectors: (number[] | null)[] = await Promise.all(keys.map((key) => this.cache.get<number[]>(key)));
+    const vectors = await this.cachedVectors(keys);
     const missing = vectors.flatMap((vector, index) => (vector === null ? [index] : []));
     this.counts.embedCacheHits += texts.length - missing.length;
     if (missing.length > 0) this.assertMayCall('embed');
@@ -178,8 +184,18 @@ export class LlmService implements OnModuleInit {
    */
   async uncachedEmbeddings(texts: string[]): Promise<number[]> {
     const keys = this.embedKeys(this.activeProvider(), texts);
-    const vectors = await Promise.all(keys.map((key) => this.cache.get<number[]>(key)));
+    const vectors = await this.cachedVectors(keys);
     return vectors.flatMap((vector, index) => (vector === null ? [index] : []));
+  }
+
+  /** The cached vector of each key (null when missing), in order, CACHE_READ_BATCH files at a time. */
+  private async cachedVectors(keys: string[]): Promise<(number[] | null)[]> {
+    const vectors: (number[] | null)[] = [];
+    for (let start = 0; start < keys.length; start += CACHE_READ_BATCH) {
+      const batch = keys.slice(start, start + CACHE_READ_BATCH);
+      vectors.push(...(await Promise.all(batch.map((key) => this.cache.get<number[]>(key)))));
+    }
+    return vectors;
   }
 
   /** The cache key of each text's embedding (embed and uncachedEmbeddings must agree on it). */

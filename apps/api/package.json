@@ -5,6 +5,8 @@
   "description": "Keystone API (NestJS). Talks to FalkorDB and Redis.",
   "scripts": {
     "build": "nest build",
+    "build:docker": "tsc -p tsconfig.build.json --noCheck --declaration false --sourceMap false",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "dev": "nest start --watch",
     "start": "node dist/main.js",
     "test": "jest",
