@@ -392,6 +392,12 @@ Copy `.env.example` to `.env`. Key variables:
 | `BENCH_SEED` | `13` | Benchmark sampling seed (same seed, same questions) |
 | `BENCH_JUDGE_MODEL` | the system model | Optional: the model that judges answers and checks B1 names |
 
+The web app has its own settings in `apps/web/.env.local` (copy `apps/web/.env.example`; on Vercel, Project Settings → Environment Variables):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_API_BASE_URL` | `API_BASE_URL` from the root `.env`, else `http://localhost:4000` in dev | The API the browser calls. Baked in at build time; a production build fails if it is not set |
+
 ---
 
 ## Deployment

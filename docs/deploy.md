@@ -291,7 +291,8 @@ host `falkordb`, port `6379`, password `FALKOR_PASSWORD`. To turn it off again:
    - **Framework Preset:** Next.js
    - **Build Command** (override): `cd ../.. && pnpm --filter @keystone/shared build && pnpm --filter @keystone/web build`
    - **Install Command:** leave the default (Vercel detects pnpm from `pnpm-lock.yaml`)
-   - **Environment Variables:** `NEXT_PUBLIC_API_BASE_URL` = `https://203-0-113-10.sslip.io` (your `API_DOMAIN`, with `https://`, no trailing slash)
+   - **Environment Variables:** `NEXT_PUBLIC_API_BASE_URL` = `https://203-0-113-10.sslip.io` (your `API_DOMAIN`, with `https://`, no trailing slash).
+     All web settings are listed in `apps/web/.env.example`. The build fails if this one is missing or points at localhost.
 3. **Deploy.** Then *Settings → General → Node.js Version*: **22.x** (the repo requires Node ≥ 22).
 4. Copy the production URL (e.g. `https://keystone-abc.vercel.app`) and allow it in the API's CORS:
 

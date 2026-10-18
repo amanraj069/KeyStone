@@ -47,9 +47,10 @@ import {
   SystemWithDecisionsSchema,
 } from "@keystone/shared";
 import { z } from "zod";
+import { env } from "./env";
 
-/** Base URL of the Keystone API, injected at build time by next.config.ts. */
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000";
+/** Base URL of the Keystone API (NEXT_PUBLIC_API_BASE_URL, see apps/web/.env.example). */
+export const API_BASE_URL = env.apiBaseUrl;
 
 /** The graphs the UI can show: the full company, or the day-by-day replay. */
 export type ViewGraph = "apex" | "apex_replay";
