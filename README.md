@@ -70,6 +70,8 @@ Keystone ingests `data/artifacts.jsonl` — pages, PRs, Slack threads, emails, t
 - **Expertise (`KNOWS`).** Each person–system pair is scored from the artifacts that mention the system: authored 3, reviewed 2, assigned 1, participated 0.5 × min(messages, 4) / 4 — each with a 30-day exponential decay.
 - **Core systems.** A system is *core* when at least 5 artifacts mention it, written by at least 2 people. Bus factor, departure impact and the projection use core systems only.
 - **Experts.** A person is an expert on a core system when their score is ≥ 0.4 and at least 25 % of that system's top score.
+- **Evidence.** Each `KNOWS` edge keeps the five artifacts most *about* the system: weighted by mention strength, ×4 when the title names the system, divided by how many systems the artifact mentions, so a stack list naming eight systems never leads. Agents see `relativeScore` (1 = the top expert), never the raw score.
+- **Memory.** The agent's chats live in the same graph: `(:User)-[:STARTED]->(:Session)-[:HAS_TURN]->(:Turn)`, each Turn `CITED` the artifacts it used and `CONCERNS` the systems and people it was about. A user's correction is a `(:Note)` that `CORRECTS` the Turn, `CONCERNS` the same subjects and is `BASED_ON` its artifacts; only notes a person approved reach the agent. See [Memory](#memory).
 
 ### Retrieval
 
@@ -78,6 +80,55 @@ Keystone ingests `data/artifacts.jsonl` — pages, PRs, Slack threads, emails, t
 ### The agent
 
 `POST /agent/ask` answers any question as a stream of Server-Sent Events. It uses the API's own `/mcp` as its tool server, classifies the question (who_knows, why, what_if, freshness, event, visibility, counterfactual, general; event, visibility and counterfactual come with a short tool recipe that ends in a verdict tool, so the graph decides the yes/no), runs up to 5 tool calls, then applies a citation guardrail: artifact ids that no tool returned as evidence are removed. An answer left with no valid citation becomes *"The answer is not in the company's records."* Yes/no questions are answered with Yes or No first; an answer that something did not happen cites the documents that were checked.
+
+---
+
+## Live updates: knowledge that stays current
+
+Org Pulse has a **Post an update** card (`POST /live/artifacts`, admin token when set). A Slack message or a page posted
+there goes through exactly the steps of the corpus, then Keystone reports what changed:
+
+1. **Ingest** with the same rules as `artifacts.jsonl` (`IngestService.ingestOne`): roles, links, departure announcements.
+2. **Extract** its systems and decisions (one cached LLM call), added without touching anything else.
+3. **Link** each new decision to the earlier decisions about the same system it replaces: the 25 earlier decisions that share
+   the most rare words are shown to a focused prompt with short ids, and only links from the new decision are kept.
+4. **Embed** it for search, then **refresh** expertise (`KNOWS`, active people) and `apex_proj`.
+5. **Diff** before and after: decisions replaced, **pages now stale**, systems whose risk level moved, people now inactive.
+
+Example (about 4 s): Jax posts *"we are reverting the TitanDB RDS max_pool_size change … back to 200"*. The postmortem page
+`CONF-ENG-187` becomes stale (it still says the pool was lowered to 80), and *"Is the TitanDB connection pool postmortem page
+still accurate?"* is answered *"No … [CONF-ENG-187] [LIVE-…]"*. *"Priya's last day is today"* makes Priya inactive: 4 systems
+lose their last expert, 8 are left with one, and *"Who should own TitanDB now?"* answers Jax, citing the new message.
+
+Live documents get ids `LIVE-…` and `live: true`. **Undo live updates** (`POST /live/reset`) removes them with their chunks and
+decisions, gives back departures and re-activates the decisions they replaced, so the graph is exactly as before. The seed
+does not re-ingest them (its link pass is cache-only).
+
+---
+
+## Memory
+
+Keystone remembers what it is asked and what it is told, in the knowledge graph itself (`apps/api/src/memory/`).
+
+| Kind | What is stored | What it changes |
+|---|---|---|
+| **Episodic** | Every answer is a `Turn` of its chat (`Session`), linked to the artifacts it cited and the systems and people it was about | A follow-up such as *"and if she leaves?"* sees the earlier turns (and their citations stay valid); `GET /memory/sessions?userId=` lists a user's chats |
+| **Semantic** | A thumbs-down with a correction becomes a proposed `Note`. After a person approves it (Audit page, admin token) it is added to every question about the same systems or people, and the agent cites it as `[NOTE-…]` next to the documents | *"Who owns TitanDB now?"* → *"Jax took over on-call in March [NOTE-82b8b0be]; the documents still show Priya as the top expert [CONF-…]"* |
+| **Shared** | `recall_memory` on the MCP server returns approved notes and how often a subject was asked about | Any MCP client (Claude Desktop, another agent) sees the same company memory |
+
+Keystone proposes, a person approves: no tool can approve a note, so an agent cannot teach itself. Memory is read while the
+question is classified and written after the answer; a failure there means an answer without memory, never no answer.
+The benchmark builds its agent without memory, so its questions never see each other. Like approved actions, memory is
+made by people: it is exported to `exports/memory-latest.jsonl` every 6 hours (`POST /admin/export-memory`) and put back
+by `pnpm seed` and `POST /admin/restore`.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /memory/turns/:id/feedback {"rating", "correction?"}` | 👍 / 👎 on an answer (`turnId` comes with the `done` event); a correction proposes a Note |
+| `GET /memory/notes?status=` | Notes with the question they correct, their subjects and evidence |
+| `POST /memory/notes/:id/approve` · `/reject {"reason"}` | A person's decision (admin token) |
+| `GET /memory/about?name=` | What Keystone remembers about a system or person |
+| `GET /memory/sessions?userId=` | A user's chats, newest first |
 
 ---
 
@@ -146,6 +197,7 @@ Open **http://localhost:3000** for the Org Pulse dashboard, **http://localhost:3
 | `pnpm seed [--force]` | Rebuild `apex` from files only (zero LLM/embedding calls); `--force` even if it has data. Runs compiled: `pnpm --filter @keystone/api build` first |
 | `pnpm ask "question"` | Ask the agent from the command line (API must be running) |
 | `pnpm bench [--only=b1\|b2] [--dry-run] [--yes] [--out=name]` | Benchmark: departure prediction (B1) and question answering vs a vector-only baseline (B2) |
+| `pnpm bench --publish=name` | Publish `data/bench/name.json` as the site's results (`apps/api/bench-results/`, tracked) |
 | `pnpm --silent mcp:stdio` | The Keystone MCP server over stdio |
 | `pnpm mcp:check [--stdio]` | List MCP tools and call the read tools |
 | `pnpm systems report` | System catalog: distribution by mentions and authors |
@@ -226,6 +278,7 @@ The catalog (`apps/api/src/catalog/`) writes `mentionCount`, `authorCount`, `cor
 | `GET /people/:name/departure-impact` | Systems + backups, open tickets + suggested owners, sole-authored pages |
 | `GET /analytics/bus-factor` | Systems with 0, 1 or 2 experts (orphaned / critical / watch) |
 | `GET /analytics/bridges` | Top 10 people who connect teams (betweenness on `COLLAB`) |
+| `GET /analytics/central-people` | Top 10 people at the centre of the network (PageRank on `COLLAB`) |
 | `GET /analytics/stale-docs` | Pages still asserting a superseded decision |
 | `GET /analytics/summary` | Dashboard figures: people, systems by risk level, stale docs, memory |
 
@@ -260,6 +313,18 @@ Keystone proposes; a person approves. Every proposal is an `(:Action)` node: `ki
 
 ## Benchmark
 
+**Latest run** (78 questions, same model `gpt-5-nano` and same 60k-character context for both, blinded judge;
+full report: [`apps/api/bench-results/results.md`](apps/api/bench-results/results.md)):
+
+| | Keystone (graph + agent) | Vector-only RAG |
+|---|---:|---:|
+| Accuracy (95% CI) | **72%** (61–81) | 24% (16–35) |
+| Right where the other is wrong (paired) | **42** | 5 (sign test p < 0.001) |
+| Gold evidence in front of the model | **53%** | 17% |
+| Declined to answer | 1 of 78 | 27 of 78 |
+
+Keystone is ahead on every question type: counterfactual 62% vs 14%, perspective 80% vs 27%, silence 70% vs 30%.
+
 `pnpm bench` measures Keystone against the OrgForge answer key. `apps/api/src/bench/` is the **only** code allowed to
 read `data/answer_key/`: an ESLint rule (API and web) and a repo-wide Jest test (`answer-key-guard.spec.ts`) fail if
 anything else names the folder or imports its reader. The answer key is read only to pick questions and to score
@@ -282,9 +347,13 @@ answers after both systems have answered; it never reaches the graph, the agent'
   directly; anything else is judged free-form.
 - The CLI prints the question file's fields, types and an example per type, then the planned number of LLM calls,
   and asks before going over 1,500 (`--yes` skips the question; `--dry-run` stops there).
-- Output: `data/bench/results.json` (everything, also `GET /bench/results`) and `data/bench/results.md` (tables, and
-  a plain statement with a one-line hypothesis wherever the baseline wins or ties). `--out=name` writes `name.json` /
-  `name.md` instead, e.g. to keep a run with another model next to the main one.
+- Output: `data/bench/results.json` (everything) and `data/bench/results.md` (tables, and a plain statement with a
+  one-line hypothesis wherever the baseline wins or ties). `--out=name` writes `name.json` / `name.md` instead, e.g. to
+  keep a run with another model next to the main one.
+- **Published results** live in `apps/api/bench-results/` (tracked by git, copied into the API image). `GET /bench/results`
+  and the `/bench` page read them first, so a new run reaches the deployed site with a commit, not an upload of `data/`.
+  A run without `--out` updates them; `pnpm bench --publish=name` publishes a named run (no LLM calls; B1 is kept from the
+  current results when the run has none).
 - Every accuracy comes with a 95% confidence interval (Wilson), and the two systems are compared **paired** on the
   same questions: how many only Keystone got right, how many only the baseline did, and an exact sign-test p-value.
   `BENCH_PER_TYPE=30` runs all 78 questions of the answer key (21 counterfactual, 30 perspective, 27 silence).
@@ -344,6 +413,8 @@ Two transports, same tools:
 | `who_knows` | Top 5 experts on a system, with scores and evidence |
 | `bus_factor` | Systems with 0, 1 or 2 experts (orphaned / critical / watch) |
 | `bridge_people` | Top 10 people who connect teams |
+| `how_connected` | Shortest chain between two people or systems (`algo.SPpaths`), with the documents on it |
+| `central_people` | The people at the centre of the collaboration network (`algo.pageRank` on `COLLAB`) |
 | `simulate_departure` | What breaks if someone leaves |
 | `trace_decision` | A system's decisions, newest first, with what they replaced |
 | `find_stale_docs` | Pages that still state a superseded decision |
@@ -352,6 +423,10 @@ Two transports, same tools:
 | `draft_handover` | Proposes a handover plan (propose-only; a human approves) |
 | `propose_reassignment` | Proposes moving a ticket to a person |
 | `create_runbook_task` | Proposes a runbook task for a sole expert |
+| `recall_memory` | Approved notes from colleagues and how often a system or person was asked about |
+
+**Show Cypher.** `GET /queries` maps every tool to the exact Cypher constants it runs (`apps/api/src/mcp/tool-queries.ts`);
+in Ask, each step of an answer has a *Cypher* chip that shows them.
 
 Every tool returns `{ data, evidence, graphPath? }`. `evidence` holds artifact ids to cite; `graphPath` is an optional small graph to draw. See [docs/mcp.md](docs/mcp.md) for Claude Desktop config and MCP Inspector instructions.
 

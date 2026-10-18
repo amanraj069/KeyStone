@@ -29,9 +29,11 @@ repo-root `.env`. `search_knowledge` embeds the question with the configured LLM
 | `check_visibility` | `person`, `day`, `description`, `title?`, `eventPeople?`, `types?` | Verdict in one call: finds the event without the person asked about, then checks their involvement by that day |
 | `check_involvement` | `person`, `ids`, `asOfDay?` | Verdict: was the person part of these documents by that day (any role, received, listed), or only of a linked one? |
 | `check_causal_link` | `causes`, `effects` | Verdict: `linked` (up to three references / fixes), `likely` (no link, but within 5 days among the same people) or `no_evidence` |
-| `who_knows` | `system` | The five strongest experts on a system, scores and evidence; suggests names if unknown |
+| `who_knows` | `system` | The five strongest experts on a system, `relativeScore` (1 = the top expert) and evidence; suggests names if unknown |
 | `bus_factor` | `minScore?` | Systems with 0, 1 or 2 experts (orphaned, critical, watch) and counts per level |
 | `bridge_people` | | The ten people who connect teams (betweenness on collaboration) |
+| `central_people` | | The ten people at the centre of the collaboration network (PageRank on `COLLAB`), with evidence |
+| `how_connected` | `from`, `to` | Shortest chain between two people or systems (`algo.SPpaths`, both directions), its steps, and the documents each pair of colleagues shared |
 | `simulate_departure` | `person` | What breaks if someone leaves: orphaned systems, tickets, pages, connectors |
 | `trace_decision` | `system` | A system's decisions, newest first, with source artifacts and what they replaced |
 | `find_stale_docs` | | Pages that still state a decision a later one replaced |
@@ -40,6 +42,7 @@ repo-root `.env`. `search_knowledge` embeds the question with the configured LLM
 | `draft_handover` | `person` | Proposes a handover plan: reassignments, page reviews, runbook tasks |
 | `propose_reassignment` | `ticketId`, `person`, `reason` | Proposes moving a ticket to a person |
 | `create_runbook_task` | `system` | Proposes a runbook task for a system's single expert |
+| `recall_memory` | `subjects` | Approved notes from colleagues (cite as `NOTE-…`), how often each subject was asked about, and the latest questions |
 
 The three action tools only create proposals (`status: proposed`). Approving or rejecting is
 not a tool: a person does it in Keystone (`POST /actions/:id/approve`), so an agent cannot
