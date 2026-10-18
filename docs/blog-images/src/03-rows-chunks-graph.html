@@ -1,0 +1,112 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#frame { width: 1600px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 28px; margin-top: 40px; }
+.col { padding: 28px 28px 24px; display: flex; flex-direction: column; }
+.col h2 { font-size: 28px; font-weight: 700; display: flex; align-items: center; gap: 12px; }
+.col h2 .n { font-size: 16px; font-weight: 600; color: var(--muted); border: 1px solid var(--border); border-radius: 99px; padding: 2px 10px; }
+.col .what { font-size: 18px; color: var(--muted); margin: 6px 0 20px; }
+table { width: 100%; border-collapse: collapse; font-size: 15.5px; margin-bottom: 14px; }
+caption { text-align: left; font-family: 'Geist Mono', monospace; font-size: 14px; color: var(--muted); padding-bottom: 6px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 13.5px; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--border); padding: 5px 6px; }
+td { padding: 5px 6px; border-bottom: 1px solid var(--border); font-family: 'Geist Mono', monospace; font-size: 14.5px; white-space: nowrap; }
+td.more { color: var(--faint); font-family: 'Geist'; font-style: italic; }
+.chunk { background: var(--bg); border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; font-size: 17px; line-height: 1.45; color: #2b3440; }
+.chunk .id { display: block; font-family: 'Geist Mono', monospace; font-size: 13.5px; color: var(--faint); margin-top: 8px; }
+.chunk mark { background: #e8eefb; color: inherit; border-radius: 4px; padding: 0 3px; }
+.verdict { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--border); font-size: 18.5px; line-height: 1.45; }
+.verdict b { font-weight: 700; }
+.bad { color: var(--signal); }
+.good { color: var(--system); }
+</style></head><body>
+<div id="frame">
+  <div class="eyebrow">Why a graph</div>
+  <h1>The same three documents, stored three ways</h1>
+  <p class="sub" style="max-width:1480px">Three real TitanDB documents from Apex Athletics. The question: <b style="font-weight:600;color:var(--ink)">who knows TitanDB, and what breaks if they leave?</b></p>
+
+  <div class="cols">
+    <div class="card col">
+      <h2>As rows <span class="n">SQL</span></h2>
+      <p class="what">Facts in tables, joined at question time</p>
+      <table><caption>artifacts</caption>
+        <tr><th>id</th><th>type</th><th>author</th><th>day</th></tr>
+        <tr><td>CONF-ENG-177</td><td>page</td><td>Priya</td><td>23</td></tr>
+        <tr><td>zoom_2026-01-30…</td><td>meeting</td><td>—</td><td>22</td></tr>
+        <tr><td>CONF-ENG-187</td><td>page</td><td>Jax</td><td>24</td></tr>
+      </table>
+      <table><caption>participants</caption>
+        <tr><th>artifact</th><th>person</th></tr>
+        <tr><td>zoom_2026-01-30…</td><td>Priya</td></tr>
+        <tr><td>zoom_2026-01-30…</td><td>Nadia</td></tr>
+        <tr><td>zoom_2026-01-30…</td><td>Deepa</td></tr>
+        <tr><td class="more" colspan="2">… and 4 more people</td></tr>
+      </table>
+      <table><caption>mentions</caption>
+        <tr><th>artifact</th><th>system</th></tr>
+        <tr><td>CONF-ENG-177</td><td>TitanDB</td></tr>
+        <tr><td>zoom_2026-01-30…</td><td>TitanDB</td></tr>
+        <tr><td>CONF-ENG-187</td><td>TitanDB</td></tr>
+      </table>
+      <p class="verdict"><b class="bad">Possible, but every question is a new tower of joins.</b> "What if Priya leaves?" means running all of it again without Priya, then diffing.</p>
+    </div>
+
+    <div class="card col">
+      <h2>As chunks <span class="n">vectors</span></h2>
+      <p class="what">Text split up, embedded, found by similarity</p>
+      <div class="chunk">The latest <mark>TitanDB</mark> schema fix touches the athlete performance tables, causing migration scripts to abort with constraint errors.<span class="id">CONF-ENG-177 · chunk 0</span></div>
+      <div class="chunk">Ben: Hey everyone, thanks for joining. The goal is to align on a concrete test strategy for <mark>TitanDB</mark> before the next sprint starts.<span class="id">zoom_2026-01-30_1beb06ea · chunk 0</span></div>
+      <div class="chunk">p1 incident eng-165 triggered by a reduction in the postgresql connection pool size on the <mark>titandb</mark> rds instance…<span class="id">CONF-ENG-187 · chunk 0</span></div>
+      <p class="verdict"><b class="bad">Finds text about TitanDB, not who did the work.</b> It can't count the experts, or see who is left once one of them goes.</p>
+    </div>
+
+    <div class="card col">
+      <h2>As a graph <span class="n">FalkorDB</span></h2>
+      <p class="what">People, documents and systems, connected</p>
+      <svg width="100%" viewBox="0 0 440 540" style="display:block">
+        <defs>
+          <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#9aa4af"/></marker>
+          <marker id="k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#d4452a"/></marker>
+        </defs>
+        <!-- KNOWS, computed -->
+        <path d="M62,68 C 0,260 60,425 184,432" fill="none" stroke="#d4452a" stroke-width="5" marker-end="url(#k)" opacity=".9"/>
+        <!-- person -> artifact -->
+        <g stroke="#9aa4af" stroke-width="2" fill="none" marker-end="url(#a)">
+          <line x1="82" y1="72" x2="112" y2="178"/>
+          <line x1="96" y1="58" x2="208" y2="186"/>
+          <line x1="215" y1="72" x2="220" y2="176"/>
+          <line x1="330" y1="72" x2="236" y2="182"/>
+          <line x1="385" y1="72" x2="350" y2="176"/>
+        </g>
+        <!-- artifact -> system -->
+        <g stroke="#3d68b0" stroke-width="2" fill="none" marker-end="url(#a)">
+          <line x1="122" y1="226" x2="200" y2="404"/>
+          <line x1="222" y1="226" x2="222" y2="396"/>
+          <line x1="340" y1="226" x2="246" y2="404"/>
+        </g>
+        <!-- people -->
+        <g font-size="16" font-weight="600" text-anchor="middle" fill="#11161d">
+          <circle cx="70" cy="50" r="17" fill="#1d3557"/><text x="70" y="22">Priya</text>
+          <circle cx="215" cy="50" r="13" fill="#1d3557"/><text x="215" y="25">Nadia</text>
+          <circle cx="330" cy="50" r="13" fill="#1d3557"/><text x="330" y="25">Deepa</text>
+          <circle cx="395" cy="50" r="15" fill="#1d3557"/><text x="400" y="23">Jax</text>
+        </g>
+        <!-- artifacts -->
+        <g font-size="13" text-anchor="middle" font-family="Geist Mono">
+          <rect x="70" y="182" width="104" height="42" rx="9" fill="#5b8aa6"/><text x="122" y="208" fill="#fff">CONF-ENG-177</text>
+          <rect x="180" y="182" width="84" height="42" rx="9" fill="#6d73a6"/><text x="222" y="208" fill="#fff">Zoom</text>
+          <rect x="290" y="182" width="104" height="42" rx="9" fill="#5b8aa6"/><text x="342" y="208" fill="#fff">CONF-ENG-187</text>
+        </g>
+        <!-- system -->
+        <circle cx="222" cy="432" r="30" fill="#4f7f6e"/>
+        <text x="222" y="437" text-anchor="middle" font-size="14" font-weight="700" fill="#fff">TitanDB</text>
+        <g font-size="14" fill="#5a6574">
+          <line x1="10" y1="500" x2="40" y2="500" stroke="#9aa4af" stroke-width="2.5"/><text x="48" y="505">AUTHORED / PARTICIPATED</text>
+          <line x1="250" y1="500" x2="280" y2="500" stroke="#3d68b0" stroke-width="2.5"/><text x="288" y="505">MENTIONS</text>
+          <line x1="10" y1="528" x2="40" y2="528" stroke="#d4452a" stroke-width="5"/><text x="48" y="533" fill="#d4452a" font-weight="600">KNOWS, computed by Cypher from the edges above</text>
+        </g>
+      </svg>
+      <p class="verdict"><b class="good">"Who knows TitanDB" is one pattern.</b> "What if Priya leaves" is deleting one node in a copy and asking again.</p>
+    </div>
+  </div>
+</div>
+</body></html>

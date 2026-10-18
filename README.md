@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://keystone.aman-raj.me"><b>Live app</b></a> ·
+  <a href="https://www.youtube.com/watch?v=1Qa1_M1q4s8"><b>Demo video</b></a> ·
   <a href="#the-graph"><b>The graph</b></a> ·
   <a href="#how-the-agent-queries-the-graph"><b>How the agent queries it</b></a> ·
   <a href="#the-graph-does-the-work"><b>The graph does the work</b></a> ·
@@ -31,6 +32,7 @@
 | | |
 |---|---|
 | **Live app** | **https://keystone.aman-raj.me** |
+| **Demo video** | https://www.youtube.com/watch?v=1Qa1_M1q4s8 |
 | **Live API and MCP server** | https://15-252-22-37.sslip.io (`GET /health`; MCP over Streamable HTTP at `POST /mcp`) |
 | **Tracks** | 03 Company Brain (primary) · 01 Agents That Act on Connected Data |
 | **Why a graph** | Same model, same context budget: **72%** correct against **24%** for vector-only retrieval on 78 questions (paired sign test p < 0.001). See [Benchmark](#benchmark) |
@@ -44,6 +46,9 @@
 </p>
 <p align="center">
   <sub>In the app: the agent picks <code>simulate_departure</code> through MCP, the step shows its Cypher (<code>GRAPH.COPY</code> to a scratch graph, bus factor, betweenness), the graph it walked is drawn, and every source shows the sentence that backs the claim. Waits shortened.</sub>
+</p>
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=1Qa1_M1q4s8"><b>▶ Watch the full demo video on YouTube</b></a>
 </p>
 
 <br/>

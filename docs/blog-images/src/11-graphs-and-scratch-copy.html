@@ -1,0 +1,47 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#frame { width: 1600px; padding: 56px 64px 64px; }
+.term { margin-top: 30px; background: #0f141b; border-radius: 16px; box-shadow: 0 12px 32px -8px rgb(17 22 29 / .35); overflow: hidden; }
+.bar { height: 46px; background: #1a212b; display: flex; align-items: center; gap: 9px; padding: 0 18px; }
+.bar i { width: 13px; height: 13px; border-radius: 50%; display: inline-block; }
+.bar span { margin-left: 14px; color: #8c96a3; font-size: 15px; font-family: 'Geist Mono'; }
+pre { font-family: 'Geist Mono', monospace; font-size: 19px; line-height: 1.55; color: #c9d1db; padding: 26px 30px 30px; white-space: pre-wrap; }
+.ps { color: #6fd08c; } .cmd { color: #ffffff; } .hl { color: #ff8a6b; font-weight: 500; }
+</style></head><body><div id="frame">
+<div class="eyebrow">What FalkorDB made easy</div>
+<h1>Many graphs in one instance, and a throwaway copy per question</h1>
+<p class="sub">Real output from the production server (1 GB EC2). A departure simulation copies the 1 MB projection, measures it, and deletes the copy: afterwards the scratch graph is already gone.</p>
+<div class="term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span>keystone — zsh</span></div><pre><span class="ps">$</span> <span class="cmd">curl -s https://15-252-22-37.sslip.io/health | jq -c '.memory.graphs[]'</span>
+{"graph":"keystone_health","totalMb":0}
+{"graph":"apex","totalMb":47}
+{"graph":"apex_backup","totalMb":46}
+{"graph":"apex_proj","totalMb":1}
+
+<span class="ps">$</span> <span class="cmd">curl -s -X POST https://15-252-22-37.sslip.io/whatif/departure \</span>
+<span class="cmd">    -H 'content-type: application/json' -d '{"person":"Priya"}' \</span>
+<span class="cmd">  | jq '{scratchGraph, scratchGraphMemoryMb, timingsMs, orphaned: [.systemsNewlyOrphaned[].system]}'</span>
+{
+  "scratchGraph": "<span class="hl">apex_whatif_mve4rkt4_d72c933d</span>",
+  "scratchGraphMemoryMb": 1,
+  "timingsMs": {
+    "validate": 1,
+    "ensureProjection": 1,
+    "copy": <span class="hl">53</span>,
+    "before": 162,
+    "removePerson": 1,
+    "after": 147,
+    "departureImpact": 114,
+    "cleanup": 0,
+    "total": <span class="hl">481</span>
+  },
+  "orphaned": [
+    "Shared drive",
+    "Go microservices",
+    "Finance",
+    "config-service"
+  ]
+}
+
+<span class="ps">$</span> <span class="cmd">curl -s https://15-252-22-37.sslip.io/health | jq -c '[.memory.graphs[].graph]'</span>
+["keystone_health","apex","apex_backup","apex_proj"]</pre></div>
+</div></body></html>
