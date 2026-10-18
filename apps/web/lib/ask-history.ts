@@ -31,6 +31,9 @@ const StoredTurnSchema = z.object({
   finalPath: GraphPathSchema.nullable(),
   status: z.enum(["streaming", "done", "error"]),
   error: z.string().nullable(),
+  // Turns saved before messages could be deleted one at a time have neither.
+  questionDeleted: z.boolean().default(false),
+  answerDeleted: z.boolean().default(false),
 });
 
 /**

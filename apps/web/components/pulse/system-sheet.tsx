@@ -6,11 +6,12 @@ import { ArtifactSheet } from "@/components/artifact-sheet";
 import { EvidenceChip } from "@/components/evidence-chip";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { Meter } from "@/components/ui/meter";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { SHEET_PANEL_WIDTH, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { ErrorState, SkeletonRows } from "@/components/ui/states";
 import { useApi } from "@/hooks/use-api";
 import { api, type ViewGraph } from "@/lib/api";
 import { systemKey, toCanvasGraph } from "@/lib/graph";
+import { cn } from "@/lib/utils";
 import { RISK_COPY } from "./risk";
 
 interface SystemSheetProps {
@@ -34,7 +35,7 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
   return (
     <>
       <Sheet open={row !== null} onOpenChange={(open) => !open && onClose()}>
-        <SheetContent side="right" className="w-full gap-0 overflow-y-auto sm:max-w-2xl">
+        <SheetContent side="right" className={cn(SHEET_PANEL_WIDTH, "gap-0 overflow-y-auto")}>
           {row && (
             <>
               <SheetHeader className="gap-1 border-b px-8 pt-7 pb-5">

@@ -16,9 +16,13 @@ export const metadata: Metadata = {
   title: "Keystone · Apex Athletics",
   description: "Company Brain agent built on FalkorDB.",
   icons: {
-    icon: "/logo.png",
-    shortcut: "/logo.png",
-    apple: "/logo.png",
+    // White mark (public/logo-white.svg) so it reads on dark tab bars; the .ico is the fallback.
+    icon: [
+      { url: "/favicon.ico", sizes: "48x48" },
+      { url: "/logo-white.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
+    apple: "/apple-icon.png",
   },
 };
 

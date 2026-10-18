@@ -29,7 +29,15 @@ export interface AgentTurn {
   finalPath: GraphPath | null;
   status: "streaming" | "done" | "error";
   error: string | null;
+  /** Deleted on its own, like a message in Intake; the turn goes once both are. */
+  questionDeleted: boolean;
+  answerDeleted: boolean;
 }
+
+/** The two messages of a turn: your question, and Keystone's answer. */
+export type TurnMessage = "question" | "answer";
+
+const DELETED_FLAG = { question: "questionDeleted", answer: "answerDeleted" } as const;
 
 /** Applies one streamed event to a turn. Pure, so it is easy to follow and test. */
 export function applyEvent(turn: AgentTurn, event: AgentEvent): AgentTurn {
@@ -104,6 +112,8 @@ export function useAsk() {
         finalPath: null,
         status: "streaming",
         error: null,
+        questionDeleted: false,
+        answerDeleted: false,
       };
       setTurns((current) => [...current, turn]);
       controller.current?.abort();
@@ -127,10 +137,54 @@ export function useAsk() {
 
   const stop = useCallback(() => controller.current?.abort(), []);
 
+  /**
+   * The most recently deleted message: its turn as it was just before, and where that
+   * turn stood, kept only long enough for "Undo" to put it back.
+   */
+  const [deleted, setDeleted] = useState<{ turn: AgentTurn; index: number; message: TurnMessage } | null>(null);
+
+  /**
+   * Deletes one message, your question or Keystone's answer, from the screen and the saved
+   * history, like Intake's Delete. A turn with neither left is dropped altogether.
+   */
+  const deleteMessage = useCallback(
+    (id: string, message: TurnMessage) => {
+      const index = turns.findIndex((turn) => turn.id === id);
+      if (index === -1) return;
+      const turn = turns[index];
+      const otherGone = message === "question" ? turn.answerDeleted : turn.questionDeleted;
+      if (otherGone) {
+        // An earlier turn on screen leaves one fewer shown, so no other one opens in its place.
+        if (turn.chatId !== chatId) setEarlierShown((shown) => Math.max(0, shown - 1));
+        setTurns((current) => current.filter((t) => t.id !== id));
+      } else {
+        update(id, (t) => ({ ...t, [DELETED_FLAG[message]]: true }));
+      }
+      setDeleted({ turn, index, message });
+    },
+    [turns, chatId, update],
+  );
+
+  /** Brings the last deleted message back where it was. */
+  const undoDelete = useCallback(() => {
+    if (!deleted) return;
+    const { turn, index, message } = deleted;
+    if (turns.some((t) => t.id === turn.id)) {
+      update(turn.id, (t) => ({ ...t, [DELETED_FLAG[message]]: false }));
+    } else {
+      if (turn.chatId !== chatId) setEarlierShown((shown) => shown + 1);
+      setTurns((current) => [...current.slice(0, index), turn, ...current.slice(index)]);
+    }
+    setDeleted(null);
+  }, [deleted, turns, chatId, update]);
+
+  const dismissDeleted = useCallback(() => setDeleted(null), []);
+
   /** Clears the screen for a fresh chat; the one on screen joins the previous chats. */
   const startNewChat = useCallback(() => {
     setChatId(crypto.randomUUID());
     setEarlierShown(0);
+    setDeleted(null);
   }, []);
 
   /** Shows the next five earlier exchanges above the ones already on screen. */
@@ -157,5 +211,10 @@ export function useAsk() {
     showingPreviousChats: shownEarlier.length > 0,
     loadEarlier,
     startNewChat,
+    deleteMessage,
+    /** The message just deleted, while "Undo" can still bring it back. */
+    deletedMessage: deleted ? { turnId: deleted.turn.id, message: deleted.message } : null,
+    undoDelete,
+    dismissDeleted,
   };
 }

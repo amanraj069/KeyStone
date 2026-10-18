@@ -45,6 +45,9 @@ function SheetOverlay({
   )
 }
 
+/** The width every side panel shares (Org Pulse's systems, artifacts), so they all open alike. */
+const SHEET_PANEL_WIDTH = "w-full sm:max-w-xl"
+
 function SheetContent({
   className,
   children,
@@ -140,6 +143,7 @@ export {
   SheetTrigger,
   SheetClose,
   SheetContent,
+  SHEET_PANEL_WIDTH,
   SheetHeader,
   SheetFooter,
   SheetTitle,

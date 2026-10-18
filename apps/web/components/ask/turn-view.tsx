@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Citation, QuestionLabel } from "@keystone/shared";
-import { Check, ChevronRight, CircleAlert, Copy } from "lucide-react";
+import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react";
 import { KeystoneIcon } from "@/components/shell/brand-mark";
-import type { AgentTurn } from "@/hooks/use-ask";
+import type { AgentTurn, TurnMessage } from "@/hooks/use-ask";
 import { cn } from "@/lib/utils";
-import { AnswerText } from "./answer-text";
+import { AnswerText, citationNumbers } from "./answer-text";
 import { StepList } from "./step-list";
+import { MessageActions } from "./message-actions";
 import { TurnGraph } from "./turn-graph";
 
 interface TurnViewProps {
@@ -17,6 +18,8 @@ interface TurnViewProps {
   onCite: (turnId: string, id: string) => void;
   onSelect: (turnId: string) => void;
   onClearCitation: () => void;
+  /** Deletes one message of this turn; offered once its answer has stopped streaming. */
+  onDelete: (turnId: string, message: TurnMessage) => void;
 }
 
 /** The question classifier's labels, in words. */
@@ -31,43 +34,60 @@ const LABEL_NAME: Record<QuestionLabel, string> = {
   general: "General",
 };
 
-/** A finished answer lists this many sources until expanded. */
-const SOURCES_SHOWN = 5;
-
 /**
  * One exchange: the question as your bubble, the answer as Keystone's. While it streams,
  * the tool steps show in full; once done they fold into one line, so the answer leads.
  * Under it come the graph the agent walked (drawn for the selected answer) and the
  * cited sources, which single themselves out in that graph.
  */
-export function TurnView({ turn, active, activeCitation, onCite, onSelect, onClearCitation }: TurnViewProps) {
+export function TurnView({ turn, active, activeCitation, onCite, onSelect, onClearCitation, onDelete }: TurnViewProps) {
   const [stepsOpen, setStepsOpen] = useState(false);
   const streaming = turn.status === "streaming";
   const thinking = streaming && turn.answer === "";
   const sources = turn.steps.reduce((sum, step) => sum + (step.result?.evidenceCount ?? 0), 0);
+  // Until "done", any id-shaped token counts as cited; after it, only what the API confirmed.
+  const cited = useMemo(() => (turn.status === "done" ? new Set(turn.citations.map((c) => c.id)) : null), [turn.status, turn.citations]);
+  const numbers = useMemo(() => citationNumbers(turn.answer, cited), [turn.answer, cited]);
 
   return (
     <article className="space-y-3">
-      <div className="flex justify-end">
-        <p className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-card">{turn.question}</p>
-      </div>
+      {/* Yours on the right, Keystone's on the left, each stopping short of the other's edge. */}
+      {!turn.questionDeleted && (
+        <div className="flex flex-col items-end gap-1.5">
+          <span className="text-xs font-semibold text-muted-foreground">You</span>
+          {/* Fixed room on the right for the menu, so the text never rewraps on hover. */}
+          <div className="group relative max-w-[75%] rounded-2xl rounded-tr-md bg-primary py-2.5 pr-10 pl-4 text-[15px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-card">
+            {turn.question}
+            {!streaming && (
+              <MessageActions text={turn.question} variant="primary" onDelete={() => onDelete(turn.id, "question")} className="top-1.5 right-1.5" />
+            )}
+          </div>
+        </div>
+      )}
 
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 hidden size-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-card text-foreground shadow-card sm:flex">
-          <KeystoneIcon className="size-5" />
+      {!turn.answerDeleted && (
+      // The answer starts at the composer's left edge; the avatar hangs outside the column
+      // when the thread is wide enough for it (see @container on the thread), else it sits by the name.
+      <div className="relative sm:pr-[8%]">
+        <span className="absolute top-[-8px] right-full mr-3.5 hidden size-9 items-center justify-center text-foreground @min-[76rem]:flex">
+          <KeystoneIcon className="size-8" />
         </span>
-        <div className="min-w-0 flex-1 space-y-2">
+        <div className="min-w-0 space-y-2">
           <div className="flex items-center gap-2 text-xs">
-            <span className="font-semibold">Keystone</span>
+            <KeystoneIcon className="size-5 @min-[76rem]:hidden" />
+            <span className="text-[13px] font-semibold">Keystone</span>
             {turn.label && <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{LABEL_NAME[turn.label]}</span>}
           </div>
           <div
             onClick={() => onSelect(turn.id)}
             className={cn(
-              "w-full space-y-3 rounded-2xl rounded-tl-md border bg-card p-4 shadow-card transition-colors sm:p-5",
-              active ? "border-foreground/20" : "cursor-pointer border-foreground/10 hover:border-foreground/20",
+              "group relative w-full space-y-4 rounded-2xl rounded-tl-md border bg-card p-4 shadow-card transition-colors sm:px-6 sm:py-5",
+              active ? "border-foreground/[0.16]" : "cursor-pointer border-foreground/[0.08] hover:border-foreground/[0.16]",
             )}
           >
+            {!streaming && (
+              <MessageActions text={turn.answer} onDelete={() => onDelete(turn.id, "answer")} className="top-2 right-2 sm:top-3 sm:right-3" />
+            )}
             {turn.steps.length > 0 && !streaming && (
               <button
                 type="button"
@@ -88,7 +108,8 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
             {turn.answer && (
               <AnswerText
                 text={turn.answer}
-                cited={turn.status === "done" ? new Set(turn.citations.map((c) => c.id)) : null}
+                cited={cited}
+                numbers={numbers}
                 activeId={active ? activeCitation : null}
                 onCite={(id) => onCite(turn.id, id)}
               />
@@ -106,25 +127,52 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
               onClearCitation={onClearCitation}
             />
             {turn.status === "done" && turn.citations.length > 0 && (
-              <Sources citations={turn.citations} activeId={active ? activeCitation : null} onCite={(id) => onCite(turn.id, id)} />
+              <Sources citations={turn.citations} numbers={numbers} activeId={active ? activeCitation : null} onCite={(id) => onCite(turn.id, id)} />
             )}
           </div>
-          {turn.status === "done" && turn.answer && <CopyAnswer text={turn.answer} />}
         </div>
       </div>
+      )}
     </article>
   );
 }
 
-/** The cited artifacts with their titles; clicking one finds it in the graph (or opens it). */
-function Sources({ citations, activeId, onCite }: { citations: Citation[]; activeId: string | null; onCite: (id: string) => void }) {
-  const [all, setAll] = useState(false);
-  const shown = all ? citations : citations.slice(0, SOURCES_SHOWN);
+/**
+ * The cited artifacts with their titles, folded away until "Show" opens them all;
+ * clicking one finds it in the graph (or opens it).
+ */
+interface SourcesProps {
+  citations: Citation[];
+  /** The numbers the answer's markers show, so each source reads as the marker it belongs to. */
+  numbers: ReadonlyMap<string, number>;
+  activeId: string | null;
+  onCite: (id: string) => void;
+}
+
+function Sources({ citations, numbers, activeId, onCite }: SourcesProps) {
+  const [open, setOpen] = useState(false);
+  // In marker order; a source the text never marks goes last.
+  const ordered = [...citations].sort((a, b) => (numbers.get(a.id) ?? Infinity) - (numbers.get(b.id) ?? Infinity));
   return (
     <div className="border-t pt-3">
-      <p className="section-label">Sources · {citations.length}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="section-label">Sources · {citations.length}</p>
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          }}
+          aria-expanded={open}
+          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+        >
+          {open ? "Hide" : "Show"}
+          <ChevronDown className={cn("size-3.5 transition-transform duration-200", open && "rotate-180")} />
+        </button>
+      </div>
+      {open && (
       <ul className="mt-2 -mx-2">
-        {shown.map((citation) => (
+        {ordered.map((citation) => (
           <li key={citation.id}>
             <button
               type="button"
@@ -138,52 +186,18 @@ function Sources({ citations, activeId, onCite }: { citations: Citation[]; activ
                 citation.id === activeId && "bg-signal-soft hover:bg-signal-soft",
               )}
             >
-              <span className="code-id max-w-[45%] shrink-0 truncate text-muted-foreground">{citation.id}</span>
+              <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center self-center rounded-[5px] bg-foreground/[0.08] px-1 text-[10.5px] font-semibold text-muted-foreground tabular-nums">
+                {numbers.get(citation.id) ?? "•"}
+              </span>
+              <span className="code-id max-w-[40%] shrink-0 truncate text-muted-foreground">{citation.id}</span>
               <span className="min-w-0 flex-1 truncate font-medium">{citation.title ?? citation.type ?? ""}</span>
               {citation.day !== null && <span className="shrink-0 font-light text-faint tabular-nums">day {citation.day}</span>}
             </button>
           </li>
         ))}
       </ul>
-      {citations.length > SOURCES_SHOWN && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            setAll((value) => !value);
-          }}
-          className="mt-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
-        >
-          {all ? "Show fewer" : `Show all ${citations.length}`}
-        </button>
       )}
     </div>
-  );
-}
-
-/** Copies the answer's text, and says so for a moment. */
-function CopyAnswer({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(timer);
-  }, [copied]);
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard.writeText(text).then(
-          () => setCopied(true),
-          () => setCopied(false),
-        );
-      }}
-      className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
-    >
-      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      {copied ? "Copied" : "Copy"}
-    </button>
   );
 }
 
