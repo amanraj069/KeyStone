@@ -3,18 +3,21 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { History } from "lucide-react";
 import { ArtifactSheet } from "@/components/artifact-sheet";
-import { Composer } from "@/components/ask/composer";
-import { Suggestions } from "@/components/ask/suggestions";
+import { Composer, type ComposerHandle } from "@/components/ask/composer";
+import { DeletedToast } from "@/components/ask/deleted-toast";
+import { Suggestions, type Template } from "@/components/ask/suggestions";
 import { TurnView } from "@/components/ask/turn-view";
 import { EARLIER_PAGE_SIZE, useAsk } from "@/hooks/use-ask";
 import { toCanvasGraph } from "@/lib/graph";
 import { cn } from "@/lib/utils";
 
 /** The chat column: the thread and the composer share it, so they line up. */
-const COLUMN = "mx-auto w-full max-w-4xl";
+const COLUMN = "mx-auto w-full max-w-6xl";
 /** Scrolling to within this many pixels of the top opens the next earlier exchanges. */
 const LOAD_EARLIER_AT_PX = 120;
-/** While the header's button scrolls the thread to the top, passing the top loads nothing more. */
+/** How long "No history" stays under the button. */
+const NO_HISTORY_NOTE_MS = 2000;
+/** While the "Load previous chats" button scrolls the thread to the top, passing the top loads nothing more. */
 const AUTO_LOAD_PAUSE_MS = 900;
 
 /**
@@ -25,13 +28,30 @@ const AUTO_LOAD_PAUSE_MS = 900;
  * at a time, from "Load previous chats" and then by scrolling to the top.
  */
 export default function AskPage() {
-  const { turns, ask, stop, busy, loaded, chatId, earlierHidden, showingPreviousChats, loadEarlier, startNewChat } = useAsk();
+  const {
+    turns,
+    ask,
+    stop,
+    busy,
+    loaded,
+    chatId,
+    earlierHidden,
+    showingPreviousChats,
+    loadEarlier,
+    startNewChat,
+    deleteMessage,
+    deletedMessage,
+    undoDelete,
+    dismissDeleted,
+  } = useAsk();
   const [draft, setDraft] = useState("");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const [citation, setCitation] = useState<string | null>(null);
   const [openArtifact, setOpenArtifact] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const composer = useRef<ComposerHandle>(null);
+  const [noHistoryNote, setNoHistoryNote] = useState(false);
   /** Set just before earlier exchanges are added above, so the view can stay where it was. */
   const keepPlace = useRef<{ height: number; top: number } | null>(null);
   const autoLoadPausedUntil = useRef(0);
@@ -86,14 +106,18 @@ export default function AskPage() {
     }
   };
 
-  /** A template goes into the box to be edited or sent, with the caret at its end. */
-  const fillComposer = (text: string) => {
-    setDraft(text);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(text.length, text.length);
-    });
+  /** A template goes into the box with "/people" or "/systems" in its gap, which opens that list there. */
+  const fillTemplate = ({ before, slot, after }: Template) => {
+    const gap = `${before}/${slot} `;
+    composer.current?.fill(gap + after, gap.length);
   };
+
+  // "No history" closes by itself.
+  useEffect(() => {
+    if (!noHistoryNote) return;
+    const timer = setTimeout(() => setNoHistoryNote(false), NO_HISTORY_NOTE_MS);
+    return () => clearTimeout(timer);
+  }, [noHistoryNote]);
 
   const newChat = () => {
     startNewChat();
@@ -114,22 +138,29 @@ export default function AskPage() {
   };
 
   const isEmptyChat = turns.length === 0;
-  const canOpenPreviousChats = loaded && earlierHidden > 0 && !showingPreviousChats;
+  // Always offered (Intake's button), until earlier chats are open; with none saved it says so.
+  const showPreviousChatsButton = loaded && !showingPreviousChats;
 
   return (
     // Exactly the height under the top bar (the phone header is the same 3.5rem).
     <div className="relative flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col" aria-label="Ask">
-      {canOpenPreviousChats && (
+      {showPreviousChatsButton && (
         <div className="pointer-events-none absolute inset-x-0 top-4 z-20 px-4 sm:top-6 sm:px-6 lg:px-8">
-          <div className="flex justify-end">
+          {/* The composer's column, so the button ends at the box's right edge. */}
+          <div className={cn(COLUMN, "flex flex-col items-end gap-2")}>
             <button
               type="button"
-              onClick={openPreviousChats}
+              onClick={() => (earlierHidden > 0 ? openPreviousChats() : setNoHistoryNote(true))}
               className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-foreground/10 bg-card/90 px-4 py-2 text-xs font-semibold shadow-card backdrop-blur-xs transition-all duration-150 hover:border-foreground/25 hover:bg-card sm:px-5 sm:py-2.5 sm:text-sm"
             >
               <History className="size-4 text-muted-foreground" />
               Load previous chats
             </button>
+            {noHistoryNote && (
+              <p role="status" className="rounded-xl border border-foreground/10 bg-popover px-3.5 py-2 text-xs font-medium text-muted-foreground shadow-overlay">
+                No history
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -138,14 +169,15 @@ export default function AskPage() {
         ref={scroller}
         onScroll={loadEarlierNearTop}
         onWheel={(event) => event.deltaY < 0 && loadEarlierNearTop()}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8">
+        // A container, so an answer's avatar can hang outside the column only where it fits.
+        className="@container flex min-h-0 flex-1 flex-col overflow-y-auto px-4 sm:px-6 lg:px-8">
         {isEmptyChat ? (
           <div className={`${COLUMN} flex flex-1 flex-col`}>
-            <Suggestions onPick={fillComposer} />
+            <Suggestions onPick={fillTemplate} />
           </div>
         ) : (
           // Room at the top for the floating "Load previous chats" button.
-          <div className={cn(COLUMN, "space-y-8 pb-10", canOpenPreviousChats ? "pt-20" : "pt-8")}>
+          <div className={cn(COLUMN, "space-y-8 pb-10", showPreviousChatsButton ? "pt-20" : "pt-8")}>
             {showingPreviousChats && <EarlierIndicator hidden={earlierHidden} onLoad={loadEarlierInPlace} />}
             {turns.map((t, index) => (
               <Fragment key={t.id}>
@@ -162,6 +194,7 @@ export default function AskPage() {
                     setCitation(null);
                   }}
                   onClearCitation={() => setCitation(null)}
+                  onDelete={deleteMessage}
                 />
               </Fragment>
             ))}
@@ -173,6 +206,7 @@ export default function AskPage() {
       <div className="relative shrink-0 px-4 pb-4 sm:px-6 lg:px-8">
         <div className="pointer-events-none absolute inset-x-0 -top-8 h-8 bg-gradient-to-t from-background to-transparent" />
         <div className={COLUMN}>
+          {deletedMessage && <DeletedToast key={`${deletedMessage.turnId}-${deletedMessage.message}`} onUndo={undoDelete} onDismiss={dismissDeleted} />}
           <Composer
             value={draft}
             onChange={setDraft}
@@ -181,6 +215,7 @@ export default function AskPage() {
             onStop={stop}
             onNewChat={isEmptyChat && !showingPreviousChats ? undefined : newChat}
             inputRef={input}
+            handle={composer}
           />
           <p className="mt-2 text-center text-[11px] text-faint">Answers come from the company graph. Every claim cites the document it came from.</p>
         </div>

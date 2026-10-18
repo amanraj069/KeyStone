@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, type KeyboardEvent, type RefObject, useLayoutEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type RefObject, useImperativeHandle, useLayoutEffect, useMemo, useState } from "react";
 import { ArrowUp, MessageSquarePlus, Server, Square, Users } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api";
@@ -15,6 +15,12 @@ import {
   replaceRange,
 } from "./slash-commands";
 
+/** Lets the page fill the box, e.g. with a template whose gap opens the /people or /systems list. */
+export interface ComposerHandle {
+  /** Puts the text in the box and the caret at `caret` (default: the end), opening any slash menu there. */
+  fill: (text: string, caret?: number) => void;
+}
+
 interface ComposerProps {
   /** The question being written; the page owns it, so a template can fill it in. */
   value: string;
@@ -25,6 +31,7 @@ interface ComposerProps {
   /** Shown only once there is a chat on screen to leave. */
   onNewChat?: () => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
+  handle?: RefObject<ComposerHandle | null>;
 }
 
 /** The box grows with its text up to this many lines, then scrolls. */
@@ -47,7 +54,7 @@ const initials = (name: string) =>
  * a running answer, and "New chat" files the current chat under the previous ones.
  * Typing "/" opens a menu: /people mentions someone working at Apex, /systems a system.
  */
-export function Composer({ value, onChange, busy, onAsk, onStop, onNewChat, inputRef }: ComposerProps) {
+export function Composer({ value, onChange, busy, onAsk, onStop, onNewChat, inputRef, handle }: ComposerProps) {
   const [caret, setCaret] = useState(0);
   const [highlighted, setHighlighted] = useState(0);
   // Esc closes the menu for the command it was open for, until another one starts.
@@ -124,9 +131,22 @@ export function Composer({ value, onChange, busy, onAsk, onStop, onNewChat, inpu
     requestAnimationFrame(() => inputRef.current?.setSelectionRange(position, position));
   };
 
+  useImperativeHandle(handle, () => ({
+    fill: (text, at = text.length) => {
+      onChange(text);
+      setDismissedAt(null);
+      setHighlighted(0);
+      inputRef.current?.focus();
+      moveCaret(at);
+    },
+  }));
+
   const pick = (index: number) => {
     if (!slash || !menu || !menu.items[index]) return;
-    const next = replaceRange(value, slash.start, slash.end, menu.pick(index));
+    let insert = menu.pick(index);
+    // A name picked inside a sentence ("if Jax leaves?") needs no space of its own before a space or a mark.
+    if (slash.kind === "entry" && /^[\s?!.,;:)]/.test(value.slice(slash.end))) insert = insert.trimEnd();
+    const next = replaceRange(value, slash.start, slash.end, insert);
     onChange(next.text);
     setHighlighted(0);
     moveCaret(next.caret);
