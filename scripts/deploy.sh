@@ -51,6 +51,7 @@ if (( mem_kb < 2000000 && swap_kb < 1000000 )); then
 fi
 echo "--> git pull"
 git pull --ff-only
+echo "--> deploying $(git log --oneline -1)"
 echo "--> docker compose up -d --build"
 docker compose -f docker-compose.prod.yml up -d --build
 docker image prune -f >/dev/null
@@ -81,3 +82,10 @@ case "$status" in
   "") fail "$URL did not answer within ${WAIT}s. On the instance: docker compose -f docker-compose.prod.yml logs --tail 100 api caddy" ;;
   *) fail "$URL reports \"$status\": $body" ;;
 esac
+
+# /health covers the API, FalkorDB and Redis but not the worker, so also check that no container
+# has exited or is crash-looping.
+echo "==> Checking the containers"
+down="$("${SSH[@]}" "$HOST" "cd ~/$DIR && docker compose -f docker-compose.prod.yml ps -a --status exited --status restarting --status dead --format '{{.Service}}'" | tr '\n' ' ')"
+[[ -z "${down// /}" ]] || fail "not running: $down. On the instance: docker compose -f docker-compose.prod.yml logs --tail 100 $down"
+echo "==> OK: all containers are running"

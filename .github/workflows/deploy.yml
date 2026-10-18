@@ -1,0 +1,63 @@
+# Deploy the backend to the EC2 instance on every push to main (docs/deploy.md, "Automatic deploys").
+#
+# Runs scripts/deploy.sh, the same script as a manual deploy: type-check the API, SSH in,
+# git pull + docker compose up -d --build, then fail unless https://API_DOMAIN/health says
+# "up" (or "seeding") and every container is running.
+#
+# Repository secrets (Settings → Secrets and variables → Actions):
+#   EC2_HOST     the Elastic IP, e.g. 15.252.22.37
+#   EC2_USER     ec2-user (Amazon Linux) or ubuntu (Ubuntu)
+#   EC2_SSH_KEY  the full contents of the instance's .pem private key
+#
+# The web app is not deployed here: Vercel builds it from GitHub by itself.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # "Run workflow" button in the Actions tab
+
+# One deploy at a time. A push during a deploy waits for it rather than cancelling a half-built stack.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # The exact pnpm the lockfile was made with (package.json "packageManager"), as in apps/api/Dockerfile.
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm install --frozen-lockfile --filter @keystone/api...
+
+      - name: Set up SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          [[ -n "$EC2_HOST" && -n "$EC2_USER" && -n "$EC2_SSH_KEY" ]] || { echo "Set the EC2_HOST, EC2_USER and EC2_SSH_KEY repository secrets" >&2; exit 1; }
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$EC2_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          mkdir -p ~/.ssh
+          ssh-keyscan -T 15 "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+          DEPLOY_SSH_KEY: ${{ runner.temp }}/deploy_key
+        run: scripts/deploy.sh
+
+      - name: Remove the SSH key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key"
