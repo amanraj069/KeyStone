@@ -16,6 +16,8 @@ export interface GraphCanvasViewProps {
   pulseIds: ReadonlySet<string>;
   /** How long a highlight change takes to animate. */
   animationMs: number;
+  /** Whether the wheel zooms and the background pans (off inside a scrolling page). */
+  interactive: boolean;
   onArtifactClick: (artifactId: string) => void;
 }
 
@@ -57,7 +59,7 @@ const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
 /** The force-directed canvas. Loaded only in the browser (see graph-canvas.tsx). */
 export default function GraphCanvasView(props: GraphCanvasViewProps) {
-  const { nodes, edges, highlightedIds, fadedIds, redIds, pulseIds, animationMs, onArtifactClick } = props;
+  const { nodes, edges, highlightedIds, fadedIds, redIds, pulseIds, animationMs, interactive, onArtifactClick } = props;
   const { theme } = useTheme();
   const container = useRef<HTMLDivElement>(null);
   const graph = useRef<ForceGraphMethods<GNode, GLink> | undefined>(undefined);
@@ -267,6 +269,8 @@ export default function GraphCanvasView(props: GraphCanvasViewProps) {
           linkWidth={(link) => linkStyle(link).width}
           linkDirectionalArrowLength={0}
           cooldownTicks={120}
+          enableZoomInteraction={interactive}
+          enablePanInteraction={interactive}
           onRenderFramePost={drawLabels}
           autoPauseRedraw={!animating && !pulsing}
           onEngineStop={() => {

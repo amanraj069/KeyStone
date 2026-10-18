@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEvent, Citation, GraphPath, QuestionLabel } from "@keystone/shared";
 import { askAgent } from "@/lib/api";
+import { loadTurns, saveTurns } from "@/lib/ask-history";
 
 /** One tool the agent used: the call, then its result once it arrives. */
 export interface AgentStep {
@@ -13,6 +14,10 @@ export interface AgentStep {
 
 export interface AgentTurn {
   id: string;
+  /** The chat this turn belongs to; "New chat" starts another. */
+  chatId: string;
+  /** When it was asked (ISO), to date chats in the history. */
+  askedAt: string;
   question: string;
   label: QuestionLabel | null;
   steps: AgentStep[];
@@ -50,19 +55,34 @@ export function applyEvent(turn: AgentTurn, event: AgentEvent): AgentTurn {
   }
 }
 
+/** Earlier exchanges open this many at a time: on request, then each time the thread is scrolled to the top. */
+export const EARLIER_PAGE_SIZE = 5;
+
 /**
  * The Ask conversation: sends a question to POST /agent/ask and folds the streamed
- * events into turns. One session id per page visit, so follow-ups have context.
+ * events into turns. Turns are saved in this browser (see ask-history.ts), grouped
+ * into chats like Intake's assistant: chats from before this visit, and the ones
+ * left with "New chat", stay hidden until the user opens them, five exchanges at a time.
  */
 export function useAsk() {
   const [turns, setTurns] = useState<AgentTurn[]>([]);
-  const sessionId = useRef<string>("");
+  const [loaded, setLoaded] = useState(false);
+  // Also sent as the session id, so a chat's questions share one.
+  const [chatId, setChatId] = useState(() => crypto.randomUUID());
+  // How many of the newest exchanges from earlier chats are shown above this chat.
+  const [earlierShown, setEarlierShown] = useState(0);
   const controller = useRef<AbortController | null>(null);
 
+  // localStorage only exists in the browser, so the history is read after the first render.
   useEffect(() => {
-    sessionId.current = crypto.randomUUID();
+    setTurns(loadTurns());
+    setLoaded(true);
     return () => controller.current?.abort();
   }, []);
+
+  useEffect(() => {
+    if (loaded) saveTurns(turns);
+  }, [loaded, turns]);
 
   const update = useCallback((id: string, change: (turn: AgentTurn) => AgentTurn) => {
     setTurns((current) => current.map((turn) => (turn.id === id ? change(turn) : turn)));
@@ -73,6 +93,8 @@ export function useAsk() {
       const id = crypto.randomUUID();
       const turn: AgentTurn = {
         id,
+        chatId,
+        askedAt: new Date().toISOString(),
         question,
         label: null,
         steps: [],
@@ -88,7 +110,7 @@ export function useAsk() {
       const abort = new AbortController();
       controller.current = abort;
       try {
-        await askAgent({ question, sessionId: sessionId.current }, (event) => update(id, (t) => applyEvent(t, event)), abort.signal);
+        await askAgent({ question, sessionId: chatId }, (event) => update(id, (t) => applyEvent(t, event)), abort.signal);
         // A stream that ends without "done" (a dropped connection) still has to stop spinning.
         update(id, (t) => (t.status === "streaming" ? { ...t, status: "error", error: "The answer stream ended early." } : t));
       } catch (reason) {
@@ -100,11 +122,40 @@ export function useAsk() {
         );
       }
     },
-    [update],
+    [chatId, update],
   );
 
   const stop = useCallback(() => controller.current?.abort(), []);
-  const busy = turns.some((turn) => turn.status === "streaming");
 
-  return { turns, ask, stop, busy };
+  /** Clears the screen for a fresh chat; the one on screen joins the previous chats. */
+  const startNewChat = useCallback(() => {
+    setChatId(crypto.randomUUID());
+    setEarlierShown(0);
+  }, []);
+
+  /** Shows the next five earlier exchanges above the ones already on screen. */
+  const loadEarlier = useCallback(() => setEarlierShown((shown) => shown + EARLIER_PAGE_SIZE), []);
+
+  const busy = turns.some((turn) => turn.status === "streaming");
+  // Chats run one after another, so every earlier turn comes before this chat's turns.
+  const earlierTurns = turns.filter((turn) => turn.chatId !== chatId);
+  const shownEarlier = earlierShown > 0 ? earlierTurns.slice(-earlierShown) : [];
+  const visibleTurns = [...shownEarlier, ...turns.filter((turn) => turn.chatId === chatId)];
+
+  return {
+    /** The turns to draw: this chat's, plus the earlier exchanges opened so far. */
+    turns: visibleTurns,
+    ask,
+    stop,
+    busy,
+    /** False until the stored history has been read. */
+    loaded,
+    chatId,
+    /** Earlier exchanges not on screen yet. */
+    earlierHidden: earlierTurns.length - shownEarlier.length,
+    /** Whether any earlier exchange is on screen. */
+    showingPreviousChats: shownEarlier.length > 0,
+    loadEarlier,
+    startNewChat,
+  };
 }
