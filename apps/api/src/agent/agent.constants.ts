@@ -34,6 +34,19 @@ export const SYSTEM_PROMPT = [
  * a rule that follows from the evidence (no record of X means no X), never a guess.
  */
 export const LABEL_HINTS: Partial<Record<QuestionLabel, string>> = {
+  who_knows:
+    'If the question asks how a named person is connected to a system or to another person (or who could introduce them), call ' +
+    'how_connected with both names and describe the chain step by step, citing its documents. Otherwise use who_knows.',
+  what_if:
+    'Call simulate_departure for the person (who_knows first if the question names a system, not a person). Lead with what ' +
+    'breaks: systems that would lose their last expert or be left with one, then who could cover them. Summarise long lists ' +
+    '(the three that matter most, then how many more). Describe connectors in words, never as scores. Use short "- " bullets, ' +
+    'at most 6, with sub-items only where needed; cite documents with [ID] markers and do not write their ids or titles in the text.',
+  freshness:
+    'Call find_stale_docs first: it lists the pages that still state a decision a later one replaced. If the page or system ' +
+    'asked about is listed, answer No: say what the page still states and which newer decision replaced it, citing the page and ' +
+    'the document the newer decision was made in. If it is not listed, call trace_decision for the system and answer from the ' +
+    'decisions it returns (Yes when nothing newer replaced what the page states).',
   event:
     '1) find_event with the day, the people named and a few words about the triggering event. 2) check_follow_up on the best ' +
     'candidate with the kind of response asked about (ticket, support_ticket, postmortem, page, email, thread, meeting, deal, ' +

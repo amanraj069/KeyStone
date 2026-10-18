@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { RequiredAdminTokenGuard } from '../common/admin-token.guard';
 import { ActionsExportService, type ExportResult } from './actions-export.service';
+import { MemoryExportService, type MemoryExportResult } from './memory-export.service';
 import { type BackupResult, BackupService, type RestoreResult } from './backup.service';
 
 const RestoreSchema = z.object({
@@ -23,6 +24,7 @@ export class AdminController {
   constructor(
     private readonly backup: BackupService,
     private readonly actionsExport: ActionsExportService,
+    private readonly memoryExport: MemoryExportService,
   ) {}
 
   @Post('backup')
@@ -41,5 +43,11 @@ export class AdminController {
   @HttpCode(200)
   exportActions(): Promise<ExportResult> {
     return this.actionsExport.exportNow();
+  }
+
+  @Post('export-memory')
+  @HttpCode(200)
+  exportMemory(): Promise<MemoryExportResult> {
+    return this.memoryExport.exportNow();
   }
 }

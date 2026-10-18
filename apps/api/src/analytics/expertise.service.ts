@@ -48,6 +48,8 @@ export class ExpertiseService {
     await this.graph.query(graphName, Q.SET_ACTIVE_AS_OF, { asOfDay });
     const catalog = await this.catalog.refreshStats(graphName);
     // KNOWS: rebuild from scratch so a refresh "as of" an earlier day leaves no newer pairs behind.
+    // K2 ranks its evidence by how many systems each artifact mentions, counted first.
+    await this.graph.query(graphName, Q.SET_MENTIONED_SYSTEMS);
     await this.graph.query(graphName, Q.DELETE_ALL_KNOWS);
     await this.graph.query(graphName, Q.K2_MATERIALISE_KNOWS, { asOfDay });
     await this.graph.query(graphName, Q.DELETE_WEAK_KNOWS, { minScore: MIN_KNOWS_SCORE });

@@ -25,6 +25,12 @@ export const DECISION_ID_INDEX = 'CREATE INDEX FOR (d:Decision) ON (d.id)';
 /** Range index on Action.id: approving or rejecting a proposed action finds it by id. */
 export const ACTION_ID_INDEX = 'CREATE INDEX FOR (x:Action) ON (x.id)';
 
+/** Range indexes for the agent's memory (Stage 16): chats, turns, notes and users are found by id. */
+export const SESSION_ID_INDEX = 'CREATE INDEX FOR (s:Session) ON (s.id)';
+export const TURN_ID_INDEX = 'CREATE INDEX FOR (t:Turn) ON (t.id)';
+export const NOTE_ID_INDEX = 'CREATE INDEX FOR (n:Note) ON (n.id)';
+export const USER_ID_INDEX = 'CREATE INDEX FOR (u:User) ON (u.id)';
+
 /**
  * Vector index on Chunk.embedding for semantic search (cosine similarity).
  * `{{EMBED_DIM}}` is replaced by chunkEmbeddingVectorIndex() below.
@@ -56,6 +62,10 @@ export function schemaStatements(embedDim: number): string[] {
     SYSTEM_NAME_INDEX,
     DECISION_ID_INDEX,
     ACTION_ID_INDEX,
+    SESSION_ID_INDEX,
+    TURN_ID_INDEX,
+    NOTE_ID_INDEX,
+    USER_ID_INDEX,
     chunkEmbeddingVectorIndex(embedDim),
   ];
 }

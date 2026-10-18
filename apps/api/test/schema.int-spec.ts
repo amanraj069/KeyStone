@@ -19,11 +19,11 @@ describe('SchemaService.ensureSchema on a fresh graph', () => {
     await graph.onModuleDestroy();
   });
 
-  it('creates all 7 indexes, and a second run changes nothing', async () => {
+  it('creates all 11 indexes, and a second run changes nothing', async () => {
     const schema = new SchemaService(graph, 768);
 
-    await expect(schema.ensureSchema(name)).resolves.toEqual({ created: 7, alreadyExisted: 0 });
-    await expect(schema.ensureSchema(name)).resolves.toEqual({ created: 0, alreadyExisted: 7 });
+    await expect(schema.ensureSchema(name)).resolves.toEqual({ created: 11, alreadyExisted: 0 });
+    await expect(schema.ensureSchema(name)).resolves.toEqual({ created: 0, alreadyExisted: 11 });
 
     const rows = await graph.roQuery<IndexRow>(name, LIST_INDEXES);
     const indexes = rows
@@ -35,8 +35,12 @@ describe('SchemaService.ensureSchema on a fresh graph', () => {
       'Artifact.id:RANGE',
       'Chunk.embedding:VECTOR',
       'Decision.id:RANGE',
+      'Note.id:RANGE',
       'Person.name:RANGE',
+      'Session.id:RANGE',
       'System.name:RANGE',
+      'Turn.id:RANGE',
+      'User.id:RANGE',
     ]);
   });
 

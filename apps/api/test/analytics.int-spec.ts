@@ -96,6 +96,9 @@ describe('Stage 7 analytics on the fixture graph', () => {
   it('experts for a system come with an evidence graph for the top person (K3a, K3b)', async () => {
     const result = await analytics.experts('TitanDB', fx.name);
     expect(result.experts.map((e) => e.person)).toEqual(['Ada', 'Ben', 'Dev']); // Cara is inactive
+    // relativeScore: a share of the top active expert, rounded to 2 decimals.
+    expect(result.experts[0].relativeScore).toBe(1);
+    for (const e of result.experts) expect(e.relativeScore).toBeCloseTo(e.score / result.experts[0].score, 2);
     expect(result.evidencePath?.person).toBe('Ada');
     expect([...(result.evidencePath?.evidence ?? [])].sort()).toEqual(['PR-1', 'T-1', 'T-2', 'T-4']);
     expect(result.evidencePath?.nodes).toHaveLength(6); // Ada, 4 artifacts, TitanDB

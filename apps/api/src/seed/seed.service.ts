@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { GraphCounts, HealthResponse, SeedStatus } from '@keystone/shared';
 import { ExpertiseService } from '../analytics/expertise.service';
 import { type ActionsRestoreSummary, ActionsExportService } from '../backup/actions-export.service';
 import { BACKUP_WAIT_MS } from '../backup/backup.constants';
 import { BackupService } from '../backup/backup.service';
+import { MemoryExportService, type MemoryRestoreSummary } from '../backup/memory-export.service';
 import { countPeople } from '../backup/count-people';
 import { GraphLock, type LockHolder } from '../backup/graph-lock';
 import { ExtractCacheService } from '../extract/extract-cache.service';
@@ -50,6 +51,8 @@ export interface SeedResult {
   staleTargets?: number;
   chunks?: number;
   actions?: ActionsRestoreSummary;
+  /** The agent's memory (chats, feedback, notes) restored from memory-latest.jsonl (Stage 16). */
+  memory?: MemoryRestoreSummary;
   seconds: number;
 }
 
@@ -89,6 +92,7 @@ export class SeedService {
     @Inject(TEXT_STORE) textStore: TextStore,
     @Inject(LLM_SETTINGS) llmSettings: LlmSettings,
     @Inject(SEED_SETTINGS) settings: SeedSettings,
+    @Optional() private readonly memoryExport?: MemoryExportService,
   ) {
     // Our own LLM layer: cache only, and a provider that refuses every request.
     this.llm = new LlmService(offlineSettings(llmSettings), new OfflineProvider(llmSettings));
@@ -207,6 +211,7 @@ export class SeedService {
     // 6-hourly export exist only there) to merge after actions-latest.jsonl.
     this.step('snapshot the actions of the current apex');
     const live = await this.actionsExport.snapshotActions(APEX_GRAPH);
+    const liveMemory = this.memoryExport ? await this.memoryExport.snapshotMemory(APEX_GRAPH) : [];
 
     this.step('ingest artifacts.jsonl (Stage 4)');
     const ingest = await this.ingest.runFull(graph, async (p) => this.logger.log(`[ingest ${p.percent}%] ${p.message}`));
@@ -235,6 +240,10 @@ export class SeedService {
     this.step('restore actions from the latest export');
     const actions = await this.actionsExport.restoreLatestInto(graph, live);
 
+    // Memory links to artifacts, systems and people, which all exist by now.
+    this.step('restore the agent memory from the latest export');
+    const memory = this.memoryExport ? await this.memoryExport.restoreLatestInto(graph, liveMemory) : undefined;
+
     this.step('expertise refresh');
     await this.expertise.refresh({ graph });
 
@@ -260,6 +269,7 @@ export class SeedService {
       staleTargets: stale.calls,
       chunks: embedded.chunks,
       actions,
+      memory,
       seconds: 0,
     };
   }

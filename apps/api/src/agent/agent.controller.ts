@@ -5,8 +5,9 @@ import { randomUUID } from 'node:crypto';
 import { AgentService } from './agent.service';
 
 /**
- * POST /agent/ask { question, sessionId? } -> Server-Sent Events, one JSON object per
- * event: classified, tool_call, tool_result, answer_delta, done (or error).
+ * POST /agent/ask { question, sessionId?, userId? } -> Server-Sent Events, one JSON
+ * object per event: classified, memory, tool_call, tool_result, answer_delta, done
+ * (with the stored turnId) or error.
  */
 @Controller('agent')
 export class AgentController {
@@ -14,12 +15,12 @@ export class AgentController {
 
   @Post('ask')
   async ask(@Body() body: unknown, @Req() req: Request, @Res() res: Response): Promise<void> {
-    const { question, sessionId } = AskRequestSchema.parse(body);
+    const { question, sessionId, userId } = AskRequestSchema.parse(body);
     res.status(200).set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.flushHeaders();
     let closed = false;
     req.on('close', () => (closed = true));
-    for await (const event of this.agent.run(question, sessionId ?? randomUUID())) {
+    for await (const event of this.agent.run(question, sessionId ?? randomUUID(), { userId })) {
       if (closed) break;
       res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     }

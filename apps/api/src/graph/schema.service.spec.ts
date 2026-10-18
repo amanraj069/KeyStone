@@ -6,16 +6,16 @@ describe('SchemaService.ensureSchema', () => {
     return new SchemaService({ query } as unknown as GraphService, 768);
   }
 
-  it('runs all 7 statements on the given graph', async () => {
+  it('runs all 11 statements on the given graph', async () => {
     const query = jest.fn().mockResolvedValue([]);
-    await expect(serviceWith(query).ensureSchema('g')).resolves.toEqual({ created: 7, alreadyExisted: 0 });
-    expect(query).toHaveBeenCalledTimes(7);
+    await expect(serviceWith(query).ensureSchema('g')).resolves.toEqual({ created: 11, alreadyExisted: 0 });
+    expect(query).toHaveBeenCalledTimes(11);
     expect(query.mock.calls.every(([graph]) => graph === 'g')).toBe(true);
   });
 
   it('ignores "already indexed" errors', async () => {
     const query = jest.fn().mockRejectedValue(new Error("Attribute 'name' is already indexed"));
-    await expect(serviceWith(query).ensureSchema('g')).resolves.toEqual({ created: 0, alreadyExisted: 7 });
+    await expect(serviceWith(query).ensureSchema('g')).resolves.toEqual({ created: 0, alreadyExisted: 11 });
   });
 
   it('rethrows any other error', async () => {

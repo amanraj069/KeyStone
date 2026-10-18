@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
-import type { AnalyticsSummary, Bridge, BusFactorRow, DecisionTraceRow, Expert, ExpertsResponse, PersonListItem, StaleDoc, SystemWithDecisions } from '@keystone/shared';
+import type { AnalyticsSummary, Bridge, BusFactorRow, DecisionTraceRow, Expert, ExpertsResponse, GraphView, PersonListItem, StaleDoc, SystemWithDecisions } from '@keystone/shared';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import type { GraphPath } from '../graph/result-mapper';
@@ -23,6 +23,23 @@ export interface DepartureImpact {
   openTickets: { ticket: string; title: string; suggestedOwners: string[]; ownerEvidence: string[][] }[];
   /** Pages only this person has written or reviewed. */
   unsharedPages: { page: string; title: string }[];
+}
+
+/** Edges a chain between two people may use: collaboration only, so each step is two colleagues. */
+const PEOPLE_PATH_RELS = ['COLLAB'];
+/** Edges a chain to or between systems may use: work on artifacts, what they mention, collaboration. */
+const WORK_PATH_RELS = ['AUTHORED', 'REVIEWED', 'ASSIGNED', 'PARTICIPATED', 'MENTIONS', 'COLLAB'];
+
+/** How two things are connected (howConnected): the steps of the shortest chain and the artifacts on it. */
+export interface Connection {
+  from: string;
+  to: string;
+  connected: boolean;
+  hops: number;
+  /** "Nadia -PARTICIPATED-> zoom_2026-02-03 -MENTIONS-> Kafka"; a COLLAB step carries the documents both worked on. */
+  steps: { from: string; type: string; to: string; shared?: string[] }[];
+  view: GraphView;
+  evidence: string[];
 }
 
 /**
@@ -57,7 +74,17 @@ export class AnalyticsService {
   /** K8b on the projection, plus each person's cross-department evidence from apex. */
   async bridges(graphName = PROJECTION_GRAPH, evidenceGraph = APEX_GRAPH): Promise<Bridge[]> {
     await this.requireGraph(graphName);
-    const rows = await this.graph.roQuery<{ person: string; score: number }>(graphName, Q.K8B_BRIDGES);
+    return this.withEvidence(await this.graph.roQuery<{ person: string; score: number }>(graphName, Q.K8B_BRIDGES), evidenceGraph);
+  }
+
+  /** K8c (PageRank on the projection): the centre of the collaboration network, with the same evidence as bridges. */
+  async centralPeople(graphName = PROJECTION_GRAPH, evidenceGraph = APEX_GRAPH): Promise<Bridge[]> {
+    await this.requireGraph(graphName);
+    return this.withEvidence(await this.graph.roQuery<{ person: string; score: number }>(graphName, Q.K8C_CENTRAL_PEOPLE), evidenceGraph);
+  }
+
+  /** Each person's department and up to 5 artifacts shared with other departments (BRIDGE_EVIDENCE). */
+  private async withEvidence(rows: { person: string; score: number }[], evidenceGraph: string): Promise<Bridge[]> {
     return Promise.all(
       rows.map(async (row) => {
         const [found] = await this.graph.roQuery<{ dept: string | null; evidence: string[] }>(evidenceGraph, Q.BRIDGE_EVIDENCE, {
@@ -152,6 +179,49 @@ export class AnalyticsService {
     graphName = APEX_GRAPH,
   ): Promise<PersonListItem[]> {
     return this.graph.roQuery(graphName, Q.LIST_PEOPLE, { activeOnly });
+  }
+
+  /**
+   * How a person is connected to a system or to another person: the shortest chain
+   * in the graph, its steps in words, and the artifacts along it (for a chain of
+   * colleagues, the documents each pair worked on together), between any two people
+   * or systems.
+   */
+  async howConnected(from: string, to: string, graphName = APEX_GRAPH): Promise<Connection> {
+    const kindOf = async (name: string): Promise<'person' | 'system' | null> => {
+      if ((await this.graph.roQuery(graphName, Q.PERSON_EXISTS, { person: name })).length > 0) return 'person';
+      if ((await this.graph.roQuery(graphName, Q.SYSTEM_EXISTS, { system: name })).length > 0) return 'system';
+      return null;
+    };
+    const [fromKind, toKind] = await Promise.all([kindOf(from), kindOf(to)]);
+    if (!fromKind) throw new NotFoundException(`No person or system named "${from}"`);
+    if (!toKind) throw new NotFoundException(`No person or system named "${to}"`);
+    // People first, so "TitanDB -> Eve" reads as Eve's chain to TitanDB.
+    const swap = fromKind === 'system' && toKind === 'person';
+    const [a, b] = swap ? [to, from] : [from, to];
+    const pair = swap ? 'person-system' : `${fromKind}-${toKind}`;
+    const query =
+      pair === 'person-person' ? Q.SHORTEST_PERSON_TO_PERSON : pair === 'person-system' ? Q.SHORTEST_PERSON_TO_SYSTEM : Q.SHORTEST_SYSTEM_TO_SYSTEM;
+    const relTypes = pair === 'person-person' ? PEOPLE_PATH_RELS : WORK_PATH_RELS;
+    const [row] = await this.graph.roQuery<{ path: GraphPath }>(graphName, query, { from: a, to: b, relTypes });
+    if (!row) return { from, to, connected: false, hops: 0, steps: [], view: { nodes: [], edges: [] }, evidence: [] };
+
+    const view = pathsToGraphView([row.path]);
+    // Steps in walking order (the path's node order); an edge may be stored the other way round.
+    const names = row.path.nodes.map((node) => view.nodes.find((n) => n.id === node.id)?.name ?? '?');
+    const steps: Connection['steps'] = row.path.edges.map((edge, i) => ({ from: names[i], type: edge.type, to: names[i + 1] }));
+    const evidence = view.nodes.flatMap((n) => (n.artifactId ? [n.artifactId] : []));
+    // COLLAB is stored once per pair, so a step may point either way: look the pair up in both orders.
+    const pairs = steps.filter((s) => s.type === 'COLLAB').flatMap((s) => [[s.from, s.to], [s.to, s.from]]);
+    if (pairs.length > 0) {
+      const shared = await this.graph.roQuery<{ a: string; b: string; shared: string[] }>(graphName, Q.SHARED_ARTIFACTS, { pairs });
+      for (const step of steps) {
+        const found = shared.find((r) => (r.a === step.from && r.b === step.to) || (r.a === step.to && r.b === step.from));
+        if (found) step.shared = found.shared;
+        evidence.push(...(found?.shared ?? []));
+      }
+    }
+    return { from, to, connected: true, hops: steps.length, steps, view, evidence: [...new Set(evidence)] };
   }
 
   /** "Did you mean": the system names closest to one that was not found (aliases count). */

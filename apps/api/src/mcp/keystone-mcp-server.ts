@@ -18,6 +18,7 @@ import {
   TEXT_SCAN_MAX_DAYS,
 } from '../artifacts/artifacts.service';
 import { APEX_GRAPH } from '../graph/graph.constants';
+import type { MemoryService } from '../memory/memory.service';
 import type { WhatIfService } from '../whatif/whatif.service';
 
 /** What the tools call. Nest services in the app; stubs or fixture-bound services in tests. */
@@ -32,6 +33,8 @@ export interface KeystoneServices {
    * this type, so no MCP tool (and no agent) can approve its own proposals.
    */
   actions: Pick<ActionsService, 'draftHandover' | 'proposeReassignment' | 'createRunbookTask'>;
+  /** Recall only (the recall_memory tool); notes are approved by people, never through MCP. Optional. */
+  memory?: Pick<MemoryService, 'recall'>;
 }
 
 export interface KeystoneMcpOptions {
@@ -306,11 +309,13 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
     {
       title: 'Experts on a system',
       description:
-        'Who knows one system best: the five strongest active experts, each with an expertise score, lastActive (the day number of ' +
+        'Who knows one system best: the five strongest active experts, each with relativeScore, lastActive (the day number of ' +
         "their latest work on it in the company's timeline, where a higher number is more recent; not a number of days ago) and the " +
-        'artifact ids that show it, plus an evidence graph for the top expert. The score is recency-weighted (writing a ' +
-        'document about the system counts 3, reviewing 2, owning a ticket 1, taking part in a conversation up to 0.5; older work ' +
-        "counts less, halving about every three weeks). Use it for 'who knows X', 'who is the expert on X', 'who should I ask about " +
+        'artifact ids most about the system that show it, plus an evidence graph for the top expert. relativeScore is expertise as ' +
+        'a share of the top expert (1 = the strongest, 0.5 = half as much), from recency-weighted work (writing a document about the ' +
+        'system counts 3, reviewing 2, owning a ticket 1, taking part in a conversation up to 0.5; older work counts less, halving ' +
+        "about every three weeks). Describe experts in words ('top expert', 'a strong backup at about half'), not as numbers or " +
+        "percentages of anything else. Use it for 'who knows X', 'who is the expert on X', 'who should I ask about " +
         "X'. If the name is not a known system, the result has found: false and up to five similar system names: call it again with " +
         "one of them. Not for what happens if someone leaves (use simulate_departure).",
       inputSchema: {
@@ -320,7 +325,8 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
     run(async ({ system }) => {
       try {
         const result = await analytics.experts(system, graph);
-        const experts = result.experts.map((e) => ({ ...e, score: round(e.score, 2) }));
+        // The raw score is left out: it is an unbounded sum that models quote as if it meant something on its own.
+        const experts = result.experts.map((e) => ({ person: e.person, relativeScore: e.relativeScore, lastActive: e.lastActive, evidence: e.evidence }));
         return {
           data: { system, found: true, experts, topExpert: result.evidencePath?.person ?? null },
           evidence: unique([...experts.flatMap((e) => e.evidence), ...(result.evidencePath?.evidence ?? [])]),
@@ -382,6 +388,49 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
   );
 
   server.registerTool(
+    'central_people',
+    {
+      title: 'People at the centre of the network',
+      description:
+        'The ten people at the centre of the collaboration network: PageRank on who works with whom (working with well-connected ' +
+        'colleagues counts more), each with their department and artifacts shared with other departments as evidence. Use it for ' +
+        "'who are the most influential people', 'who is central to how work gets done'. For who connects separate teams use " +
+        'bridge_people; for expertise in a system use who_knows. relativeScore: 1 = the most central person.',
+      inputSchema: {},
+    },
+    run(async () => {
+      const rows = await analytics.centralPeople(projection, graph);
+      const top = rows[0]?.score || 1;
+      const people = rows.map((p) => ({ person: p.person, dept: p.dept, relativeScore: round(p.score / top, 2), evidence: p.evidence }));
+      return { data: { people }, evidence: unique(people.flatMap((p) => p.evidence)) };
+    }),
+  );
+
+  server.registerTool(
+    'how_connected',
+    {
+      title: 'How two things are connected',
+      description:
+        'The shortest chain in the graph between two people or systems (FalkorDB shortest path): what a person worked on that ' +
+        'mentions a system, which colleagues link two people (with the documents each pair worked on together), or which ' +
+        "documents and people link two systems. Use it for 'how is X connected to Y', 'who could introduce me to the X owner', " +
+        "'why would X know about Y'. Exact names: list_people, list_systems. connected: false means no chain of at most 5 steps.",
+      inputSchema: {
+        from: z.string().trim().min(1).max(200).describe('A person or a system, e.g. "Nadia".'),
+        to: z.string().trim().min(1).max(200).describe('A system or another person, e.g. "Kafka".'),
+      },
+    },
+    run(async ({ from, to }) => {
+      const result = await analytics.howConnected(from, to, graph);
+      return {
+        data: { from: result.from, to: result.to, connected: result.connected, hops: result.hops, steps: result.steps },
+        evidence: result.evidence,
+        ...(result.connected ? { graphPath: { nodes: result.view.nodes, edges: result.view.edges } } : {}),
+      };
+    }),
+  );
+
+  server.registerTool(
     'simulate_departure',
     {
       title: 'What if someone leaves',
@@ -405,7 +454,8 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
         systemsNewlyOrphaned: r.systemsNewlyOrphaned,
         systemsNewlyCritical: r.systemsNewlyCritical,
         islandsCreated: r.islandsCreated,
-        bridgeShift: r.bridgeShift.slice(0, 5),
+        // Raw betweenness means nothing to a reader: say how much more or less each person connects teams.
+        bridgeShift: r.bridgeShift.slice(0, 5).map((b) => ({ person: b.person, change: connectorChange(b.before, b.after), evidence: b.evidence })),
         openTickets: { total: r.orphanedTickets.length, items: r.orphanedTickets.slice(0, MAX_LIST_ITEMS) },
         soleAuthoredPages: { total: r.soleAuthoredPages.length, items: r.soleAuthoredPages.slice(0, MAX_LIST_ITEMS) },
       };
@@ -457,15 +507,23 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
       description:
         'Confluence pages that still state a decision which a later decision replaced, i.e. documentation that is out of date. Each ' +
         'comes with the outdated claim, the current decision, the day and artifact it was made in, and artifact ids. Use it for ' +
-        "'which docs are out of date', 'stale documentation', 'which pages need updating'. An empty list means no page is known to " +
-        'contradict a newer decision.',
+        "'which docs are out of date', 'stale documentation', 'which pages need updating', 'is page X still accurate'. An empty " +
+        'list means no page is known to contradict a newer decision. Cite the page id and the decidedIn id (both artifacts).',
       inputSchema: {},
     },
     run(async () => {
-      const pages = await analytics.staleDocs(graph);
+      // Decision ids (D:...) are left out: they are not artifacts, so a model citing them would lose every citation.
+      const pages = (await analytics.staleDocs(graph)).map((p) => ({
+        page: p.stalePage,
+        pageTitle: p.pageTitle,
+        stillStates: p.outdatedClaim,
+        replacedBy: p.currentDecision,
+        decidedOnDay: p.decidedOn,
+        decidedIn: p.decidedIn,
+      }));
       return {
         data: { pages },
-        evidence: unique(pages.flatMap((p) => [p.stalePage, ...(p.decidedIn ? [p.decidedIn] : [])])),
+        evidence: unique(pages.flatMap((p) => [p.page, ...(p.decidedIn ? [p.decidedIn] : [])])),
       };
     }),
   );
@@ -570,6 +628,30 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
     }),
   );
 
+  // Memory is optional: the benchmark builds its server without it, so its runs never see each other.
+  if (services.memory) {
+    const memory = services.memory;
+    server.registerTool(
+      'recall_memory',
+      {
+        title: 'What Keystone remembers',
+        description:
+          'What Keystone remembers about some systems or people: approved notes from colleagues (corrections and facts the ' +
+          'documents do not have yet, e.g. a change of owner), how often each was asked about, and the latest questions with the ' +
+          'start of their answers. Use it when a question is about ownership, expertise or a decision that may have changed ' +
+          'recently, or asks what was asked before. An approved note outranks older documents but does not erase them: give ' +
+          'both. Cite notes by their NOTE- id. Notes not yet approved are never returned.',
+        inputSchema: {
+          subjects: z.array(z.string().trim().min(1).max(200)).min(1).max(5).describe('Exact system or person names, e.g. ["TitanDB", "Priya"].'),
+        },
+      },
+      run(async ({ subjects }) => {
+        const rows = await memory.recall(subjects);
+        return { data: { subjects, found: rows }, evidence: unique(rows.flatMap((r) => r.notes.map((n) => n.id))) };
+      }),
+    );
+  }
+
   return server;
 }
 
@@ -602,6 +684,15 @@ function compactAction(a: ActionRow) {
     ...(a.summary ? { summary: a.summary } : {}),
     ...(a.planId ? { planId: a.planId } : {}),
   };
+}
+
+/** A connector's change after a departure, in words: "+12%", "-6%", "joins the top connectors", "leaves the top connectors". */
+export function connectorChange(before: number | null, after: number | null): string {
+  if (before === null && after !== null) return 'joins the top connectors';
+  if (before !== null && after === null) return 'leaves the top connectors';
+  if (!before || after === null) return 'no change';
+  const percent = Math.round(((after - before) / before) * 100);
+  return percent === 0 ? 'no change' : `${percent > 0 ? '+' : ''}${percent}% as a connector between teams`;
 }
 
 function unique(values: readonly string[]): string[] {

@@ -6,8 +6,11 @@ import { AppModule } from './app.module';
 import type { Env } from './config/env.schema';
 import { SeedService } from './seed/seed.service';
 
-/** 4000, so it stays clear of the web app (3000) and the FalkorDB Browser (3100). */
-const API_PORT = 4000;
+/**
+ * 4000, so it stays clear of the web app (3000) and the FalkorDB Browser (3100).
+ * API_PORT overrides it, e.g. to run a second API next to a running one.
+ */
+const API_PORT = Number(process.env.API_PORT ?? 4000);
 
 async function bootstrap(): Promise<void> {
   // forceCloseConnections: on shutdown, also close open Server-Sent Event streams

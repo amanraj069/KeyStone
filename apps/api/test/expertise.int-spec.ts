@@ -4,7 +4,19 @@ import { ProjectionService } from '../src/projection/projection.service';
 import { fixtureExpertise, useFixtureGraph } from './graph-test-utils';
 import { AnalyticsService } from '../src/analytics/analytics.service';
 import { MERGE_DEPARTURES } from '../src/ingest/queries/ingest.queries';
-import { ALL_KNOWS, DEPARTURES, COLLAB_WEIGHT, EVE_JOINS_MEETING, EXTRACTION_SUMMARY, GIVE_D1_A_SOURCE, KNOWS_SCORE, PROJECTION_COLLAB_PAIRS } from './queries/test.queries';
+import {
+  ADD_STACK_LIST_PAGE,
+  ALL_KNOWS,
+  DEPARTURES,
+  COLLAB_WEIGHT,
+  EVE_JOINS_MEETING,
+  EXTRACTION_SUMMARY,
+  GIVE_D1_A_SOURCE,
+  KNOWS_EVIDENCE,
+  KNOWS_SCORE,
+  MENTIONED_SYSTEMS,
+  PROJECTION_COLLAB_PAIRS,
+} from './queries/test.queries';
 
 /**
  * Stage 7 refresh, projection and replay queries on copies of the mini-company
@@ -37,6 +49,25 @@ describe('Stage 7 expertise refresh, projection and replay on the fixture graph'
     expect(d.min).toBeCloseTo(scores[0], 6);
     expect(d.max).toBeCloseTo(scores[9], 6);
     expect(d.min! <= d.p25! && d.p25! <= d.median! && d.median! <= d.p75! && d.p75! <= d.p90! && d.p90! <= d.max!).toBe(true);
+  });
+
+  it('KNOWS evidence lists the artifacts most about the system first; a page naming it in a list still counts (K2)', async () => {
+    const graph = await copyOfFixture('relevance');
+    const expertise = fixtureExpertise(fx.graph);
+    await expertise.refresh({ graph, asOfDay: 12 });
+    const [before] = await fx.graph.roQuery<{ score: number; evidence: string[] }>(graph, KNOWS_EVIDENCE, { person: 'Ada', system: 'TitanDB' });
+
+    await fx.graph.query(graph, ADD_STACK_LIST_PAGE);
+    await expertise.refresh({ graph, asOfDay: 12 });
+    const [after] = await fx.graph.roQuery<{ score: number; evidence: string[] }>(graph, KNOWS_EVIDENCE, { person: 'Ada', system: 'TitanDB' });
+
+    // Authored on the as-of day: it adds exactly 3 to the score, the same as before the ranking change.
+    expect(after.score).toBeCloseTo(before.score + 3, 6);
+    // Ranked by contribution x mention weight x 4 (title names TitanDB) / systems mentioned:
+    // T-1 ~26.7, PR-1 ~12.7, T-2 ~10.2, T-4 ~5.8 (two systems), P-STACK 0.75 (newest, but four systems and no title match).
+    expect(after.evidence).toEqual(['T-1', 'PR-1', 'T-2', 'T-4', 'P-STACK']);
+    const counts = await fx.graph.roQuery<{ id: string; n: number }>(graph, MENTIONED_SYSTEMS, { ids: ['P-STACK', 'T-1', 'T-4'] });
+    expect(counts).toEqual([{ id: 'P-STACK', n: 4 }, { id: 'T-1', n: 1 }, { id: 'T-4', n: 2 }]);
   });
 
   it('deletes KNOWS that decayed below 0.05 (DELETE_WEAK_KNOWS) and rebuilds from scratch (DELETE_ALL_KNOWS)', async () => {

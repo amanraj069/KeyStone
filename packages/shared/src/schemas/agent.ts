@@ -8,7 +8,10 @@ export type QuestionLabel = z.infer<typeof QuestionLabelSchema>;
 /** POST /agent/ask body. */
 export const AskRequestSchema = z.object({
   question: z.string().trim().min(1).max(2000),
+  /** The chat: earlier questions of the same session are remembered for follow-ups. */
   sessionId: z.string().trim().min(1).max(200).optional(),
+  /** Who is asking (an anonymous id the browser keeps), so each user's chats stay theirs. */
+  userId: z.string().trim().min(1).max(200).optional(),
 });
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 
@@ -32,6 +35,13 @@ export type Citation = z.infer<typeof CitationSchema>;
 /** The Server-Sent Events of POST /agent/ask, one JSON object per event. */
 export const AgentEventSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('classified'), label: QuestionLabelSchema }),
+  /** What the agent recalled from memory before answering: earlier turns of this chat and approved notes. */
+  z.object({
+    type: z.literal('memory'),
+    priorTurns: z.number().int(),
+    notes: z.array(z.object({ id: z.string(), text: z.string() })),
+    subjects: z.array(z.string()),
+  }),
   z.object({ type: z.literal('tool_call'), name: z.string(), args: z.record(z.string(), z.unknown()) }),
   z.object({
     type: z.literal('tool_result'),
@@ -46,6 +56,8 @@ export const AgentEventSchema = z.discriminatedUnion('type', [
     citations: z.array(CitationSchema),
     graphPath: GraphPathSchema,
     timings: z.record(z.string(), z.number()),
+    /** The Turn this answer was stored as (for feedback); null when memory is off or storing failed. */
+    turnId: z.string().nullable().optional(),
   }),
   z.object({ type: z.literal('error'), message: z.string() }),
 ]);
