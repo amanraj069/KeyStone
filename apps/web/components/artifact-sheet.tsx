@@ -1,9 +1,11 @@
 "use client";
 
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Markdown } from "@/components/markdown";
+import { SHEET_PANEL_WIDTH, Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 interface ArtifactSheetProps {
   /** The artifact to show; null closes the sheet. */
@@ -11,14 +13,14 @@ interface ArtifactSheetProps {
   onClose: () => void;
 }
 
-/** Side sheet with an artifact's title, type, day, people and the start of its body. */
+/** Side sheet with an artifact's title, type, day, people and the start of its body, rendered as Markdown. */
 export function ArtifactSheet({ artifactId, onClose }: ArtifactSheetProps) {
   const { data, error, loading } = useApi(artifactId ? (signal) => api.artifact(artifactId, signal) : null, [artifactId]);
   const shown = data && data.id === artifactId ? data : null;
 
   return (
     <Sheet open={artifactId !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 sm:max-w-md">
+      <SheetContent side="right" className={cn(SHEET_PANEL_WIDTH, "gap-0")}>
         <SheetHeader className="gap-2 border-b px-6 pt-6 pb-5">
           <p className="code-id text-muted-foreground">{artifactId}</p>
           <SheetTitle className="text-xl leading-snug font-semibold tracking-tight">
@@ -41,14 +43,71 @@ export function ArtifactSheet({ artifactId, onClose }: ArtifactSheetProps) {
               <Skeleton className="h-4 w-4/5" />
             </div>
           )}
-          {shown && (
-            <p className="text-[0.9rem] leading-relaxed whitespace-pre-wrap text-foreground/90">
-              {shown.excerpt ?? "The body of this artifact is not in the text store."}
-            </p>
-          )}
+          {shown &&
+            (shown.excerpt ? (
+              <Body text={shown.excerpt} people={shown.people} />
+            ) : (
+              <p className="text-sm text-muted-foreground">The body of this artifact is not in the text store.</p>
+            ))}
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** A line that opens a message in a thread: "Kaitlyn: I'm stuck on…". */
+const SPEAKER_LINE = /^([^:\n]{1,40}):\s+(.*)$/;
+
+interface Message {
+  speaker: string;
+  text: string;
+}
+
+/**
+ * The body read as a conversation (Slack threads, DMs), or null when it is not one.
+ * A speaker must be one of the artifact's people, so a "Goals: …" line in a page is
+ * not taken for one. Lines that do not open a message continue the one before.
+ */
+function toMessages(text: string, people: readonly string[]): Message[] | null {
+  const names = new Set(people);
+  const messages: Message[] = [];
+  for (const line of text.split("\n")) {
+    const match = SPEAKER_LINE.exec(line);
+    if (match && names.has(match[1].trim())) messages.push({ speaker: match[1].trim(), text: match[2] });
+    else if (messages.length > 0) messages[messages.length - 1].text += `\n${line}`;
+    else if (line.trim()) return null;
+  }
+  return messages.length >= 2 ? messages : null;
+}
+
+/** The body: a conversation with each speaker set apart, or else Markdown. */
+function Body({ text, people }: { text: string; people: readonly string[] }) {
+  const messages = toMessages(text, people);
+  if (!messages) return <Markdown text={text} className="text-[0.9rem] leading-relaxed text-foreground/90" />;
+  return (
+    <ol>
+      {messages.map((message, index) => {
+        // A new speaker starts a new group, with room above it; the same one carries on below.
+        const sameSpeaker = message.speaker === messages[index - 1]?.speaker;
+        return (
+          <li key={index} className={cn("flex gap-3", index > 0 && (sameSpeaker ? "mt-1.5" : "mt-5"))}>
+            <span
+              aria-hidden
+              className={cn(
+                "flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground/8 text-[11px] font-semibold text-muted-foreground",
+                sameSpeaker && "invisible",
+              )}
+            >
+              {message.speaker.charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0 flex-1">
+              {!sameSpeaker && <p className="mb-0.5 text-xs font-semibold">{message.speaker}</p>}
+              <Markdown text={message.text.trim()} className="text-[0.9rem] leading-relaxed text-foreground/90" />
+            </div>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 

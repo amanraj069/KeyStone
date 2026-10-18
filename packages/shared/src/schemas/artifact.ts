@@ -24,7 +24,7 @@ export const ArtifactSchema = z.object({
 
 export type Artifact = z.infer<typeof ArtifactSchema>;
 
-/** GET /artifacts/:id: what the UI shows when an artifact is opened (the body is an excerpt from the TextStore). */
+/** GET /artifacts/:id: what the UI shows when an artifact is opened (the body from the TextStore, whole unless outsized). */
 export const ArtifactDetailSchema = z.object({
   id: z.string(),
   /** The artifact's kind as a graph label: Ticket, Page, Thread, PR, Email, Meeting, Alert or Record. */

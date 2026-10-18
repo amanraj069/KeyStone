@@ -19,8 +19,10 @@ import {
 } from './queries/artifacts.queries';
 import { PERSON_EXISTS } from '../analytics/queries/analytics.queries';
 
-/** The UI shows this much of an artifact's body. */
+/** The agent's artifact context carries this much of a body, to keep its prompt small. */
 export const EXCERPT_CHARS = 1200;
+/** The UI's side sheet shows the whole body (the longest is about 12k); this only guards against an outsized one. */
+export const PANEL_BODY_CHARS = 40_000;
 
 /** The doc types artifacts can have (OrgForge doc_type, stored as Artifact.type). */
 export const ARTIFACT_TYPES = [
@@ -196,7 +198,7 @@ export class ArtifactsService {
   async detail(id: string, graphName = APEX_GRAPH): Promise<ArtifactDetail> {
     const [row] = await this.graph.roQuery<Omit<ArtifactDetail, 'excerpt'>>(graphName, ARTIFACT_DETAIL, { id });
     if (!row) throw new NotFoundException(`No artifact ${id}`);
-    return { ...row, excerpt: await this.excerpt(id) };
+    return { ...row, excerpt: await this.excerpt(id, PANEL_BODY_CHARS) };
   }
 
   /** Artifacts matching every given filter; artifacts involving more of the people first, then oldest first. */
@@ -243,7 +245,7 @@ export class ArtifactsService {
     const [people, links, excerpt] = await Promise.all([
       this.graph.roQuery<ArtifactContext['people'][number]>(graphName, ARTIFACT_PEOPLE, { id }),
       this.graph.roQuery<LinkedArtifact>(graphName, ARTIFACT_LINKS, { id, limit: LINKS_LIMIT }),
-      this.excerpt(id),
+      this.excerpt(id, EXCERPT_CHARS),
     ]);
     return { id: row.id, type: row.type, title: row.title, day: row.day, people, links, excerpt };
   }
@@ -442,9 +444,9 @@ export class ArtifactsService {
     };
   }
 
-  private async excerpt(id: string): Promise<string | null> {
+  private async excerpt(id: string, maxChars: number): Promise<string | null> {
     const body = await this.textStore.get('artifacts', id);
-    return body === null ? null : body.length > EXCERPT_CHARS ? `${body.slice(0, EXCERPT_CHARS).trimEnd()}…` : body;
+    return body === null ? null : body.length > maxChars ? `${body.slice(0, maxChars).trimEnd()}…` : body;
   }
 }
 
