@@ -8,6 +8,8 @@
  *   pnpm bench --dry-run       inspect, plan and print the cost estimate, then stop
  *   pnpm bench --out=mini      write data/bench/mini.json and mini.md instead of results.*
  *   pnpm bench --rejudge       score the stored B2 answers again with the current judge (no system answers again)
+ *   pnpm bench --publish=name  copy data/bench/name.json to apps/api/bench-results/ (what the site shows; no LLM calls)
+ * A run without --out also updates apps/api/bench-results/: commit it and the deployed site shows the run.
  *
  * BENCH_PER_TYPE (default 15) and BENCH_SEED (default 13) choose the B2 sample;
  * BENCH_JUDGE_MODEL (optional, same provider) gives the judge and B1's name checks their
@@ -36,7 +38,7 @@ import { BASELINE_K, checkerModel, CONFIRM_ABOVE_CALLS, CONTEXT_BUDGET_CHARS, DE
 import { type B1Plan, DepartureBench } from '../src/bench/departure-bench';
 import { QaBench } from '../src/bench/qa-bench';
 import { renderMarkdown, summarizeQuestions } from '../src/bench/report';
-import { resultsPaths, writeResults } from '../src/bench/results-store';
+import { publishResults, resultsPaths, writeResults } from '../src/bench/results-store';
 import { samplePerType } from '../src/bench/sampling';
 import { validateEnv } from '../src/config/env.schema';
 import { findRepoRoot } from '../src/config/repo-root';
@@ -149,8 +151,28 @@ async function rejudge(
   };
   const markdown = renderMarkdown(rescored);
   const paths = await writeResults(dataDir, rescored, markdown, out);
+  if (out === undefined) await publishResults(rescored, markdown);
   log(`\n${markdown}`);
   log(`Re-judged ${results.length} questions (${calls.made} judge calls, ${calls.cacheHits} cached); wrote ${paths.json} and ${paths.md}`);
+}
+
+/**
+ * Publishes a stored run (data/bench/<name>.json) as the site's results: validated,
+ * B2's summary recomputed, B1 kept from the current results when the run has none
+ * (a --only=b2 run), the report rendered again; written to data/bench/results.* and to
+ * the tracked apps/api/bench-results/. No database and no LLM calls.
+ */
+async function publishRun(dataDir: string, name: string): Promise<void> {
+  const run = await previousResults(dataDir, name);
+  if (!run.b2 && !run.b1) throw new Error(`${resultsPaths(dataDir, name).json} has no results to publish`);
+  const raw = JSON.parse(await readFile(resultsPaths(dataDir, name).json, 'utf8')) as BenchResults;
+  const current = name === 'results' ? run : await previousResults(dataDir);
+  const results: BenchResults = { ...raw, b1: run.b1 ?? current.b1, b2: run.b2 ?? current.b2 };
+  if (!run.b1 && current.b1) log('This run has no B1 (departure prediction): B1 is kept from the current results.json.');
+  const markdown = renderMarkdown(results);
+  const paths = await writeResults(dataDir, results, markdown);
+  const published = await publishResults(results, markdown);
+  log(`Published ${name}: wrote ${paths.json} and ${published.json}. Commit apps/api/bench-results/ to show it on the deployed site.`);
 }
 
 async function confirm(question: string): Promise<boolean> {
@@ -177,6 +199,13 @@ async function main(): Promise<void> {
   if (out !== undefined && !/^[a-z0-9][a-z0-9_-]{0,40}$/.test(out)) throw new Error('--out must be a short name: letters, digits, - and _');
   const perType = intFromEnv('BENCH_PER_TYPE', DEFAULT_PER_TYPE);
   const seed = intFromEnv('BENCH_SEED', DEFAULT_SEED);
+
+  const publish = args.find((a) => a.startsWith('--publish='))?.slice('--publish='.length);
+  if (publish !== undefined) {
+    if (!/^[a-z0-9][a-z0-9_-]{0,40}$/.test(publish)) throw new Error('--publish must name a run in data/bench, e.g. --publish=results');
+    await publishRun(env.DATA_DIR, publish);
+    return;
+  }
 
   // --- Services, built by hand like scripts/ask.ts (tsx has no decorator metadata for Nest DI).
   const graph = new GraphService(falkorSettingsFromEnv(env));
@@ -210,6 +239,8 @@ async function main(): Promise<void> {
     projectionGraph: PROJECTION_GRAPH,
     scratchPrefix: SCRATCH_PREFIX,
   });
+  // No memory here on purpose: the agent below gets no AGENT_MEMORY and the MCP server no recall_memory, so every
+  // question is answered on its own and no Turn or Note is written (one question can never see another's answer).
   // Proposing an action writes an Action node into apex: refused while benchmarking, so a run leaves no trace.
   const refuse = async (): Promise<never> => {
     throw new Error('Proposing actions is disabled during the benchmark.');
@@ -334,6 +365,10 @@ async function main(): Promise<void> {
     const paths = await writeResults(env.DATA_DIR, results, markdown, out);
     log(`\n${markdown}`);
     log(`Wrote ${paths.json} and ${paths.md}`);
+    if (out === undefined) {
+      const published = await publishResults(results, markdown);
+      log(`Published to ${published.json}: commit it and the deployed site shows this run.`);
+    }
   } finally {
     await tools.close();
     await graph.onModuleDestroy();
