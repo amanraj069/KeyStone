@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Citation, QuestionLabel } from "@keystone/shared";
-import { ChevronRight, CircleAlert, Waypoints } from "lucide-react";
+import { Check, ChevronRight, CircleAlert, Copy } from "lucide-react";
 import { KeystoneIcon } from "@/components/shell/brand-mark";
 import type { AgentTurn } from "@/hooks/use-ask";
 import { cn } from "@/lib/utils";
 import { AnswerText } from "./answer-text";
 import { StepList } from "./step-list";
+import { TurnGraph } from "./turn-graph";
 
 interface TurnViewProps {
   turn: AgentTurn;
@@ -15,6 +16,7 @@ interface TurnViewProps {
   activeCitation: string | null;
   onCite: (turnId: string, id: string) => void;
   onSelect: (turnId: string) => void;
+  onClearCitation: () => void;
 }
 
 /** The question classifier's labels, in words. */
@@ -34,10 +36,11 @@ const SOURCES_SHOWN = 5;
 
 /**
  * One exchange: the question as your bubble, the answer as Keystone's. While it streams,
- * the tool steps show in full; once done they fold into one line, so the answer leads,
- * and the cited sources are listed under it.
+ * the tool steps show in full; once done they fold into one line, so the answer leads.
+ * Under it come the graph the agent walked (drawn for the selected answer) and the
+ * cited sources, which single themselves out in that graph.
  */
-export function TurnView({ turn, active, activeCitation, onCite, onSelect }: TurnViewProps) {
+export function TurnView({ turn, active, activeCitation, onCite, onSelect, onClearCitation }: TurnViewProps) {
   const [stepsOpen, setStepsOpen] = useState(false);
   const streaming = turn.status === "streaming";
   const thinking = streaming && turn.answer === "";
@@ -46,65 +49,67 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect }: Tur
   return (
     <article className="space-y-3">
       <div className="flex justify-end">
-        <p className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap text-primary-foreground">{turn.question}</p>
+        <p className="max-w-[80%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-card">{turn.question}</p>
       </div>
 
-      <div className="flex items-end gap-2.5">
-        <span className="hidden size-8 shrink-0 items-center justify-center text-foreground sm:flex">
-          <KeystoneIcon className="size-6" />
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 hidden size-8 shrink-0 items-center justify-center rounded-lg border border-foreground/10 bg-card text-foreground shadow-card sm:flex">
+          <KeystoneIcon className="size-5" />
         </span>
-        <div
-          onClick={() => onSelect(turn.id)}
-          className={cn(
-            "w-full space-y-3 rounded-2xl rounded-bl-md border bg-card p-4 shadow-sm transition-colors sm:p-5 dark:shadow-none",
-            active ? "border-foreground/20" : "cursor-pointer hover:border-foreground/15",
-          )}
-        >
-          {(turn.label || active) && (
-            <div className="flex items-center gap-2">
-              {turn.label && <span className="rounded-full border px-2 py-0.5 text-[11px] font-bold text-muted-foreground">{LABEL_NAME[turn.label]}</span>}
-              {active && (
-                <span className="ml-auto flex items-center gap-1 text-[11px] font-semibold text-muted-foreground">
-                  <Waypoints className="size-3.5" />
-                  In the graph
-                </span>
-              )}
-            </div>
-          )}
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold">Keystone</span>
+            {turn.label && <span className="rounded-full border border-foreground/10 px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">{LABEL_NAME[turn.label]}</span>}
+          </div>
+          <div
+            onClick={() => onSelect(turn.id)}
+            className={cn(
+              "w-full space-y-3 rounded-2xl rounded-tl-md border bg-card p-4 shadow-card transition-colors sm:p-5",
+              active ? "border-foreground/20" : "cursor-pointer border-foreground/10 hover:border-foreground/20",
+            )}
+          >
+            {turn.steps.length > 0 && !streaming && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setStepsOpen((open) => !open);
+                }}
+                aria-expanded={stepsOpen}
+                className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight className={cn("size-3.5 transition-transform duration-200", stepsOpen && "rotate-90")} />
+                Walked the graph with {turn.steps.length} tool{turn.steps.length === 1 ? "" : "s"} · {sources} source{sources === 1 ? "" : "s"}
+              </button>
+            )}
+            {(streaming || stepsOpen) && <StepList steps={turn.steps} />}
 
-          {turn.steps.length > 0 && !streaming && (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                setStepsOpen((open) => !open);
-              }}
-              aria-expanded={stepsOpen}
-              className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight className={cn("size-3.5 transition-transform duration-200", stepsOpen && "rotate-90")} />
-              Walked the graph with {turn.steps.length} tool{turn.steps.length === 1 ? "" : "s"} · {sources} source{sources === 1 ? "" : "s"}
-            </button>
-          )}
-          {(streaming || stepsOpen) && <StepList steps={turn.steps} />}
-
-          {thinking && <TypingDots label={turn.steps.length === 0 ? "Reading the question" : "Walking the graph"} />}
-          {turn.answer && (
-            <AnswerText
-              text={turn.answer}
-              cited={turn.status === "done" ? new Set(turn.citations.map((c) => c.id)) : null}
-              activeId={active ? activeCitation : null}
-              onCite={(id) => onCite(turn.id, id)}
+            {thinking && <TypingDots label={turn.steps.length === 0 ? "Reading the question" : "Walking the graph"} />}
+            {turn.answer && (
+              <AnswerText
+                text={turn.answer}
+                cited={turn.status === "done" ? new Set(turn.citations.map((c) => c.id)) : null}
+                activeId={active ? activeCitation : null}
+                onCite={(id) => onCite(turn.id, id)}
+              />
+            )}
+            {turn.status === "error" && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CircleAlert className="size-4" /> {turn.error ?? "Something went wrong."}
+              </p>
+            )}
+            <TurnGraph
+              turn={turn}
+              active={active}
+              citation={active ? activeCitation : null}
+              onSelect={() => onSelect(turn.id)}
+              onClearCitation={onClearCitation}
             />
-          )}
-          {turn.status === "error" && (
-            <p className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CircleAlert className="size-4" /> {turn.error ?? "Something went wrong."}
-            </p>
-          )}
-          {turn.status === "done" && turn.citations.length > 0 && (
-            <Sources citations={turn.citations} activeId={active ? activeCitation : null} onCite={(id) => onCite(turn.id, id)} />
-          )}
+            {turn.status === "done" && turn.citations.length > 0 && (
+              <Sources citations={turn.citations} activeId={active ? activeCitation : null} onCite={(id) => onCite(turn.id, id)} />
+            )}
+          </div>
+          {turn.status === "done" && turn.answer && <CopyAnswer text={turn.answer} />}
         </div>
       </div>
     </article>
@@ -153,6 +158,32 @@ function Sources({ citations, activeId, onCite }: { citations: Citation[]; activ
         </button>
       )}
     </div>
+  );
+}
+
+/** Copies the answer's text, and says so for a moment. */
+function CopyAnswer({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard.writeText(text).then(
+          () => setCopied(true),
+          () => setCopied(false),
+        );
+      }}
+      className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+      {copied ? "Copied" : "Copy"}
+    </button>
   );
 }
 
