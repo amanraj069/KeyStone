@@ -77,6 +77,7 @@ All dates are October 2026. Each row is one stage brief I gave Claude Code, what
 | 18 | 16 Memory | Sessions, turns, feedback and approved notes in the graph; `recall_memory` | Chosen from my review of the gaps against the challenge brief; end-to-end run where a correction stays invisible until a person approves it |
 | 18 | 17 Live and tools | Live documents, `how_connected` (`algo.SPpaths`), `central_people` (PageRank), per-tool Cypher, published bench results | My request to keep results in a tracked file so the server needs no data upload; reset returns the graph exactly to its earlier figures |
 | 18 | Submission docs | This file and the README graph map | Written with Claude Code from my prompts and the git history; reviewed by me |
+| 18 | 18 Win list | Risk watcher (proposals after every live change), `triage_incident` (T1–T3), evidence ranked by mention counts with a passage per citation, agent rate limit, stray "Yes." fix, MIT licence | My list of improvements for Tracks 01 and 03 (`WIN13.md`); checked end to end on the local graph (watcher, triage, citations) with unit and integration tests. Community detection was tried and dropped because it finds a single group on this data |
 
 ---
 

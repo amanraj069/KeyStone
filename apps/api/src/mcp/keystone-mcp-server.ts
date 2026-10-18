@@ -310,9 +310,10 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
       title: 'Experts on a system',
       description:
         'Who knows one system best: the five strongest active experts, each with relativeScore, lastActive (the day number of ' +
-        "their latest work on it in the company's timeline, where a higher number is more recent; not a number of days ago) and the " +
-        'artifact ids most about the system that show it, plus an evidence graph for the top expert. relativeScore is expertise as ' +
-        'a share of the top expert (1 = the strongest, 0.5 = half as much), from recency-weighted work (writing a document about the ' +
+        "their latest work on it in the company's timeline, where a higher number is more recent; not a number of days ago), the " +
+        'artifact ids most about the system that show it and, as sources, each of them with its title and how the person worked on ' +
+        'it, plus an evidence graph for the top expert. relativeScore is expertise as a share of the top expert (1 = the strongest, ' +
+        '0.5 = half as much), from recency-weighted work (writing a document about the ' +
         'system counts 3, reviewing 2, owning a ticket 1, taking part in a conversation up to 0.5; older work counts less, halving ' +
         "about every three weeks). Describe experts in words ('top expert', 'a strong backup at about half'), not as numbers or " +
         "percentages of anything else. Use it for 'who knows X', 'who is the expert on X', 'who should I ask about " +
@@ -326,7 +327,15 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
       try {
         const result = await analytics.experts(system, graph);
         // The raw score is left out: it is an unbounded sum that models quote as if it meant something on its own.
-        const experts = result.experts.map((e) => ({ person: e.person, relativeScore: e.relativeScore, lastActive: e.lastActive, evidence: e.evidence }));
+        // Sources carry titles and roles, so the answer can say what each person did, not only cite ids.
+        const sources = await analytics.expertSources(result.experts, graph);
+        const experts = result.experts.map((e) => ({
+          person: e.person,
+          relativeScore: e.relativeScore,
+          lastActive: e.lastActive,
+          evidence: e.evidence,
+          sources: sources.get(e.person) ?? [],
+        }));
         return {
           data: { system, found: true, experts, topExpert: result.evidencePath?.person ?? null },
           evidence: unique([...experts.flatMap((e) => e.evidence), ...(result.evidencePath?.evidence ?? [])]),
@@ -426,6 +435,37 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
         data: { from: result.from, to: result.to, connected: result.connected, hops: result.hops, steps: result.steps },
         evidence: result.evidence,
         ...(result.connected ? { graphPath: { nodes: result.view.nodes, edges: result.view.edges } } : {}),
+      };
+    }),
+  );
+
+  server.registerTool(
+    'triage_incident',
+    {
+      title: 'Triage an incident',
+      description:
+        'Triage an incident, alert or incident thread by its artifact id, from the graph: the systems it is about (also through ' +
+        'what it references, so a Datadog alert reaches its incident ticket), who can respond now (active people ranked by ' +
+        'expertise on those systems, relativeScore 1 = the best), and earlier incidents on the same systems with the PRs that ' +
+        "fixed them and who wrote those. Use it for 'who should handle this incident/alert', 'has this happened before', " +
+        "'what fixed it last time'. Find the id first with find_artifacts or search_knowledge if you only have a description. " +
+        'To act on it, propose_reassignment moves a ticket to the best responder.',
+      inputSchema: {
+        incident: z.string().trim().min(1).max(200).describe('Artifact id of the incident, alert or thread, e.g. "DD-ENG-230" or "ENG-230".'),
+      },
+    },
+    run(async ({ incident }) => {
+      const triage = await analytics.triageIncident(incident, graph);
+      const top = triage.responders[0]?.score || 1;
+      const responders = triage.responders.map((r) => ({ person: r.person, dept: r.dept, relativeScore: round(r.score / top, 2), knows: r.knows, evidence: r.evidence }));
+      return {
+        data: { incident: triage.incident, systems: triage.systems, responders, pastIncidents: triage.pastIncidents },
+        evidence: unique([
+          triage.incident.id,
+          ...triage.incident.linked,
+          ...triage.pastIncidents.flatMap((p) => [p.id, ...p.fixes.map((f) => f.id)]),
+          ...responders.flatMap((r) => r.evidence),
+        ]),
       };
     }),
   );

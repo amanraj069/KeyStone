@@ -1,8 +1,9 @@
 import { Fragment, type ReactNode } from "react";
+import type { Citation } from "@keystone/shared";
 import { cn } from "@/lib/utils";
 
-/** A bracketed citation group, "[T-1]" or "[T-1, PR-2]", not a Markdown link (same rule as the API). */
-const CITATION = /\[([^[\]\n]{1,300})\](?!\()/g;
+/** A bracketed citation group, "[T-1]" or "[T-1, PR-2]", not a Markdown link (same rule as the API, no length cap). */
+const CITATION = /\[([^[\]\n]+)\](?!\()/g;
 
 /** What an artifact id looks like: no spaces or quotes (so a bracketed JSON fragment is not a citation). */
 const ID_SHAPE = /^[A-Za-z0-9][\w.:#-]*$/;
@@ -33,6 +34,8 @@ interface AnswerTextProps {
   /** Ids the API confirmed as cited (after "done"); until then any id-shaped token counts. */
   cited: ReadonlySet<string> | null;
   numbers: ReadonlyMap<string, number>;
+  /** Title, type and day of each cited id (after "done"), shown when a marker is hovered. */
+  sources: ReadonlyMap<string, Citation>;
   /** The citation that is currently highlighted in the canvas. */
   activeId: string | null;
   onCite: (id: string) => void;
@@ -86,8 +89,8 @@ export function answerBlocks(text: string): Block[] {
  * The answer as paragraphs and lists, with **bold** kept and every [ID] group turned
  * into small numbered markers; clicking one highlights that artifact in the graph.
  */
-export function AnswerText({ text, cited, numbers, activeId, onCite }: AnswerTextProps) {
-  const inline = (value: string) => withBold(value, (part) => withMarkers(part, cited, numbers, activeId, onCite));
+export function AnswerText({ text, cited, numbers, sources, activeId, onCite }: AnswerTextProps) {
+  const inline = (value: string) => withBold(value, (part) => withMarkers(part, cited, numbers, sources, activeId, onCite));
   return (
     <div className="space-y-3 text-[15px] leading-7 text-foreground/90">
       {answerBlocks(text).map((block, index) =>
@@ -140,6 +143,7 @@ function withMarkers(
   paragraph: string,
   cited: ReadonlySet<string> | null,
   numbers: ReadonlyMap<string, number>,
+  sources: ReadonlyMap<string, Citation>,
   activeId: string | null,
   onCite: (id: string) => void,
 ): ReactNode[] {
@@ -154,7 +158,7 @@ function withMarkers(
     pieces.push(
       <span key={start} className="ml-1 inline-flex gap-0.5 align-[1px]">
         {ids.map((id) => (
-          <Marker key={id} id={id} number={numbers.get(id)} active={id === activeId} onCite={onCite} />
+          <Marker key={id} id={id} number={numbers.get(id)} source={sources.get(id)} active={id === activeId} onCite={onCite} />
         ))}
       </span>,
     );
@@ -164,12 +168,27 @@ function withMarkers(
   return pieces.map((piece, i) => <Fragment key={i}>{piece}</Fragment>);
 }
 
-function Marker({ id, number, active, onCite }: { id: string; number: number | undefined; active: boolean; onCite: (id: string) => void }) {
+/** "Design: Request TitanDB fix update · confluence · day 23", or the id until the titles arrive. */
+function describe(id: string, source: Citation | undefined): string {
+  if (!source?.title) return id;
+  return [source.title, source.type, source.day !== null ? `day ${source.day}` : null].filter(Boolean).join(" · ");
+}
+
+interface MarkerProps {
+  id: string;
+  number: number | undefined;
+  source: Citation | undefined;
+  active: boolean;
+  onCite: (id: string) => void;
+}
+
+function Marker({ id, number, source, active, onCite }: MarkerProps) {
+  const label = describe(id, source);
   return (
     <button
       type="button"
-      title={`${id} · show it in the graph`}
-      aria-label={`Source ${number ?? id}: ${id}`}
+      title={`${label}\nClick to show it`}
+      aria-label={`Source ${number ?? id}: ${label}`}
       onClick={(event) => {
         event.stopPropagation();
         onCite(id);

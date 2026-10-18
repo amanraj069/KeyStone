@@ -34,11 +34,34 @@ export const K2_MATERIALISE_KNOWS = `
   WITH p, s, a, contrib,
        contrib * coalesce(m.weight, 1.0)
          * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+         * (1.0 + (CASE WHEN coalesce(m.hits, 0) > 9 THEN 9 ELSE coalesce(m.hits, 0) END))
          / coalesce(a.mentionedSystems, 1) AS relevance
   ORDER BY relevance DESC
   WITH p, s, sum(contrib) AS score, max(a.day) AS lastDay, collect(a.id)[0..5] AS evidence
   MERGE (p)-[k:KNOWS]->(s)
   SET k.score = score, k.lastDay = lastDay, k.evidence = evidence
+`;
+
+/**
+ * Before K2: one page of MENTIONS edges whose body count (m.hits) is not known yet
+ * ({id, system, aliases}). The body lives in the TextStore, so the count is made in
+ * TypeScript and written back with SET_MENTION_HITS; each edge is counted once.
+ */
+export const MENTIONS_WITHOUT_HITS = `
+  MATCH (a:Artifact)-[m:MENTIONS]->(s:System)
+  WHERE m.hits IS NULL AND NOT a.id IN $skip
+  RETURN a.id AS id, s.name AS system, coalesce(s.aliases, []) AS aliases
+  LIMIT $limit
+`;
+
+/**
+ * How many times each artifact's body names the system it MENTIONS ($rows: {id, system, hits}).
+ * K2 ranks evidence by it, so a page that is about TitanDB leads a page that names it once.
+ */
+export const SET_MENTION_HITS = `
+  UNWIND $rows AS row
+  MATCH (a:Artifact {id: row.id})-[m:MENTIONS]->(s:System {name: row.system})
+  SET m.hits = row.hits
 `;
 
 /**
@@ -154,6 +177,22 @@ export const K3B_EVIDENCE_PATH = `
              / coalesce(a.mentionedSystems, 1) DESC,
            a.day DESC
   LIMIT 10
+`;
+
+/**
+ * K3c. What each expert's evidence is ($experts: [{person, evidence}] from K3a): per
+ * evidence id, the artifact's title, type and day and how the person worked on it
+ * (authored, reviewed, assigned, participated), so an answer can say what they did
+ * instead of only citing ids. Ids that are not artifacts are skipped. One row per
+ * expert and artifact, in no particular order.
+ */
+export const K3C_EXPERT_SOURCES = `
+  UNWIND $experts AS e
+  UNWIND e.evidence AS id
+  MATCH (p:Person {name: e.person}), (a:Artifact {id: id})
+  OPTIONAL MATCH (p)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a)
+  RETURN e.person AS person, a.id AS id, a.title AS title, a.type AS type, a.day AS day,
+         collect(DISTINCT toLower(type(r))) AS roles
 `;
 
 /** Does a system exist? Lets the API answer 404 instead of an empty list. */
@@ -464,4 +503,54 @@ export const SHARED_ARTIFACTS = `
   WITH pair, art ORDER BY art.day DESC
   WITH pair, collect(DISTINCT art.id)[0..2] AS shared
   RETURN pair[0] AS a, pair[1] AS b, shared
+`;
+
+/**
+ * T1. Incident triage, step 1: the incident ($id: a ticket, alert or thread) and the
+ * systems it is about, from its own MENTIONS and those of the documents it is linked
+ * to by REFERENCES (an alert references its incident ticket), most strongly named
+ * first ({id, title, type, day, isIncident, linked, systems}).
+ */
+export const T1_TRIAGE_INCIDENT = `
+  MATCH (i:Artifact {id: $id})
+  OPTIONAL MATCH (i)-[:REFERENCES]-(linked:Artifact)
+  WITH i, collect(DISTINCT linked) AS linked
+  UNWIND [i] + linked AS x
+  OPTIONAL MATCH (x)-[m:MENTIONS]->(s:System)
+  WITH i, linked, s, max(coalesce(m.weight, 0.0)) AS weight
+  ORDER BY weight DESC
+  WITH i, linked, collect(s.name) AS systems
+  RETURN i.id AS id, i.title AS title, i.type AS type, i.day AS day, coalesce(i.isIncident, false) AS isIncident,
+         [l IN linked | l.id] AS linked, systems[0..$maxSystems] AS systems
+`;
+
+/**
+ * T2. Incident triage, step 2: who can respond now. Active people ranked by their
+ * KNOWS scores summed over the incident's systems ($systems), with the systems they
+ * know and one evidence artifact per system ({person, dept, score, knows, evidence}).
+ */
+export const T2_TRIAGE_RESPONDERS = `
+  MATCH (p:Person {active: true})-[k:KNOWS]->(s:System)
+  WHERE s.name IN $systems
+  WITH p, sum(k.score) AS score, collect(s.name) AS knows, collect(k.evidence[0]) AS evidence
+  ORDER BY score DESC LIMIT $limit
+  RETURN p.name AS person, p.dept AS dept, score, knows, [e IN evidence WHERE e IS NOT NULL] AS evidence
+`;
+
+/**
+ * T3. Incident triage, step 3: earlier incidents on the same systems ($systems), not
+ * the incident itself or what it links to ($skip), with the PRs that FIXES them and
+ * who wrote those: what fixed it last time, and who did ({id, title, day, shared, fixes}).
+ */
+export const T3_TRIAGE_PAST_INCIDENTS = `
+  MATCH (past:Artifact)-[:MENTIONS]->(s:System)
+  WHERE past.isIncident = true AND s.name IN $systems AND NOT past.id IN $skip
+  WITH past, collect(DISTINCT s.name) AS shared
+  OPTIONAL MATCH (fix:Artifact)-[:FIXES]->(past)
+  OPTIONAL MATCH (author:Person)-[:AUTHORED]->(fix)
+  WITH past, shared, fix, collect(DISTINCT author.name) AS authors
+  WITH past, shared, collect(CASE WHEN fix IS NULL THEN null ELSE {id: fix.id, authors: authors} END) AS fixes
+  RETURN past.id AS id, past.title AS title, past.day AS day, shared, fixes
+  ORDER BY size(shared) DESC, past.day DESC
+  LIMIT $limit
 `;

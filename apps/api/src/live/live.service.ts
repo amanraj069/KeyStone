@@ -1,6 +1,8 @@
 import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
 import type { BusFactorRow, LiveArtifact, LiveEvent, LivePost, LiveResult, LiveStep, StaleDoc } from '@keystone/shared';
 import { randomBytes } from 'node:crypto';
+import { WATCHER } from '../actions/actions.constants';
+import { ActionsService } from '../actions/actions.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { ExpertiseService } from '../analytics/expertise.service';
 import { GraphLock } from '../backup/graph-lock';
@@ -45,6 +47,7 @@ export class LiveService {
     private readonly projection: ProjectionService,
     private readonly analytics: AnalyticsService,
     private readonly lock: GraphLock,
+    private readonly actions: ActionsService,
   ) {}
 
   /** Posts one document; `emit` gets a start and a done event per step. Throws on bad input or when busy. */
@@ -86,6 +89,16 @@ export class LiveService {
         await this.projection.rebuild();
       });
       const after = await step('diff', () => this.snapshot());
+      const newlyStale = after.stale.filter((doc) => !before.stale.some((old) => staleKey(old) === staleKey(doc)));
+      const changedRisk = riskChanges(before.risk, after.risk);
+      const newlyInactive = [...after.inactive].filter((name) => !before.inactive.has(name)).sort();
+
+      // The risk watcher proposes the follow-up work by itself; a person approves it on Audit.
+      const proposals = await step(
+        'act',
+        () => this.actions.reactToChange({ sourceId: record.doc_id, author: post.author, newlyStale, riskChanges: changedRisk, newlyInactive }),
+        (made) => `${made.filter((p) => p.created).length} new proposals`,
+      );
 
       const result: LiveResult = {
         id: record.doc_id,
@@ -94,9 +107,10 @@ export class LiveService {
         systems: extracted.systems,
         decisions: extracted.decisions,
         supersedes: extracted.supersedes,
-        newlyStale: after.stale.filter((doc) => !before.stale.some((old) => staleKey(old) === staleKey(doc))),
-        riskChanges: riskChanges(before.risk, after.risk),
-        newlyInactive: [...after.inactive].filter((name) => !before.inactive.has(name)).sort(),
+        newlyStale,
+        riskChanges: changedRisk,
+        newlyInactive,
+        proposals,
         llmCalls: extracted.llmCalls,
         embedCalls: embedded.embedCalls,
         ms: Date.now() - started,
@@ -113,11 +127,16 @@ export class LiveService {
     return this.graph.roQuery<LiveArtifact>(APEX_GRAPH, Q.LIVE_ARTIFACTS);
   }
 
-  /** Removes every live document and what it added, then refreshes expertise: the graph is as before. */
+  /**
+   * Removes every live document and what it added, including the watcher's proposals
+   * nobody has decided on yet, then refreshes expertise: the graph is as before. An
+   * approved or rejected proposal stays, because a person made that decision.
+   */
   async reset(): Promise<{ deleted: number; reactivated: number; departuresUndone: string[] }> {
     if (this.running) throw new ConflictException('A live document is being processed; try again in a few seconds');
     this.running = true;
     try {
+      await this.graph.query(APEX_GRAPH, Q.DELETE_OPEN_WATCHER_PROPOSALS, { createdBy: WATCHER });
       const undone = await this.graph.query<{ person: string }>(APEX_GRAPH, Q.UNDO_LIVE_DEPARTURES);
       const [deleted] = await this.graph.query<{ deleted: number }>(APEX_GRAPH, Q.DELETE_LIVE);
       const [reactivated] = await this.graph.query<{ reactivated: number }>(APEX_GRAPH, Q.REACTIVATE_DECISIONS);

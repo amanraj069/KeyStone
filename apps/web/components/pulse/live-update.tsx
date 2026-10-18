@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import type { LiveEvent, LivePost, LiveResult, LiveStep } from "@keystone/shared";
-import { Check, Info, LoaderCircle, RotateCcw, Send, Signpost, UserMinus, type LucideIcon } from "lucide-react";
+import { Check, ClipboardList, FileWarning, Info, LoaderCircle, RotateCcw, Send, Signpost, TriangleAlert, UserMinus, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OptionPills } from "@/components/ui/option-pills";
@@ -21,7 +22,15 @@ const STEP_NAME: Record<LiveStep, string> = {
   embed: "Searchable",
   refresh: "Expertise and risk",
   diff: "What changed",
+  act: "Follow-up proposed",
 };
+
+/** One line per watcher proposal, in the words of the Audit page. */
+function proposalText(p: LiveResult["proposals"][number]): string {
+  if (p.kind === "reassign") return `Move ticket ${p.target} to ${p.assignee ?? "a new owner"}`;
+  if (p.kind === "runbook") return `Runbook for ${p.target}${p.assignee ? `, by ${p.assignee}` : ""}`;
+  return `Review page ${p.target}${p.assignee ? `, by ${p.assignee}` : ""}`;
+}
 
 const TYPES = [
   { value: "slack", label: "Slack message" },
@@ -99,11 +108,19 @@ export function LiveUpdate() {
       setNeeded(false);
       refresh();
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) setNeeded(true);
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(failureMessage(failure));
     } finally {
       setBusy(false);
     }
+  };
+
+  // A 401 means the admin token is missing or wrong: outline the field and say where it is.
+  const failureMessage = (failure: unknown): string => {
+    if (failure instanceof ApiError && failure.status === 401) {
+      setNeeded(true);
+      return token ? "That admin token is wrong. Check it (top right) and try again." : "Enter the admin token (top right, marked *) and try again.";
+    }
+    return failure instanceof Error ? failure.message : String(failure);
   };
 
   const undo = async () => {
@@ -116,8 +133,7 @@ export function LiveUpdate() {
       setSteps({});
       refresh();
     } catch (failure) {
-      if (failure instanceof ApiError && failure.status === 401) setNeeded(true);
-      setError(failure instanceof Error ? failure.message : String(failure));
+      setError(failureMessage(failure));
     } finally {
       setBusy(false);
     }
@@ -133,6 +149,14 @@ export function LiveUpdate() {
         description="Keystone reads it like any other document, then shows what it learned."
         action={
           <div className="flex items-center gap-1">
+            <AdminTokenField
+              value={token}
+              invalid={needed}
+              onChange={(value) => {
+                setToken(value);
+                setNeeded(false);
+              }}
+            />
             <HowItWorks />
             <Button size="xs" variant="ghost" disabled={busy} onClick={() => void undo()} title="Remove every live update">
               <RotateCcw data-icon="inline-start" />
@@ -235,23 +259,10 @@ export function LiveUpdate() {
               to post
             </span>
           </p>
-          <div className="flex items-center gap-2">
-            {needed && (
-              <Input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Admin token"
-                autoComplete="off"
-                className="h-8 w-40 text-xs"
-                aria-label="Admin token"
-              />
-            )}
-            <Button type="submit" size="sm" disabled={!canPost}>
-              {busy ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Send data-icon="inline-start" />}
-              {busy ? "Posting…" : "Post update"}
-            </Button>
-          </div>
+          <Button type="submit" size="sm" disabled={!canPost}>
+            {busy ? <LoaderCircle data-icon="inline-start" className="animate-spin" /> : <Send data-icon="inline-start" />}
+            {busy ? "Posting…" : "Post update"}
+          </Button>
         </div>
       </form>
 
@@ -325,6 +336,31 @@ function ToolbarField({ label, className, children }: { label: string; className
   );
 }
 
+/**
+ * The admin token for posting and undoing (the API asks for it when ADMIN_TOKEN is set).
+ * Always shown next to ⓘ, with a red * so it is clearly required; outlined red after a 401.
+ */
+function AdminTokenField({ value, invalid, onChange }: { value: string; invalid: boolean; onChange: (value: string) => void }) {
+  return (
+    <span className="relative mr-1 block">
+      <Input
+        type="password"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Admin token"
+        autoComplete="off"
+        aria-label="Admin token"
+        aria-required
+        aria-invalid={invalid || undefined}
+        className="h-7 w-32 pr-5 text-xs sm:w-40 md:text-xs"
+      />
+      <span aria-hidden className="pointer-events-none absolute top-1.5 right-2 text-sm leading-none font-semibold text-destructive">
+        *
+      </span>
+    </span>
+  );
+}
+
 /** The ⓘ button: what this panel does, kept out of the layout until asked for. */
 function HowItWorks() {
   return (
@@ -361,7 +397,7 @@ function HowStep({ n, children }: { n: number; children: ReactNode }) {
   );
 }
 
-/** The five pipeline steps as one segmented bar: each segment fills as its step runs and finishes. */
+/** The pipeline steps as one segmented bar: each segment fills as its step runs and finishes. */
 function StepTrack({ steps }: { steps: Partial<Record<LiveStep, StepState>> }) {
   const order = Object.keys(STEP_NAME) as LiveStep[];
   const completed = order.filter((step) => steps[step]?.status === "done").length;
@@ -373,7 +409,7 @@ function StepTrack({ steps }: { steps: Partial<Record<LiveStep, StepState>> }) {
           {completed} of {order.length}
         </span>
       </div>
-      <ol className="grid gap-x-2 gap-y-4 sm:grid-cols-5">
+      <ol className="grid gap-x-2 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
         {order.map((step) => {
           const state = steps[step];
           const done = state?.status === "done";
@@ -411,69 +447,144 @@ function StepTrack({ steps }: { steps: Partial<Record<LiveStep, StepState>> }) {
 function LiveResultView({ result }: { result: LiveResult }) {
   const moved = result.riskChanges.filter((c) => c.after === "orphaned" || c.after === "critical");
   const nothing =
-    result.decisions.length === 0 && result.newlyStale.length === 0 && moved.length === 0 && result.newlyInactive.length === 0;
+    result.decisions.length === 0 &&
+    result.newlyStale.length === 0 &&
+    moved.length === 0 &&
+    result.newlyInactive.length === 0 &&
+    result.proposals.length === 0;
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <p className="section-label">What changed</p>
-        <p className="text-[11px] text-faint">
-          <span className="code-id">{result.id}</span> · day {result.day ?? "?"} · {result.systems.slice(0, 4).join(", ") || "no known system"} ·{" "}
-          <span className="tabular-nums">{(result.ms / 1000).toFixed(1)} s</span>
+        <p className="text-[11px] text-faint tabular-nums">
+          <span className="code-id">{result.id}</span> · day {result.day ?? "?"} · {(result.ms / 1000).toFixed(1)} s
         </p>
       </div>
-      {nothing ? (
-        <p className="rounded-lg border bg-surface px-4 py-3 text-xs text-muted-foreground">
-          Stored and searchable; it changed no decision, page or risk.
-        </p>
-      ) : (
-        <div className="grid gap-2 md:grid-cols-2">
-          {result.decisions.length > 0 && (
-            <Section title={`Decisions recorded · ${result.decisions.length}${result.supersedes ? `, replacing ${result.supersedes} earlier` : ""}`}>
-              {result.decisions.map((d) => (
-                <li key={d.id}>{d.summary}</li>
-              ))}
-            </Section>
-          )}
-          {result.newlyStale.length > 0 && (
-            <Section title="Now out of date" tone="signal">
-              {result.newlyStale.map((doc) => (
-                <li key={`${doc.stalePage}-${doc.outdatedId}`}>
-                  <span className="font-semibold">{doc.pageTitle ?? doc.stalePage}</span> still says &ldquo;{doc.outdatedClaim}&rdquo;
-                </li>
-              ))}
-            </Section>
-          )}
-          {result.newlyInactive.length > 0 && (
-            <Section title="Left the company" tone="signal">
-              <li>{result.newlyInactive.join(", ")}: their knowledge is now at risk.</li>
-            </Section>
-          )}
-          {moved.length > 0 && (
-            <Section title={`Systems now at risk · ${moved.length}`} tone="signal">
-              {moved.slice(0, 6).map((c) => (
-                <li key={c.system}>
-                  <span className="font-semibold">{c.system}</span>: {c.before ? RISK_COPY[c.before].tab.toLowerCase() : "new"} →{" "}
-                  {c.after ? RISK_COPY[c.after].tab.toLowerCase() : "gone"}
-                  {c.expertsAfter.length > 0 ? ` (only ${c.expertsAfter.join(", ")})` : " (nobody left)"}
-                </li>
-              ))}
-              {moved.length > 6 && <li className="text-muted-foreground">and {moved.length - 6} more</li>}
-            </Section>
-          )}
+
+      {/* One full-width card: the systems the post is about, then one row per kind of change. */}
+      <div className="overflow-hidden rounded-xl border bg-surface">
+        <div className="flex flex-wrap items-center gap-1.5 border-b bg-card/40 px-4 py-2.5 text-xs">
+          <span className="mr-1 text-faint">About</span>
+          {result.systems.length === 0 && <span className="text-muted-foreground">no known system</span>}
+          {result.systems.slice(0, 8).map((system) => (
+            <span key={system} className="rounded-md border bg-card px-2 py-0.5 font-medium">
+              {system}
+            </span>
+          ))}
+          {result.systems.length > 8 && <span className="text-faint">+{result.systems.length - 8} more</span>}
         </div>
-      )}
+
+        {nothing ? (
+          <p className="px-4 py-4 text-sm text-muted-foreground">Stored and searchable; it changed no decision, page or risk.</p>
+        ) : (
+          <div className="divide-y">
+            {result.decisions.length > 0 && (
+              <ChangeRow
+                icon={Signpost}
+                title="Decisions recorded"
+                count={result.decisions.length}
+                note={result.supersedes ? `replacing ${result.supersedes} earlier` : undefined}
+              >
+                {result.decisions.map((d) => (
+                  <ChangeItem key={d.id}>{d.summary}</ChangeItem>
+                ))}
+              </ChangeRow>
+            )}
+            {result.newlyStale.length > 0 && (
+              <ChangeRow icon={FileWarning} title="Now out of date" count={result.newlyStale.length} tone="signal">
+                {result.newlyStale.map((doc) => (
+                  <ChangeItem key={`${doc.stalePage}-${doc.outdatedId}`}>
+                    <span className="font-medium text-foreground">{doc.pageTitle ?? doc.stalePage}</span> still says &ldquo;{doc.outdatedClaim}&rdquo;
+                  </ChangeItem>
+                ))}
+              </ChangeRow>
+            )}
+            {result.newlyInactive.length > 0 && (
+              <ChangeRow icon={UserMinus} title="Left the company" count={result.newlyInactive.length} tone="signal">
+                <ChangeItem>
+                  <span className="font-medium text-foreground">{result.newlyInactive.join(", ")}</span>: their knowledge is now at risk.
+                </ChangeItem>
+              </ChangeRow>
+            )}
+            {moved.length > 0 && (
+              <ChangeRow icon={TriangleAlert} title="Systems now at risk" count={moved.length} tone="signal">
+                {moved.slice(0, 6).map((c) => (
+                  <ChangeItem key={c.system}>
+                    <span className="font-medium text-foreground">{c.system}</span>: {c.before ? RISK_COPY[c.before].tab.toLowerCase() : "new"} →{" "}
+                    {c.after ? RISK_COPY[c.after].tab.toLowerCase() : "gone"}
+                    {c.expertsAfter.length > 0 ? ` (only ${c.expertsAfter.join(", ")})` : " (nobody left)"}
+                  </ChangeItem>
+                ))}
+                {moved.length > 6 && <ChangeItem>and {moved.length - 6} more</ChangeItem>}
+              </ChangeRow>
+            )}
+            {result.proposals.length > 0 && (
+              <ChangeRow icon={ClipboardList} title="Keystone proposed, without being asked" count={result.proposals.length}>
+                {result.proposals.map((p) => (
+                  <ChangeItem key={p.id} title={p.reason}>
+                    {proposalText(p)}
+                    {!p.created && <span className="text-faint"> (already proposed)</span>}
+                  </ChangeItem>
+                ))}
+                <li className="pt-1 text-xs text-faint">
+                  Each one is waiting for a person on{" "}
+                  <Link href="/audit" className="font-medium text-foreground underline-offset-2 hover:underline">
+                    Audit
+                  </Link>
+                  , with the evidence behind it.
+                </li>
+              </ChangeRow>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function Section({ title, tone, children }: { title: string; tone?: "signal"; children: ReactNode }) {
+/** One kind of change across the full width: an icon tile, a title with its count, then the items. */
+function ChangeRow({
+  icon: Icon,
+  title,
+  count,
+  note,
+  tone,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  count: number;
+  note?: string;
+  tone?: "signal";
+  children: ReactNode;
+}) {
   return (
-    <div className="rounded-lg border bg-surface px-4 py-3">
-      <p className={cn("mb-1.5 flex items-center gap-1.5 text-xs font-medium", tone === "signal" ? "text-signal" : "text-muted-foreground")}>
-        {tone === "signal" && <span aria-hidden className="size-1.5 rounded-full bg-signal" />}
-        {title}
-      </p>
-      <ul className="list-disc space-y-1 pl-4 text-xs leading-relaxed marker:text-faint">{children}</ul>
-    </div>
+    <section className="flex gap-3.5 px-4 py-4">
+      <span
+        className={cn(
+          "flex size-8 shrink-0 items-center justify-center rounded-lg border",
+          tone === "signal" ? "border-signal/30 bg-signal-soft text-signal" : "bg-card text-muted-foreground",
+        )}
+      >
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
+          <span className={cn(tone === "signal" && "text-signal")}>{title}</span>
+          <span className="rounded-full bg-foreground/[0.06] px-1.5 text-[11px] font-semibold tabular-nums text-muted-foreground">{count}</span>
+          {note && <span className="text-xs font-normal text-muted-foreground">{note}</span>}
+        </p>
+        <ul className="mt-2 space-y-1.5">{children}</ul>
+      </div>
+    </section>
+  );
+}
+
+function ChangeItem({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <li title={title} className="flex gap-2.5 text-[13px] leading-relaxed text-muted-foreground">
+      <span aria-hidden className="mt-[0.6em] size-1 shrink-0 rounded-full bg-faint" />
+      <span className="min-w-0">{children}</span>
+    </li>
   );
 }

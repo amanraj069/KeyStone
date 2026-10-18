@@ -15,6 +15,16 @@ export const LIVE_ARTIFACTS = `
 `;
 
 /**
+ * Reset, step 0: the risk watcher's proposals that are still open (nobody approved or
+ * rejected them); a decided one stays, because a person made that decision ({deleted}).
+ */
+export const DELETE_OPEN_WATCHER_PROPOSALS = `
+  MATCH (act:Action {createdBy: $createdBy, status: 'proposed'})
+  DETACH DELETE act
+  RETURN count(act) AS deleted
+`;
+
+/**
  * Reset, step 1: people whose departure a live document announced get their
  * departedDay back (null, or the earliest day a corpus document announces) ({person}).
  */

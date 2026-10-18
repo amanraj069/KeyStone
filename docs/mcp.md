@@ -34,6 +34,7 @@ repo-root `.env`. `search_knowledge` embeds the question with the configured LLM
 | `bridge_people` | | The ten people who connect teams (betweenness on collaboration) |
 | `central_people` | | The ten people at the centre of the collaboration network (PageRank on `COLLAB`), with evidence |
 | `how_connected` | `from`, `to` | Shortest chain between two people or systems (`algo.SPpaths`, both directions), its steps, and the documents each pair of colleagues shared |
+| `triage_incident` | `incident` | From an incident, alert or thread id: its systems (also through what it references), who can respond now (active people by expertise), and earlier incidents on the same systems with the PRs that fixed them and their authors |
 | `simulate_departure` | `person` | What breaks if someone leaves: orphaned systems, tickets, pages, connectors |
 | `trace_decision` | `system` | A system's decisions, newest first, with source artifacts and what they replaced |
 | `find_stale_docs` | | Pages that still state a decision a later one replaced |

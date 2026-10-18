@@ -5,6 +5,12 @@ export { ACTION_STATUSES, type ActionStatus } from '@keystone/shared';
 /** Who creates proposals. Only a person approves them (POST /actions/:id/approve), never a tool. */
 export const CREATED_BY = 'keystone';
 
+/** Proposals the risk watcher made by itself after a change (nobody asked); a person still approves them. */
+export const WATCHER = 'watcher';
+
+/** Per change, the watcher proposes at most this many of each kind, so one big change cannot flood Audit. */
+export const MAX_WATCHER_PROPOSALS = 5;
+
 /** Injection token for actions settings. */
 export const ACTIONS_SETTINGS = Symbol('ACTIONS_SETTINGS');
 

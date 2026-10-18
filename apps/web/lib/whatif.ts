@@ -28,9 +28,11 @@ export function departureCanvas(graph: SimulationGraph, simulation: DepartureSim
 /** The canvas keys each beat of the departure animation acts on. */
 export interface DepartureKeys {
   leaver: string;
-  /** Newly orphaned and newly critical systems: they pulse red. */
-  atRisk: string[];
-  /** Tickets whose owner leaves: red, without the pulse. */
+  /** Newly orphaned systems (no expert left): the only nodes that turn red; they pulse. */
+  noExpert: string[];
+  /** Newly critical systems (one expert left): a pulsing signal ring, not red. */
+  critical: string[];
+  /** Tickets whose owner leaves: a signal ring, not red. */
   orphanedTickets: string[];
   /** Best suggested owners of the orphaned tickets, and the last expert of each newly critical system. */
   newOwners: string[];
@@ -40,7 +42,8 @@ export function departureKeys(simulation: DepartureSimulation): DepartureKeys {
   const unique = (keys: string[]) => [...new Set(keys)];
   return {
     leaver: personKey(simulation.person),
-    atRisk: unique([...simulation.systemsNewlyOrphaned, ...simulation.systemsNewlyCritical].map((c) => systemKey(c.system))),
+    noExpert: unique(simulation.systemsNewlyOrphaned.map((c) => systemKey(c.system))),
+    critical: unique(simulation.systemsNewlyCritical.map((c) => systemKey(c.system))),
     orphanedTickets: simulation.orphanedTickets.map((t) => artifactKey(t.ticket)),
     newOwners: unique([
       ...simulation.orphanedTickets.flatMap((t) => (t.suggestedOwners[0] ? [personKey(t.suggestedOwners[0])] : [])),

@@ -29,6 +29,8 @@ export const CitationSchema = z.object({
   title: z.string().nullable(),
   type: z.string().nullable(),
   day: z.number().nullable(),
+  /** The sentence in the document that names what the answer is about (a system or person), when one does. */
+  passage: z.string().nullable().optional(),
 });
 export type Citation = z.infer<typeof CitationSchema>;
 

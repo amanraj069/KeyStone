@@ -15,17 +15,14 @@ import { cn } from "@/lib/utils";
 const COLUMN = "mx-auto w-full max-w-6xl";
 /** Scrolling to within this many pixels of the top opens the next earlier exchanges. */
 const LOAD_EARLIER_AT_PX = 120;
-/** How long "No history" stays under the button. */
-const NO_HISTORY_NOTE_MS = 2000;
-/** While the "Load previous chats" button scrolls the thread to the top, passing the top loads nothing more. */
-const AUTO_LOAD_PAUSE_MS = 900;
 
 /**
  * Ask: a full-height chat, laid out like Intake's assistant. Each answer carries the
  * graph the agent walked; tool results draw into it as they stream, the finished
  * path is highlighted, and a citation singles out that artifact. Chats are saved in
  * this browser: "New chat" starts another, and earlier exchanges open above it five
- * at a time, from "Load previous chats" and then by scrolling to the top.
+ * at a time, from "Load previous chats" (which keeps the current chat in view) and then
+ * by scrolling to the top.
  */
 export default function AskPage() {
   const {
@@ -52,10 +49,10 @@ export default function AskPage() {
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const composer = useRef<ComposerHandle>(null);
-  const [noHistoryNote, setNoHistoryNote] = useState(false);
   /** Set just before earlier exchanges are added above, so the view can stay where it was. */
   const keepPlace = useRef<{ height: number; top: number } | null>(null);
-  const autoLoadPausedUntil = useRef(0);
+  /** Set by "Load previous chats": once they are added, the thread ends at the current chat. */
+  const jumpToEnd = useRef(false);
 
   // The newest question is the one whose graph is drawn.
   const latestId = turns.at(-1)?.id ?? null;
@@ -74,11 +71,18 @@ export default function AskPage() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: jump ? "auto" : "smooth" });
   }, [latestId, latest?.answer, latest?.steps.length, latest?.paths.length]);
 
-  // Earlier exchanges were added above: move down by their height, so nothing on screen moves.
+  // Earlier exchanges were added above: move down by their height, so nothing on screen moves,
+  // or, after "Load previous chats", to the end of the thread. Before paint, so nothing flickers.
   useLayoutEffect(() => {
     const box = scroller.current;
+    if (!box) return;
+    if (jumpToEnd.current) {
+      jumpToEnd.current = false;
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
     const place = keepPlace.current;
-    if (!box || !place) return;
+    if (!place) return;
     keepPlace.current = null;
     box.scrollTop = place.top + (box.scrollHeight - place.height);
   }, [turns.length]);
@@ -92,19 +96,14 @@ export default function AskPage() {
   /** Near the top, the next five open. Called on scroll, and on an upward wheel, which still fires at the very top. */
   const loadEarlierNearTop = () => {
     const box = scroller.current;
-    if (!box || keepPlace.current || earlierHidden === 0 || turns.length === 0) return;
-    if (performance.now() < autoLoadPausedUntil.current) return;
+    if (!box || keepPlace.current || jumpToEnd.current || earlierHidden === 0 || turns.length === 0) return;
     if (box.scrollTop < LOAD_EARLIER_AT_PX) loadEarlierInPlace();
   };
 
-  /** From "Load previous chats": open the newest five and bring them into view. */
+  /** From "Load previous chats": open the newest five above, and stay on the current chat (scroll up to read them). */
   const openPreviousChats = () => {
+    jumpToEnd.current = true;
     loadEarlier();
-    // With this chat empty, the newest earlier exchange lands by the composer (the jump above).
-    if (turns.length > 0) {
-      autoLoadPausedUntil.current = performance.now() + AUTO_LOAD_PAUSE_MS;
-      requestAnimationFrame(() => scroller.current?.scrollTo({ top: 0, behavior: "smooth" }));
-    }
   };
 
   /** A template goes into the box with "/people" or "/systems" in its gap, which opens that list there. */
@@ -112,13 +111,6 @@ export default function AskPage() {
     const gap = `${before}/${slot} `;
     composer.current?.fill(gap + after, gap.length);
   };
-
-  // "No history" closes by itself.
-  useEffect(() => {
-    if (!noHistoryNote) return;
-    const timer = setTimeout(() => setNoHistoryNote(false), NO_HISTORY_NOTE_MS);
-    return () => clearTimeout(timer);
-  }, [noHistoryNote]);
 
   const newChat = () => {
     startNewChat();
@@ -142,7 +134,8 @@ export default function AskPage() {
 
   const isEmptyChat = turns.length === 0;
   // Always offered (Intake's button), until earlier chats are open; with none saved it says so.
-  const showPreviousChatsButton = loaded && !showingPreviousChats;
+  // Only offered when there are earlier chats to open.
+  const showPreviousChatsButton = loaded && !showingPreviousChats && earlierHidden > 0;
 
   return (
     // Exactly the height under the top bar (the phone header is the same 3.5rem).
@@ -153,17 +146,12 @@ export default function AskPage() {
           <div className={cn(COLUMN, "flex flex-col items-end gap-2")}>
             <button
               type="button"
-              onClick={() => (earlierHidden > 0 ? openPreviousChats() : setNoHistoryNote(true))}
+              onClick={openPreviousChats}
               className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-foreground/10 bg-card/90 px-4 py-2 text-xs font-semibold shadow-card backdrop-blur-xs transition-all duration-150 hover:border-foreground/25 hover:bg-card sm:px-5 sm:py-2.5 sm:text-sm"
             >
               <History className="size-4 text-muted-foreground" />
               Load previous chats
             </button>
-            {noHistoryNote && (
-              <p role="status" className="rounded-xl border border-foreground/10 bg-popover px-3.5 py-2 text-xs font-medium text-muted-foreground shadow-overlay">
-                No history
-              </p>
-            )}
           </div>
         </div>
       )}

@@ -1,6 +1,9 @@
 import { Inject, Injectable, Logger, type OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { z } from 'zod';
+import { passageNaming } from '../common/text-match';
 import { GraphService } from '../graph/graph.service';
+import { TEXT_STORE } from '../ingest/ingest.constants';
+import type { TextStore } from '../ingest/text-store';
 import { LlmService } from '../llm/llm.service';
 import { type LlmTokenUsage, NO_TOKENS } from '../llm/llm.types';
 import { AGENT_MEMORY, NOTE_ID_PREFIX } from '../memory/memory.constants';
@@ -21,7 +24,7 @@ import {
   SYSTEM_PROMPT,
 } from './agent.constants';
 import type { AgentEvent, AgentMessage, AgentModel, AgentTools, Citation, GraphPath, ToolEnvelope } from './agent.types';
-import { checkCitations } from './citations';
+import { checkCitations, compactCitations } from './citations';
 import { unionGraphPaths } from './graph-union';
 import { CITED_ARTIFACTS, CITED_NOTES } from './queries/agent.queries';
 
@@ -92,6 +95,8 @@ export class AgentService implements OnApplicationBootstrap {
     @Inject(AGENT_SETTINGS) private readonly settings: AgentSettings,
     /** Absent in the benchmark and the CLI: then every question is answered on its own and nothing is stored. */
     @Optional() @Inject(AGENT_MEMORY) private readonly memory?: AgentMemory,
+    /** Document bodies, for each citation's passage; without it citations have no passage. */
+    @Optional() @Inject(TEXT_STORE) private readonly textStore?: TextStore,
   ) {}
 
   /** List the MCP tools once at startup, as soon as the API accepts requests (a failure is retried on first use). */
@@ -201,7 +206,8 @@ export class AgentService implements OnApplicationBootstrap {
       const checked = checkCitations(answer, evidence);
       dropped = checked.dropped;
       for (const id of dropped) this.logger.warn(JSON.stringify({ event: 'hallucinated_citation', sessionId, id }));
-      let text = checked.text;
+      // The text shows a few markers per place; every checked id still reaches the sources (and the benchmark).
+      let text = compactCitations(dropStrayVerdict(checked.text, question));
       let cited = checked.valid;
       // A refusal is a refusal: the standard message, without citations that would make it look sourced.
       const refuses = !STARTS_WITH_VERDICT.test(text) && SAYS_NOT_IN_RECORDS.test(sentences(text)[0] ?? '');
@@ -212,7 +218,7 @@ export class AgentService implements OnApplicationBootstrap {
       }
 
       for (const chunk of sentences(text)) yield { type: 'answer_delta', text: chunk };
-      citations = await this.lookUpCitations(cited);
+      citations = await this.lookUpCitations(cited, `${question}\n${text}`, toolCalls);
       const turnId = await this.remember({
         userId: options.userId,
         sessionId,
@@ -355,15 +361,26 @@ export class AgentService implements OnApplicationBootstrap {
     }
   }
 
-  /** Title, type and day of each cited artifact or note, in citation order. */
-  private async lookUpCitations(ids: string[]): Promise<Citation[]> {
+  /**
+   * Title, type and day of each cited artifact or note, in citation order. Each
+   * artifact also gets its passage: the sentence of the document that names what
+   * the answer is about, so a reader sees why it backs the claim even when its
+   * title does not say so ("Design: Request budget status" → "The TitanDB migration needs…").
+   */
+  private async lookUpCitations(ids: string[], discussed: string, toolCalls: { args: Record<string, unknown> }[]): Promise<Citation[]> {
     if (ids.length === 0) return [];
     const noteIds = ids.filter((id) => id.startsWith(NOTE_ID_PREFIX));
-    const rows = [
-      ...(await this.graph.roQuery<Citation>(this.settings.graph, CITED_ARTIFACTS, { ids })),
-      ...(noteIds.length > 0 ? await this.graph.roQuery<Citation>(this.settings.graph, CITED_NOTES, { ids: noteIds }) : []),
-    ];
-    const byId = new Map(rows.map((row) => [row.id, row]));
+    const artifacts = await this.graph.roQuery<Citation & { systems: string[] }>(this.settings.graph, CITED_ARTIFACTS, { ids });
+    const notes = noteIds.length > 0 ? await this.graph.roQuery<Citation>(this.settings.graph, CITED_NOTES, { ids: noteIds }) : [];
+    const bodies = this.textStore && artifacts.length > 0 ? await this.textStore.getMany('artifacts', artifacts.map((a) => a.id)) : new Map<string, string>();
+    const argNames = toolArgNames(toolCalls);
+    const byId = new Map<string, Citation>([
+      ...artifacts.map(({ systems, ...row }): [string, Citation] => {
+        const body = bodies.get(row.id);
+        return [row.id, body ? { ...row, passage: passageNaming(body, passageTerms(systems ?? [], discussed, argNames)) } : row];
+      }),
+      ...notes.map((row): [string, Citation] => [row.id, row]),
+    ]);
     return ids.map((id) => byId.get(id) ?? { id, title: null, type: null, day: null });
   }
 }
@@ -393,7 +410,25 @@ export function summarize(envelope: ToolEnvelope): string {
 /** The question as the model sees it: with its type and, for some types, how to use the tools. */
 export function withHint(question: string, label: QuestionLabel): string {
   const hint = LABEL_HINTS[label];
-  return `${question}\n\n(Question type: ${label}. ${hint ?? 'Use it to choose tools; answer the question as asked.'})`;
+  return `${question}\n\n(Question type: ${label}. ${triageHint(question, label) ?? ''}${hint ?? 'Use it to choose tools; answer the question as asked.'})`;
+}
+
+/** Words of an incident question: "the alert fired", "who handles this outage", "has this incident happened before". */
+const INCIDENT_WORDS = /\b(?:incidents?|alerts?|outages?|on-?call|fired|paged|postmortem)\b/i;
+/** An artifact id in the question: "DD-ENG-230", "ENG-186", "ZD-101". */
+const ARTIFACT_ID = /\b[A-Z]{2,}(?:-[A-Z]+)*-\d+\b/;
+
+/**
+ * The model tends to treat "the Datadog alert fired" as a who_knows question about a
+ * system called Datadog. For who-should-handle questions about an incident or alert,
+ * this says plainly to start with triage_incident (with the id when one is named).
+ */
+export function triageHint(question: string, label: QuestionLabel): string | null {
+  if ((label !== 'who_knows' && label !== 'general') || !INCIDENT_WORDS.test(question)) return null;
+  const id = question.match(ARTIFACT_ID)?.[0];
+  return id
+    ? `This is about incident or alert ${id}: call triage_incident with incident "${id}" first. `
+    : 'This is about an incident or alert: find its id with find_artifacts, then call triage_incident with it. ';
 }
 
 /** Earlier turns of the chat as the conversation the model sees: each question and the start of its answer. */
@@ -416,6 +451,48 @@ export function withMemory(text: string, memory: MemoryContext): string {
     `${text}\n\nApproved notes from colleagues about ${memory.subjects.join(', ')}. They can be newer than the documents: cite ` +
     `them by id like an artifact, and if one contradicts the documents, give both.\n${notes}`
   );
+}
+
+/** Tool arguments that name a subject (system, person), in call order: "who_knows {system: TitanDB}" -> TitanDB. */
+export function toolArgNames(toolCalls: { args: Record<string, unknown> }[]): string[] {
+  const keys = new Set(['system', 'person', 'from', 'to', 'name', 'eventPeople']);
+  return [
+    ...new Set(
+      toolCalls.flatMap((call) =>
+        Object.entries(call.args)
+          .filter(([key]) => keys.has(key))
+          .flatMap(([, value]) => (Array.isArray(value) ? value : [value]))
+          .filter((value): value is string => typeof value === 'string'),
+      ),
+    ),
+  ];
+}
+
+/**
+ * The names a citation's passage is looked for, most specific first: systems the
+ * document mentions that the question or answer talks about, then the names the
+ * tools were called with.
+ */
+export function passageTerms(systems: string[], discussed: string, argNames: string[]): string[] {
+  const text = discussed.toLowerCase();
+  const talkedAbout = systems.filter((system) => system.length >= 3 && text.includes(system.toLowerCase()));
+  return [...new Set([...talkedAbout, ...argNames])];
+}
+
+/** A question that can be answered yes or no starts with one of these words ("Did…", "Could…", "Is…"). */
+const YES_NO_START = /^\W*(?:is|are|was|were|am|do|does|did|can|could|will|would|shall|should|has|have|had|may|might|must)\b/i;
+/** "Yes." / "No," / "Yes:" at the very start; "No one…" is content, not a verdict, so punctuation is required. */
+const LEADING_VERDICT = /^\W*(?:yes|no)\s*[.,:;!]\s*/i;
+
+/**
+ * The prompt asks for "Yes"/"No" first on yes/no questions, and the model sometimes
+ * adds one to any question ("Who knows TitanDB? Yes. Priya…"). Removes that word when
+ * the question is not a yes/no question; yes/no answers are left as they are.
+ */
+export function dropStrayVerdict(answer: string, question: string): string {
+  if (YES_NO_START.test(question) || !LEADING_VERDICT.test(answer)) return answer;
+  const rest = answer.replace(LEADING_VERDICT, '');
+  return rest.length > 0 ? rest.charAt(0).toUpperCase() + rest.slice(1) : answer;
 }
 
 /** The fallback answer when nothing in the records supports one. */

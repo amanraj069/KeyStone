@@ -22,6 +22,8 @@ export interface GraphCanvasProps {
   fadedIds?: readonly string[];
   /** Node keys or artifact ids filled with the signal colour (risk). */
   redIds?: readonly string[];
+  /** What a red node means, added to the legend while any node is red. */
+  redLabel?: string;
   /** Node keys or artifact ids with a pulsing signal ring (newly at risk). */
   pulseIds?: readonly string[];
   /** When each node of the agent's path was found, 0 (first) to 1 (last): whitish orange to orange. */
@@ -51,6 +53,7 @@ export function GraphCanvas({
   highlightedIds = NONE,
   fadedIds = NONE,
   redIds = NONE,
+  redLabel,
   pulseIds = NONE,
   pathOrder,
   animationMs = 300,
@@ -91,7 +94,7 @@ export function GraphCanvas({
       </div>
       {nodes.length > 0 && (
         <div className="pointer-events-none absolute inset-x-4 bottom-3 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-          <GraphLegend nodes={nodes} />
+          <GraphLegend nodes={nodes} redLabel={redIds.length > 0 ? redLabel : undefined} />
           {interactive && <span className="truncate text-[0.7rem] text-faint">{nodes.length} nodes · hover an artifact for its title, click to open it</span>}
         </div>
       )}

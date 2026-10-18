@@ -1,9 +1,15 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { CatalogService } from '../catalog/catalog.service';
+import { countMentions } from '../common/text-match';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
+import { TEXT_STORE } from '../ingest/ingest.constants';
+import type { TextStore } from '../ingest/text-store';
 import { MIN_KNOWS_SCORE } from './analytics.constants';
 import * as Q from './queries/analytics.queries';
+
+/** MENTIONS edges counted per page (FalkorDB returns at most 10,000 rows). */
+const HITS_PAGE = 4000;
 
 export interface ScoreDistribution {
   n: number;
@@ -37,6 +43,8 @@ export class ExpertiseService {
   constructor(
     private readonly graph: GraphService,
     private readonly catalog: CatalogService,
+    /** Bodies for counting mentions; absent in CLI scripts and tests, which then keep K2's earlier ranking. */
+    @Optional() @Inject(TEXT_STORE) private readonly textStore?: TextStore,
   ) {}
 
   async refresh(options: { graph?: string; asOfDay?: number } = {}): Promise<RefreshSummary> {
@@ -50,6 +58,8 @@ export class ExpertiseService {
     // KNOWS: rebuild from scratch so a refresh "as of" an earlier day leaves no newer pairs behind.
     // K2 ranks its evidence by how many systems each artifact mentions, counted first.
     await this.graph.query(graphName, Q.SET_MENTIONED_SYSTEMS);
+    // ...and by how often the body names the system (counted once per MENTIONS edge, no LLM).
+    await this.countMentionHits(graphName);
     await this.graph.query(graphName, Q.DELETE_ALL_KNOWS);
     await this.graph.query(graphName, Q.K2_MATERIALISE_KNOWS, { asOfDay });
     await this.graph.query(graphName, Q.DELETE_WEAK_KNOWS, { minScore: MIN_KNOWS_SCORE });
@@ -72,6 +82,40 @@ export class ExpertiseService {
     };
     this.logger.log(`Expertise on ${graphName} as of day ${asOfDay}: ${summary.knows} KNOWS, ${summary.collab} COLLAB in ${summary.ms} ms`);
     return summary;
+  }
+
+  /**
+   * Sets MENTIONS.hits (how many times the body names the system or one of its
+   * aliases) on every edge that has none yet, a page at a time. Edges keep their
+   * count, so after the first refresh only new documents are read.
+   */
+  private async countMentionHits(graphName: string): Promise<void> {
+    if (!this.textStore) return;
+    let counted = 0;
+    // Artifacts without a body in the TextStore keep no count (never a wrong 0) and are not asked for again.
+    const missing: string[] = [];
+    for (;;) {
+      const rows = await this.graph.roQuery<{ id: string; system: string; aliases: string[] }>(graphName, Q.MENTIONS_WITHOUT_HITS, {
+        limit: HITS_PAGE,
+        skip: missing,
+      });
+      if (rows.length === 0) break;
+      const bodies = await this.textStore.getMany('artifacts', [...new Set(rows.map((r) => r.id))]);
+      const hits = rows.flatMap((r) => {
+        const body = bodies.get(r.id);
+        if (body === undefined) {
+          if (!missing.includes(r.id)) missing.push(r.id);
+          return [];
+        }
+        return [{ id: r.id, system: r.system, hits: countMentions(body, [r.system, ...r.aliases]) }];
+      });
+      if (hits.length > 0) await this.graph.query(graphName, Q.SET_MENTION_HITS, { rows: hits });
+      counted += hits.length;
+      if (rows.length < HITS_PAGE) break;
+    }
+    if (counted > 0 || missing.length > 0) {
+      this.logger.log(`Counted mentions in the text for ${counted} MENTIONS edges on ${graphName} (${missing.length} artifacts have no body)`);
+    }
   }
 
   /** The last simulation day with an artifact (the default "as of" day). */

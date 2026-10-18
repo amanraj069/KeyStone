@@ -24,6 +24,7 @@
   <img alt="Web" src="https://img.shields.io/badge/web-Next.js%2015-black">
   <img alt="LLM" src="https://img.shields.io/badge/llm-OpenAI%20%7C%20Gemini-5A2D82">
   <img alt="MCP" src="https://img.shields.io/badge/agent-MCP-555">
+  <a href="https://github.com/amanraj069/KeyStone/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/amanraj069/KeyStone/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22-brightgreen">
 </p>
 
@@ -36,6 +37,11 @@
 | **Why a graph** | Same model, same context budget: **72%** correct against **24%** for vector-only retrieval on 78 questions (paired sign test p < 0.001). See [Benchmark](#benchmark) |
 | **Data** | The public, synthetic [OrgForge](https://huggingface.co/datasets/aeriesec/orgforge) company "Apex Athletics" (MIT licence); no real personal data |
 | **AI assistance** | Built with Claude Code, disclosed in [AI_USAGE.md](AI_USAGE.md) |
+
+<p align="center">
+  <img src="docs/media/ask-demo.gif" width="900" alt="Asking Keystone what breaks if Priya leaves: the agent calls simulate_departure on a scratch copy of the graph, the step shows its Cypher, the agent's path is drawn, and the answer cites 30 sources">
+  <br><sub>The live app: the agent picks <code>simulate_departure</code> through MCP, the step shows its Cypher, the graph it walked is drawn, and every claim is cited (recorded on keystone.aman-raj.me, waits shortened).</sub>
+</p>
 
 ---
 
@@ -130,7 +136,7 @@ Every label and property is listed in [docs/spec-queries.md](docs/spec-queries.m
 |---|---|---|
 | `AUTHORED` · `REVIEWED` · `ASSIGNED` · `PARTICIPATED {messages}` | Who did what on a document | Ingest, from document metadata (no LLM) |
 | `DEPARTURE_ANNOUNCED_IN` | An HR announcement in the documents says this person leaves | Ingest |
-| `MENTIONS {weight}` · `DECIDED_IN` · `ABOUT` | Which systems and decisions a document talks about | LLM extraction, cached |
+| `MENTIONS {weight, hits}` · `DECIDED_IN` · `ABOUT` | Which systems and decisions a document talks about (`hits`: how often its body names the system) | LLM extraction, cached; `hits` counted from the text at refresh |
 | `SUPERSEDES` · `ASSERTS` | A later decision replaces an earlier one; a page still states a decision | LLM second pass per system, cached |
 | **`KNOWS {score, lastDay, evidence}`** | How much a person knows a system | **Cypher (K2)**: authored 3, reviewed 2, assigned 1, participated 0.5 × min(messages, 4) / 4, with a 30-day exponential decay |
 | **`COLLAB {weight}`** | Two people work on the same documents | **Cypher (K8a)** |
@@ -176,7 +182,7 @@ sequenceDiagram
     A->>A: classify the question (who_knows, why, what_if, freshness, ...)
     loop up to 5 tool calls
         A->>M: who_knows("TitanDB")
-        M->>F: K3a experts + K3b evidence path
+        M->>F: K3a experts + K3c their sources + K3b evidence path
         F-->>M: rows, evidence ids, path
         M-->>A: data, evidence, graphPath
         A->>M: simulate_departure("Priya")
@@ -191,20 +197,27 @@ sequenceDiagram
 
 | The question is about… | Tools the agent calls | Cypher they run ([docs/spec-queries.md](docs/spec-queries.md)) |
 |---|---|---|
-| Who knows a system, who is the backup | `who_knows` | K3a experts, K3b evidence path |
+| Who knows a system, who is the backup | `who_knows` | K3a experts, K3c titles and roles of their evidence, K3b evidence path |
 | What breaks if someone leaves | `simulate_departure` | `GRAPH.COPY` → remove the person → K4 bus factor, K8b betweenness, K9 `algo.WCC` islands, K5–K7 impact |
 | Why a decision was made, which page is stale | `trace_decision`, `find_stale_docs` | K10a decision trace, K10b stale pages |
 | Could X have known Y by day N? Did a response follow? | `check_visibility`, `check_involvement`, `check_follow_up`, `check_causal_link` | Verdict queries over involvement edges and days: the graph says yes or no |
 | How two people or systems are connected | `how_connected` | `algo.SPpaths` shortest paths, plus the documents on each step |
 | Who connects teams, who is central | `bridge_people`, `central_people` | `algo.betweenness`, `algo.pageRank` on `COLLAB` |
 | Anything else | `search_knowledge`, `find_artifacts`, `get_artifact`, `what_followed`, `find_event` | K11: vector index (`db.idx.vector.queryNodes`) plus graph expansion over `REFERENCES` and authors |
+| An incident or alert: who should handle it, what fixed it last time | `triage_incident` | T1 alert → `REFERENCES` → ticket → `MENTIONS` systems, T2 active responders by `KNOWS`, T3 earlier incidents → `FIXES` PRs → their authors |
 | Getting work done | `draft_handover`, `propose_reassignment`, `create_runbook_task` | K5–K7, then `Action` nodes `BASED_ON` their evidence |
 | What colleagues taught it | `recall_memory` | Approved `Note`s that `CONCERN` the subject |
 
 The question classifier gives yes/no, event and counterfactual questions a short tool recipe that ends in a verdict tool,
 so **the graph decides the answer and the LLM only words it**. After at most 5 tool calls, a **citation guardrail** removes
 any artifact id that no tool returned as evidence; an answer left with no valid citation becomes *"The answer is not in
-the company's records."*
+the company's records."* Each source the answer cites comes with its **passage**: the sentence in the document that names
+what the answer is about, so a page titled *"Design: Request budget status"* shows the line where it discusses TitanDB.
+
+Example, multi-hop from one alert: *"The Datadog alert DD-ENG-230 just fired. Who should handle it, and what fixed this
+kind of problem last time?"* → `triage_incident("DD-ENG-230")` → the alert references ENG-230, which is about Kafka and
+the Go telemetry-ingestion service → Jax knows both best → the earlier incident ENG-186 (the same `max.poll.interval.ms`
+misconfiguration) was fixed by PR-130, which Jax wrote. One tool call, 7 s, every step cited.
 
 **See it yourself:** in Ask, each step of an answer has a *Cypher* chip that shows the exact queries it ran.
 `GET /queries` returns the same map ([`apps/api/src/mcp/tool-queries.ts`](apps/api/src/mcp/tool-queries.ts)).
@@ -225,6 +238,9 @@ Every decision Keystone shows comes from a graph query, not from the LLM's judge
 | Which sources may be cited | Only artifact ids that a graph tool returned survive the guardrail |
 | Who should take over a ticket | K6: `KNOWS` weighted by how rare the system is; the proposal is an `Action` `BASED_ON` its evidence, and approving it moves the real `ASSIGNED` edge |
 | Why something was suggested | One traversal (`WHY_SUGGESTED`) from the `Action` to its target, plan, evidence and the assignee's `KNOWS` |
+| What to do after something changes, without being asked | The risk watcher reads the before/after diff of bus factor, stale pages and active people, then proposes `Action`s `BASED_ON` the change |
+| Who handles an incident, and what fixed it before | T1–T3: alert → ticket → systems → active experts; systems → earlier incidents → fix PRs → their authors |
+| Which sources lead | K2 ranks evidence by how often the body names the system (`MENTIONS.hits`), its title, and how focused the document is |
 | What the agent remembers | Approved `Note`s found through `CONCERNS` edges to the same systems and people |
 
 **Without the graph there is no answer:** every tool is Cypher, so an agent without FalkorDB has nothing to cite and
@@ -254,14 +270,21 @@ there goes through exactly the steps of the corpus, then Keystone reports what c
    the most rare words are shown to a focused prompt with short ids, and only links from the new decision are kept.
 4. **Embed** it for search, then **refresh** expertise (`KNOWS`, active people) and `apex_proj`.
 5. **Diff** before and after: decisions replaced, **pages now stale**, systems whose risk level moved, people now inactive.
+6. **Act**: the **risk watcher** proposes the follow-up work by itself, from that diff. Someone who left gets new owners
+   proposed for their open tickets (K6); a system that just became critical or orphaned gets a runbook task for whoever
+   still knows it best; a page that just went stale gets a review by the author of the change. Each proposal is an `Action`
+   marked *proposed by watcher*, `BASED_ON` the document that caused it, and waits for a person on Audit.
 
 Example (about 4 s): Jax posts *"we are reverting the TitanDB RDS max_pool_size change … back to 200"*. The postmortem page
 `CONF-ENG-187` becomes stale (it still says the pool was lowered to 80), and *"Is the TitanDB connection pool postmortem page
 still accurate?"* is answered *"No … [CONF-ENG-187] [LIVE-…]"*. *"Priya's last day is today"* makes Priya inactive: 4 systems
 lose their last expert, 8 are left with one, and *"Who should own TitanDB now?"* answers Jax, citing the new message.
+Nobody asks for anything, yet the watcher proposes 10 actions in the same 2 seconds: 5 of Priya's open tickets to new owners
+(for example DES-226 to Deepa), runbooks for the 4 systems she alone knew, and one for APNs, which now hangs on Ethan Patel.
 
 Live documents get ids `LIVE-…` and `live: true`. **Undo live updates** (`POST /live/reset`) removes them with their chunks and
-decisions, gives back departures and re-activates the decisions they replaced, so the graph is exactly as before. The seed
+decisions, the watcher's proposals nobody has decided on yet, gives back departures and re-activates the decisions they
+replaced, so the graph is exactly as before (an approved or rejected proposal stays: a person made that decision). The seed
 does not re-ingest them (its link pass is cache-only).
 
 ---
@@ -314,9 +337,24 @@ No setup is needed to try it: open the **[live app](https://keystone.aman-raj.me
 `https://15-252-22-37.sslip.io/mcp`. To run it yourself you need **Node ≥ 22**, **pnpm ≥ 10**, **Docker** and
 **Python 3.12**.
 
-The dataset is not committed (`data/` is gitignored). Download and prepare it from the public OrgForge dataset first;
-this splits it into the documents Keystone may load and the answer key only the benchmark may read
-([scripts/README.md](scripts/README.md)):
+The dataset is not committed (`data/` is gitignored). **Fastest: the prepared bundle** (56 MB, a
+[GitHub release](https://github.com/amanraj069/KeyStone/releases/tag/data-v1)) rebuilds the whole graph with **zero
+LLM calls**, no API key needed:
+
+```bash
+curl -L -o keystone-data-v1.tgz https://github.com/amanraj069/KeyStone/releases/download/data-v1/keystone-data-v1.tgz
+tar -xzf keystone-data-v1.tgz      # creates data/ (documents, TextStore, extraction and embedding caches)
+cp .env.example .env               # set FALKOR_PASSWORD
+docker compose up -d && pnpm install
+pnpm --filter @keystone/api build && pnpm seed
+pnpm dev                           # API on :4000, web on :3000
+```
+
+Checked: seeding an empty FalkorDB from the bundle alone with `LLM_CACHE_ONLY=yes` gives 44 people, 4,985 artifacts,
+11,796 chunks and 7,519 `KNOWS` edges in 24 s. The bundle has no answer key; the benchmark needs the next route.
+
+**Or build it from the source dataset.** Download and prepare it from the public OrgForge dataset; this splits it into
+the documents Keystone may load and the answer key only the benchmark may read ([scripts/README.md](scripts/README.md)):
 
 ```bash
 python3.12 -m venv scripts/.venv
@@ -509,6 +547,8 @@ Keystone is also slower: a median 5.9 s per answer against 1.6 s.
 - The agent's prompts and tool recipes were improved between runs while looking at results on these same questions,
   so treat this as a development-set score, not a held-out test. The baseline's prompt was improved in the same runs.
 - B1 (departure prediction) has only two departures inside the simulated days. It is reported as worked examples, not as a score.
+- These numbers were measured before the last changes of 18 October (evidence ranked by mention counts, the
+  `triage_incident` tool, the risk watcher) and were not re-run after them.
 
 `pnpm bench` measures Keystone against the OrgForge answer key. `apps/api/src/bench/` is the **only** code allowed to
 read `data/answer_key/`: an ESLint rule (API and web) and a repo-wide Jest test (`answer-key-guard.spec.ts`) fail if
@@ -598,6 +638,7 @@ Two transports, same tools:
 | `bus_factor` | Systems with 0, 1 or 2 experts (orphaned / critical / watch) |
 | `bridge_people` | Top 10 people who connect teams |
 | `how_connected` | Shortest chain between two people or systems (`algo.SPpaths`), with the documents on it |
+| `triage_incident` | From an incident or alert: its systems, who can respond now, earlier incidents and the PRs that fixed them |
 | `central_people` | The people at the centre of the collaboration network (`algo.pageRank` on `COLLAB`) |
 | `simulate_departure` | What breaks if someone leaves |
 | `trace_decision` | A system's decisions, newest first, with what they replaced |
@@ -625,7 +666,7 @@ FalkorDB required.
 
 | File | Queries | What they cover |
 |---|---:|---|
-| [`analytics.queries.ts`](apps/api/src/analytics/queries/analytics.queries.ts) | 37 | K2 `KNOWS`, K3 experts and evidence, K4 bus factor, K5–K7 departure impact, K8 `COLLAB`, betweenness and PageRank, K10 decisions and stale pages, shortest paths |
+| [`analytics.queries.ts`](apps/api/src/analytics/queries/analytics.queries.ts) | 42 | K2 `KNOWS` (with mention counts), K3 experts and evidence, K4 bus factor, K5–K7 departure impact, K8 `COLLAB`, betweenness and PageRank, K10 decisions and stale pages, shortest paths, T1–T3 incident triage |
 | [`ingest.queries.ts`](apps/api/src/ingest/queries/ingest.queries.ts) | 25 | People, artifacts, roles, links, departures |
 | [`extract.queries.ts`](apps/api/src/extract/queries/extract.queries.ts) | 30 | Systems, decisions, `MENTIONS`, `SUPERSEDES`, `ASSERTS` |
 | [`retrieval.queries.ts`](apps/api/src/retrieval/queries/retrieval.queries.ts) | 8 | Chunks, vector index, K11 hybrid search |
@@ -635,7 +676,7 @@ FalkorDB required.
 | [`actions.queries.ts`](apps/api/src/actions/queries/actions.queries.ts) | 14 | Proposals, approval (moves `ASSIGNED`), `WHY_SUGGESTED` |
 | [`memory.queries.ts`](apps/api/src/memory/queries/memory.queries.ts) | 18 | Sessions, turns, feedback, notes, recall |
 | [`catalog.queries.ts`](apps/api/src/catalog/queries/catalog.queries.ts) | 13 | Core systems, merges, `idf` |
-| [`live.queries.ts`](apps/api/src/live/queries/live.queries.ts) | 5 | Live documents and their undo |
+| [`live.queries.ts`](apps/api/src/live/queries/live.queries.ts) | 6 | Live documents and their undo, including open watcher proposals |
 | [`schema.queries.ts`](apps/api/src/graph/queries/schema.queries.ts), `backup`, `bench`, `agent`, `graph` | 27 | Indexes (including the vector index), backup and restore, benchmark projections |
 
 The queries are tested with Jest against a small fixture company in a real FalkorDB (`pnpm --filter @keystone/api test:int`).
@@ -676,6 +717,8 @@ Copy `.env.example` to `.env`. Key variables:
 | `BENCH_PER_TYPE` | `15` | Benchmark questions sampled per question type |
 | `BENCH_SEED` | `13` | Benchmark sampling seed (same seed, same questions) |
 | `BENCH_JUDGE_MODEL` | the system model | Optional: the model that judges answers and checks B1 names |
+| `AGENT_RATE_PER_MINUTE` | `6` | `POST /agent/ask` questions per visitor per minute (it spends LLM calls); over it: 429 |
+| `AGENT_RATE_PER_HOUR` | `300` | `POST /agent/ask` questions from everyone together per hour |
 
 The web app has its own settings in `apps/web/.env.local` (copy `apps/web/.env.example`; on Vercel, Project Settings → Environment Variables):
 
@@ -734,3 +777,9 @@ The author designed the graph model and Cypher queries, made the modelling and d
 and deployed and ran the product. At runtime the product uses `gpt-5-nano` (or Gemini) for extraction and wording
 answers, never to decide them. The full disclosure, with a per-stage log of what the AI produced and what the author
 did, is in **[AI_USAGE.md](AI_USAGE.md)**.
+
+---
+
+## Licence
+
+[MIT](LICENSE). The OrgForge dataset is MIT-licensed too.

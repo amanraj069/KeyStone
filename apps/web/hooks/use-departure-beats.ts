@@ -22,7 +22,8 @@ const IDLE: BeatState = { beat: 0, faded: NONE, red: NONE, pulse: NONE, highligh
 /**
  * Plays the departure in three beats once a simulation arrives:
  *   1. the leaver and their edges fade out (over 800 ms),
- *   2. newly orphaned and critical systems pulse red (orphaned tickets turn red),
+ *   2. systems with no expert left turn red and pulse; systems down to one expert
+ *      pulse with a signal ring, and orphaned tickets get the ring,
  *   3. the suggested new owners glow in the accent colour.
  * `null` keys (no simulation yet) show the before-graph untouched.
  */
@@ -35,11 +36,14 @@ export function useDepartureBeats(keys: DepartureKeys | null): BeatState {
       return;
     }
     const faded = [keys.leaver];
-    const red = [...keys.atRisk, ...keys.orphanedTickets];
+    // Red means no expert left; the other risks get a ring, so the red ones stand out.
+    const red = keys.noExpert;
+    const pulse = [...keys.noExpert, ...keys.critical];
+    const ringed = [...keys.critical, ...keys.orphanedTickets];
     setState({ beat: 1, faded, red: NONE, pulse: NONE, highlighted: NONE });
     const timers = [
-      setTimeout(() => setState({ beat: 2, faded, red, pulse: keys.atRisk, highlighted: NONE }), BEAT_MS),
-      setTimeout(() => setState({ beat: 3, faded, red, pulse: keys.atRisk, highlighted: keys.newOwners }), BEAT_MS * 2),
+      setTimeout(() => setState({ beat: 2, faded, red, pulse, highlighted: ringed }), BEAT_MS),
+      setTimeout(() => setState({ beat: 3, faded, red, pulse, highlighted: [...ringed, ...keys.newOwners] }), BEAT_MS * 2),
       setTimeout(() => setState((s) => ({ ...s, pulse: NONE })), BEAT_MS + PULSE_FOR_MS),
     ];
     return () => timers.forEach(clearTimeout);

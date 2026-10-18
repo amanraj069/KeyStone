@@ -76,6 +76,7 @@ WITH p, s, a, m,
 WITH p, s, a, contrib,
      contrib * coalesce(m.weight, 1.0)
        * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+       * (1.0 + (CASE WHEN coalesce(m.hits, 0) > 9 THEN 9 ELSE coalesce(m.hits, 0) END))
        / coalesce(a.mentionedSystems, 1) AS relevance
 ORDER BY relevance DESC
 WITH p, s, sum(contrib) AS score, max(a.day) AS lastDay, collect(a.id)[0..5] AS evidence
@@ -90,6 +91,25 @@ Changes:
   times its MENTIONS weight, x4 when its title names the system, divided by how many systems it mentions (a stack list
   naming eight systems is about none of them). The score is the same sum, grouped per artifact first (on apex: 10,801
   KNOWS, total score unchanged). `mentionedSystems` is counted once beforehand; counting it per row timed out.
+- Evidence is also ranked by `MENTIONS.hits`, how many times the body names the system or an alias (1 + hits, capped at
+  10x), so a page about TitanDB leads a page that names it once. Bodies live in the TextStore, not the graph, so the
+  refresh counts them in TypeScript for every MENTIONS edge without a count (`MENTIONS_WITHOUT_HITS`, a page at a time,
+  then `SET_MENTION_HITS`); after the first refresh only new documents are read. No LLM; scores are unchanged
+  (on apex: risk levels stay 14 / 32 / 27 / 71). Jax's TitanDB evidence moved from generic pages to ORG-208, ORG-170 and
+  the ENG-165 postmortem.
+
+```cypher
+// MENTIONS_WITHOUT_HITS: one page of edges to count ($skip: artifacts with no body in the TextStore)
+MATCH (a:Artifact)-[m:MENTIONS]->(s:System)
+WHERE m.hits IS NULL AND NOT a.id IN $skip
+RETURN a.id AS id, s.name AS system, coalesce(s.aliases, []) AS aliases
+LIMIT $limit
+
+// SET_MENTION_HITS: write the counts back
+UNWIND $rows AS row
+MATCH (a:Artifact {id: row.id})-[m:MENTIONS]->(s:System {name: row.system})
+SET m.hits = row.hits
+```
 
 ## K3a. Who knows this system
 
@@ -128,6 +148,21 @@ LIMIT 10
 Changes:
 - Includes PARTICIPATED: threads and meetings are evidence too.
 - Ranked like K2's evidence, then newest first (it was newest first only, which surfaced pages naming the system in passing).
+
+## K3c. Titles and roles of each expert's evidence (not in the spec)
+
+Purpose: for each K3a expert, what their evidence ids are: title, type, day and how they worked on each one
+(authored, reviewed, assigned, participated), so the agent can say what an expert did instead of only citing ids.
+Graph: `apex`.
+
+```cypher
+UNWIND $experts AS e
+UNWIND e.evidence AS id
+MATCH (p:Person {name: e.person}), (a:Artifact {id: id})
+OPTIONAL MATCH (p)-[r:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a)
+RETURN e.person AS person, a.id AS id, a.title AS title, a.type AS type, a.day AS day,
+       collect(DISTINCT toLower(type(r))) AS roles
+```
 
 ## K4. Bus factor
 
@@ -502,3 +537,66 @@ WITH pair, art ORDER BY art.day DESC
 WITH pair, collect(DISTINCT art.id)[0..2] AS shared
 RETURN pair[0] AS a, pair[1] AS b, shared
 ```
+
+## T. Incident triage (`triage_incident`)
+
+Purpose: from an incident, alert or thread to who can respond now and what fixed it before, all by graph hops.
+Graph: `apex`. Data: 31 incident artifacts and 12 Datadog alerts; each alert REFERENCES its incident ticket, and fix PRs FIXES the ticket.
+Example: `DD-ENG-230` → `ENG-230` → Kafka, Go telemetry-ingestion service → Jax first → earlier incident `ENG-186`
+(the same `max.poll.interval.ms` problem) fixed by `PR-130`, written by Jax.
+
+```cypher
+// T1: the incident and its systems, also through what it references (an alert reaches its ticket)
+MATCH (i:Artifact {id: $id})
+OPTIONAL MATCH (i)-[:REFERENCES]-(linked:Artifact)
+WITH i, collect(DISTINCT linked) AS linked
+UNWIND [i] + linked AS x
+OPTIONAL MATCH (x)-[m:MENTIONS]->(s:System)
+WITH i, linked, s, max(coalesce(m.weight, 0.0)) AS weight
+ORDER BY weight DESC
+WITH i, linked, collect(s.name) AS systems
+RETURN i.id AS id, i.title AS title, i.type AS type, i.day AS day, coalesce(i.isIncident, false) AS isIncident,
+       [l IN linked | l.id] AS linked, systems[0..$maxSystems] AS systems
+
+// T2: who can respond now: active people by KNOWS summed over those systems
+MATCH (p:Person {active: true})-[k:KNOWS]->(s:System)
+WHERE s.name IN $systems
+WITH p, sum(k.score) AS score, collect(s.name) AS knows, collect(k.evidence[0]) AS evidence
+ORDER BY score DESC LIMIT $limit
+RETURN p.name AS person, p.dept AS dept, score, knows, [e IN evidence WHERE e IS NOT NULL] AS evidence
+
+// T3: earlier incidents on the same systems, the PRs that FIXES them, and who wrote those
+MATCH (past:Artifact)-[:MENTIONS]->(s:System)
+WHERE past.isIncident = true AND s.name IN $systems AND NOT past.id IN $skip
+WITH past, collect(DISTINCT s.name) AS shared
+OPTIONAL MATCH (fix:Artifact)-[:FIXES]->(past)
+OPTIONAL MATCH (author:Person)-[:AUTHORED]->(fix)
+WITH past, shared, fix, collect(DISTINCT author.name) AS authors
+WITH past, shared, collect(CASE WHEN fix IS NULL THEN null ELSE {id: fix.id, authors: authors} END) AS fixes
+RETURN past.id AS id, past.title AS title, past.day AS day, shared, fixes
+ORDER BY size(shared) DESC, past.day DESC
+LIMIT $limit
+```
+
+## W. The risk watcher (after every live document)
+
+Purpose: the agent acts without being asked. After a live document's before/after diff, `ActionsService.reactToChange`
+proposes the follow-up work: new owners for the open tickets of someone who just left (K6), a runbook task for each
+system that just became critical or orphaned (from bus factor), and a review of each page that just went stale, assigned
+to the author of the change. Each is an `Action` with `createdBy: 'watcher'`, `BASED_ON` the document that caused it, and
+waits for a person on Audit. It reuses the CREATE queries of Stage 11; the only new one is the undo:
+
+```cypher
+// DELETE_OPEN_WATCHER_PROPOSALS (POST /live/reset): proposals nobody approved or rejected yet
+MATCH (act:Action {createdBy: $createdBy, status: 'proposed'})
+DETACH DELETE act
+RETURN count(act) AS deleted
+```
+
+Checked on local apex: "Priya's last day is today" (1.8 s end to end) proposed 5 ticket reassignments, 4 runbooks for
+systems that lost their last expert and 1 for APNs (now Ethan Patel only); undo removed them and the figures went back to
+14 / 32 / 27 / 71.
+
+Community detection (`algo.labelPropagation`) was tried for "how people really work together" and dropped: on `COLLAB`
+it returns one community of 43 of 44 people, even on a scratch copy keeping only each person's three strongest ties
+(a few hub people link everyone).

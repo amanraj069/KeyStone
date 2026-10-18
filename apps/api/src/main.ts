@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import type { Env } from './config/env.schema';
 import { SeedService } from './seed/seed.service';
@@ -16,8 +17,12 @@ async function bootstrap(): Promise<void> {
   // forceCloseConnections: on shutdown, also close open Server-Sent Event streams
   // (a browser's EventSource reconnects on the same socket, which would keep
   // server.close() waiting forever and hang every dev restart).
-  const app = await NestFactory.create(AppModule, { forceCloseConnections: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { forceCloseConnections: true });
   const config = app.get<ConfigService<Env, true>>(ConfigService);
+
+  // In production Caddy sits in front: take the visitor's address from its X-Forwarded-For
+  // (one proxy hop), so the agent's rate limit counts visitors, not the proxy.
+  app.set('trust proxy', 1);
 
   // Only the Keystone web app may call this API from a browser.
   app.enableCors({ origin: config.get('WEB_ORIGIN', { infer: true }) });
