@@ -24,6 +24,8 @@ export const BENCH_PROJECTION_PREFIX = 'bench_proj_';
 /** Results folder, relative to DATA_DIR. */
 export const RESULTS_DIR = 'bench';
 export const RESULTS_JSON = 'results.json';
+/** Published results (tracked by git, shipped in the API image), relative to the repo root. */
+export const PUBLISHED_RESULTS_DIR = 'apps/api/bench-results';
 export const RESULTS_MD = 'results.md';
 
 /**

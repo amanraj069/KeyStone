@@ -38,20 +38,101 @@ interface AnswerTextProps {
   onCite: (id: string) => void;
 }
 
+/** One block of an answer: a paragraph, or a list whose items may hold one level of sub-items. */
+type Block = { kind: "p"; text: string; heading: boolean } | { kind: "list"; ordered: boolean; items: { text: string; children: string[] }[] };
+
+const LIST_ITEM = /^(\s*)(?:[-*•]|\d+[.)])\s+(.*)$/;
+const HEADING = /^#{1,4}\s+(.*)$/;
+
 /**
- * The answer, one paragraph per blank-line block, with every [ID] group turned into
- * small numbered markers; clicking one highlights that artifact in the graph.
+ * The answer's light Markdown, as the model writes it: blank lines between paragraphs,
+ * "- " / "1. " lists (an indented item belongs to the item above), "#" headings.
+ */
+export function answerBlocks(text: string): Block[] {
+  const blocks: Block[] = [];
+  let paragraph: string[] = [];
+  const endParagraph = () => {
+    if (paragraph.length > 0) blocks.push({ kind: "p", text: paragraph.join("\n"), heading: false });
+    paragraph = [];
+  };
+  for (const line of text.replace(/\r/g, "").split("\n")) {
+    const item = LIST_ITEM.exec(line);
+    const heading = HEADING.exec(line.trim());
+    if (line.trim() === "") {
+      endParagraph();
+    } else if (item) {
+      endParagraph();
+      const ordered = /^\s*\d/.test(line);
+      const last = blocks.at(-1);
+      const list = last?.kind === "list" ? last : null;
+      if (item[1].length > 0 && list && list.items.length > 0) list.items.at(-1)!.children.push(item[2]);
+      else if (list && list.ordered === ordered) list.items.push({ text: item[2], children: [] });
+      else blocks.push({ kind: "list", ordered, items: [{ text: item[2], children: [] }] });
+    } else if (heading) {
+      endParagraph();
+      blocks.push({ kind: "p", text: heading[1], heading: true });
+    } else {
+      // A line right after a list continues its last item; otherwise it is paragraph text.
+      const last = blocks.at(-1);
+      if (paragraph.length === 0 && last?.kind === "list" && /^\s/.test(line)) last.items.at(-1)!.text += ` ${line.trim()}`;
+      else paragraph.push(line.trim());
+    }
+  }
+  endParagraph();
+  return blocks;
+}
+
+/**
+ * The answer as paragraphs and lists, with **bold** kept and every [ID] group turned
+ * into small numbered markers; clicking one highlights that artifact in the graph.
  */
 export function AnswerText({ text, cited, numbers, activeId, onCite }: AnswerTextProps) {
-  const paragraphs = text.split(/\n\s*\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
+  const inline = (value: string) => withBold(value, (part) => withMarkers(part, cited, numbers, activeId, onCite));
   return (
-    <div className="space-y-3.5 text-[15px] leading-7 text-foreground/90">
-      {paragraphs.map((paragraph, index) => (
-        <p key={index} className="whitespace-pre-wrap">
-          {withMarkers(paragraph, cited, numbers, activeId, onCite)}
-        </p>
-      ))}
+    <div className="space-y-3 text-[15px] leading-7 text-foreground/90">
+      {answerBlocks(text).map((block, index) =>
+        block.kind === "p" ? (
+          <p key={index} className={cn("whitespace-pre-wrap", block.heading && "font-semibold text-foreground")}>
+            {inline(block.text)}
+          </p>
+        ) : (
+          <List key={index} ordered={block.ordered}>
+            {block.items.map((item, i) => (
+              <li key={i} className="pl-1">
+                {inline(item.text)}
+                {item.children.length > 0 && (
+                  <ul className="mt-1 list-[circle] space-y-1 pl-5 marker:text-faint">
+                    {item.children.map((child, j) => (
+                      <li key={j} className="pl-1">
+                        {inline(child)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </List>
+        ),
+      )}
     </div>
+  );
+}
+
+function List({ ordered, children }: { ordered: boolean; children: ReactNode }) {
+  const className = cn("space-y-1.5 pl-5 marker:text-faint", ordered ? "list-decimal" : "list-disc");
+  return ordered ? <ol className={className}>{children}</ol> : <ul className={className}>{children}</ul>;
+}
+
+/** **bold** spans as <strong>; everything else goes through `rest` (the citation markers). */
+function withBold(text: string, rest: (part: string) => ReactNode[]): ReactNode[] {
+  return text.split(/(\*\*[^*\n]+\*\*)/g).map((part, i) =>
+    part.startsWith("**") && part.endsWith("**") && part.length > 4 ? (
+      <strong key={i} className="font-semibold text-foreground">
+        {rest(part.slice(2, -2))}
+      </strong>
+    ) : (
+      <Fragment key={i}>{rest(part)}</Fragment>
+    ),
   );
 }
 

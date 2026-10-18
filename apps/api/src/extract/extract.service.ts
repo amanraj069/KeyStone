@@ -21,6 +21,9 @@ import {
   ARTIFACT_SYSTEM_PROMPT,
   artifactPrompt,
   LINKS_PROMPT_VERSION,
+  LIVE_LINKS_PROMPT_VERSION,
+  LIVE_LINKS_SYSTEM_PROMPT,
+  liveLinksPrompt,
   LINKS_SYSTEM_PROMPT,
   linksPrompt,
   type LinksPromptInput,
@@ -274,53 +277,24 @@ export class ExtractService {
     return results;
   }
 
-  /** Turns LLM answers into graph rows (filtered, canonicalised) and writes them. */
+  /** Turns LLM answers into graph rows (filtered, canonicalised) and writes them over a clean slate. */
   private async writeExtractions(
     graphName: string,
     extracted: ExtractedItem[],
     canon: Canonicalizer,
     summary: ExtractSummary,
   ): Promise<Record<string, number>> {
-    const mentions = new Map<string, { artifactId: string; system: string; weight: number }>();
-    const decisions: { id: string; artifactId: string; summary: string; day: number | null; kind: string; confidence: number }[] = [];
-    const about: { decisionId: string; system: string }[] = [];
-    const claims: { id: string; pageId: string; claim: string; system: string }[] = [];
-    const systems = new Set<string>();
+    return this.writeExtractionRows(graphName, extractionRows(extracted, canon, summary), { clear: true });
+  }
 
-    for (const { item, value } of extracted) {
-      if (!value) continue;
-      for (const system of value.systems) {
-        summary.rawSystemNames.set(system.name, (summary.rawSystemNames.get(system.name) ?? 0) + 1);
-        const name = canon.canonical(system.name);
-        if (!name || system.relevance < MIN_SYSTEM_RELEVANCE) continue;
-        systems.add(name);
-        const key = `${item.id}|${name}`;
-        // The same system named twice in one document keeps its highest relevance.
-        if ((mentions.get(key)?.weight ?? -1) < system.relevance) mentions.set(key, { artifactId: item.id, system: name, weight: system.relevance });
-      }
-      value.decisions.forEach((decision, index) => {
-        if (decision.confidence < MIN_DECISION_CONFIDENCE) return;
-        // Stable id: same document + same cached answer -> same id on every rerun.
-        const id = `D:${item.id}:${index}`;
-        decisions.push({ id, artifactId: item.id, summary: decision.summary, day: item.day, kind: decision.kind, confidence: decision.confidence });
-        for (const raw of decision.systems) {
-          const name = canon.canonical(raw);
-          if (!name) continue;
-          systems.add(name);
-          about.push({ decisionId: id, system: name });
-        }
-      });
-      // Claims are only kept for Pages: they feed the ASSERTS links of the second pass.
-      if (item.label === 'Page') {
-        for (const claim of claimRows(item.id, value.asserts, canon)) {
-          systems.add(claim.system);
-          claims.push(claim);
-        }
-      }
-    }
-
-    // Start from a clean slate so removed or changed answers leave nothing behind.
-    await this.graph.query(graphName, Q.CLEAR_EXTRACTION);
+  /**
+   * Writes extraction rows. clear: true (a full run) first removes everything an
+   * earlier extraction wrote, so changed answers leave nothing behind; clear: false
+   * (one live document) only adds, with MERGE.
+   */
+  private async writeExtractionRows(graphName: string, rows: ExtractionRows, options: { clear: boolean }): Promise<Record<string, number>> {
+    const { systems, mentions, decisions, about, claims, canon } = rows;
+    if (options.clear) await this.graph.query(graphName, Q.CLEAR_EXTRACTION);
     await this.graph.batchWrite(graphName, Q.MERGE_SYSTEMS, [...systems].sort().map((name) => ({ name, aliases: canon.aliasesOf(name) })));
     await this.graph.batchWrite(graphName, Q.MERGE_MENTIONS, [...mentions.values()].map((m) => ({ ...m })));
     await this.graph.batchWrite(graphName, Q.MERGE_DECISIONS, decisions.map((d) => ({ ...d })));
@@ -329,6 +303,87 @@ export class ExtractService {
     return { systems: systems.size, mentions: mentions.size, decisions: decisions.length, about: about.length, claims: claims.length };
   }
 
+  /**
+   * One new document (a live update): extract it (one cached LLM call, no length
+   * filter: a short message can carry a decision), add what it names without
+   * touching the rest, then run the second pass only for the systems its decisions
+   * are about, with every page's claims rebuilt from the cache, so a decision that
+   * replaces an older one can make the pages stating the older one stale.
+   */
+  async extractOne(graphName: string, artifactId: string): Promise<{ systems: string[]; decisions: { id: string; summary: string; systems: string[] }[]; supersedes: number; asserts: number; llmCalls: number }> {
+    const usage = this.llm.usage();
+    const [row] = await this.graph.roQuery<CandidateRow>(graphName, Q.CANDIDATE_BY_ID, { id: artifactId });
+    if (!row) throw new Error(`No artifact "${artifactId}" to extract`);
+    const body = (await this.textStore.get('artifacts', row.id)) ?? '';
+    const title = row.title ?? '';
+    const fingerprint = sha256(JSON.stringify([PROMPT_VERSION, usage.provider, usage.model, sha256(body), title, row.day, row.authors]));
+    const item: PlannedItem = { id: row.id, label: row.label, title, day: row.day, authors: row.authors, body, fingerprint, cached: await this.cache.get(row.id, fingerprint) };
+
+    const vocabulary = await this.liveVocabulary(graphName);
+    const summary = emptySummary(graphName, usage.provider, usage.model, vocabulary);
+    summary.extracted = await this.extractAll([item], vocabulary, false, summary, async () => undefined);
+    if (summary.failures.length > 0) throw new Error(`Extraction failed: ${summary.failures[0].error}`);
+    const rows = extractionRows(summary.extracted, new Canonicalizer(vocabulary), summary);
+    await this.writeExtractionRows(graphName, rows, { clear: false });
+
+    const decisionSystems = [...new Set(rows.about.map((a) => a.system))];
+    const supersedes = await this.linkNewDecisions(graphName, decisionSystems, rows.decisions.map((d) => d.id), summary);
+    return {
+      systems: [...rows.systems].sort(),
+      decisions: rows.decisions.map((d) => ({ id: d.id, summary: d.summary, systems: rows.about.filter((a) => a.decisionId === d.id).map((a) => a.system) })),
+      supersedes,
+      // Pages already carry their ASSERTS links; a page stating a decision this one replaced is now stale.
+      asserts: 0,
+      llmCalls: this.llm.usage().jsonCalls - usage.jsonCalls,
+    };
+  }
+
+  /**
+   * For a live document: per system its decisions are about, one cached LLM call
+   * (LIVE_LINKS_SYSTEM_PROMPT) for which earlier decisions they replace; checked
+   * like the full pass (known ids, not from the same document, newer not before
+   * older) and kept only when the newer one is new. Returns how many were written.
+   */
+  private async linkNewDecisions(graphName: string, systems: string[], newIds: string[], summary: ExtractSummary): Promise<number> {
+    if (systems.length === 0 || newIds.length === 0) return 0;
+    const rows = await this.graph.roQuery<LinksPromptInput>(graphName, Q.SYSTEMS_FOR_LINKING_IN, { systems });
+    const links: { newerId: string; olderId: string }[] = [];
+    for (const row of rows) {
+      const added = row.decisions.filter((d) => newIds.includes(d.id));
+      // Only the earlier decisions that share the most rare words with the new ones: a short list
+      // a small model reads reliably, where it overlooks the one that matters among hundreds.
+      const earlier = closestDecisions(added, row.decisions.filter((d) => !newIds.includes(d.id)), LIVE_LINK_CANDIDATES);
+      if (added.length === 0 || earlier.length === 0) continue;
+      // Short ids (N1, E1, ...) so the model never has to copy long ones; mapped back before checking.
+      const local = new Map<string, string>([...added.map((d, i) => [`N${i + 1}`, d.id] as const), ...earlier.map((d, i) => [`E${i + 1}`, d.id] as const)]);
+      const short = (list: typeof added, prefix: string) => list.map((d, i) => ({ ...d, id: `${prefix}${i + 1}` }));
+      const answer = await this.llm.generateObjectWithUsage(SystemLinksSchema, {
+        task: LIVE_LINKS_PROMPT_VERSION,
+        system: LIVE_LINKS_SYSTEM_PROMPT,
+        prompt: liveLinksPrompt({ system: row.system, earlier: short(earlier, 'E'), added: short(added, 'N') }),
+      });
+      const proposed = answer.value.supersedes.map((link) => ({ newerId: local.get(link.newerId) ?? link.newerId, olderId: local.get(link.olderId) ?? link.olderId }));
+      const valid = validateLinks({ system: row.system, decisions: [...earlier, ...added], claims: [] }, { supersedes: proposed, asserts: [] });
+      summary.rejectedLinks += valid.rejected;
+      links.push(...valid.supersedes.filter((link) => newIds.includes(link.newerId) && !newIds.includes(link.olderId)));
+    }
+    const kept = dedupe(links, (l) => `${l.newerId}|${l.olderId}`);
+    await this.graph.batchWrite(graphName, Q.MERGE_SUPERSEDES, kept.map((l) => ({ ...l })));
+    return kept.length;
+  }
+
+  /** The vocabulary for live documents: built once per process (it reads every body), then reused. */
+  private vocabularyCache: Promise<string[]> | null = null;
+  private liveVocabulary(graphName: string): Promise<string[]> {
+    this.vocabularyCache ??= this.buildVocabulary(graphName).catch((error: unknown) => {
+      this.vocabularyCache = null;
+      throw error;
+    });
+    return this.vocabularyCache;
+  }
+
+
+  /**
   /** Second pass: one LLM call per system with 2+ decisions/claims -> SUPERSEDES and ASSERTS. */
   private async linkDecisions(graphName: string, summary: ExtractSummary): Promise<Record<string, number>> {
     const systems = await this.graph.roQuery<LinksPromptInput>(graphName, Q.SYSTEMS_FOR_LINKING);
@@ -442,9 +497,9 @@ export class ExtractService {
   }
 
   /** Recreates (:Page)-[:CLAIMS]->(:Claim) from cached page extractions, with today's canonical names. */
-  async rebuildClaims(graphName: string): Promise<number> {
+  async rebuildClaims(graphName: string, vocabulary?: string[]): Promise<number> {
     const { items } = await this.plan({ graph: graphName, refresh: false });
-    const canon = new Canonicalizer(await this.buildVocabulary(graphName));
+    const canon = new Canonicalizer(vocabulary ?? (await this.buildVocabulary(graphName)));
     const rows = items.flatMap((item) => (item.label === 'Page' && item.cached ? claimRows(item.id, item.cached.asserts, canon) : []));
     await this.graph.query(graphName, Q.DELETE_CLAIMS);
     await this.graph.batchWrite(graphName, Q.MERGE_CLAIMS, rows.map((r) => ({ ...r })));
@@ -496,6 +551,99 @@ export class ExtractService {
       await report({ kind: 'extract', graph: graphName, phase, percent, day: null, added, totals, message });
     };
   }
+}
+
+/** What one extraction run writes, before it is written. */
+export interface ExtractionRows {
+  systems: Set<string>;
+  mentions: Map<string, { artifactId: string; system: string; weight: number }>;
+  decisions: { id: string; artifactId: string; summary: string; day: number | null; kind: string; confidence: number }[];
+  about: { decisionId: string; system: string }[];
+  claims: { id: string; pageId: string; claim: string; system: string }[];
+  canon: Canonicalizer;
+}
+
+/** LLM answers -> graph rows: systems canonicalised, weak mentions and decisions dropped, claims for Pages only. */
+export function extractionRows(extracted: ExtractedItem[], canon: Canonicalizer, summary: ExtractSummary): ExtractionRows {
+  const mentions = new Map<string, { artifactId: string; system: string; weight: number }>();
+  const decisions: { id: string; artifactId: string; summary: string; day: number | null; kind: string; confidence: number }[] = [];
+  const about: { decisionId: string; system: string }[] = [];
+  const claims: { id: string; pageId: string; claim: string; system: string }[] = [];
+  const systems = new Set<string>();
+
+  for (const { item, value } of extracted) {
+    if (!value) continue;
+    for (const system of value.systems) {
+      summary.rawSystemNames.set(system.name, (summary.rawSystemNames.get(system.name) ?? 0) + 1);
+      const name = canon.canonical(system.name);
+      if (!name || system.relevance < MIN_SYSTEM_RELEVANCE) continue;
+      systems.add(name);
+      const key = `${item.id}|${name}`;
+      // The same system named twice in one document keeps its highest relevance.
+      if ((mentions.get(key)?.weight ?? -1) < system.relevance) mentions.set(key, { artifactId: item.id, system: name, weight: system.relevance });
+    }
+    value.decisions.forEach((decision, index) => {
+      if (decision.confidence < MIN_DECISION_CONFIDENCE) return;
+      // Stable id: same document + same cached answer -> same id on every rerun.
+      const id = `D:${item.id}:${index}`;
+      decisions.push({ id, artifactId: item.id, summary: decision.summary, day: item.day, kind: decision.kind, confidence: decision.confidence });
+      for (const raw of decision.systems) {
+        const name = canon.canonical(raw);
+        if (!name) continue;
+        systems.add(name);
+        about.push({ decisionId: id, system: name });
+      }
+    });
+    // Claims are only kept for Pages: they feed the ASSERTS links of the second pass.
+    if (item.label === 'Page') {
+      for (const claim of claimRows(item.id, value.asserts, canon)) {
+        systems.add(claim.system);
+        claims.push(claim);
+      }
+    }
+  }
+  return { systems, mentions, decisions, about, claims, canon };
+}
+
+/** Earlier decisions shown to the live-links prompt per system. */
+export const LIVE_LINK_CANDIDATES = 25;
+
+const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'via', 'use', 'using', 'all', 'new', 'per', 'will', 'are', 'its', 'our', 'not', 'than', 'then', 'that', 'this', 'next', 'back', 'instead']);
+
+/** Lower-cased words of 3+ characters (keeping "max_pool_size" and "rds"), minus common words. */
+export function decisionWords(text: string): Set<string> {
+  return new Set((text.toLowerCase().match(/[a-z0-9_]{3,}/g) ?? []).filter((w) => !STOPWORDS.has(w)));
+}
+
+/**
+ * The `limit` earlier decisions that share the most rare words with the new ones
+ * (each shared word weighs log(N / decisions using it)), best first; ones that share
+ * nothing are left out. Ties go to the newer decision.
+ */
+export function closestDecisions<T extends { id: string; day: number | null; summary: string }>(added: T[], earlier: T[], limit: number): T[] {
+  const target = new Set(added.flatMap((d) => [...decisionWords(d.summary)]));
+  const words = earlier.map((d) => decisionWords(d.summary));
+  const uses = new Map<string, number>();
+  for (const set of words) for (const w of set) uses.set(w, (uses.get(w) ?? 0) + 1);
+  const scored = earlier.map((d, i) => ({
+    d,
+    score: [...words[i]].filter((w) => target.has(w)).reduce((sum, w) => sum + Math.log((earlier.length + 1) / (uses.get(w) ?? 1)), 0),
+  }));
+  return scored
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || (b.d.day ?? 0) - (a.d.day ?? 0))
+    .slice(0, limit)
+    .map((x) => x.d)
+    .sort((a, b) => (a.day ?? 0) - (b.day ?? 0));
+}
+
+/** A blank summary for a run that is not a full extraction (one live document). */
+function emptySummary(graph: string, provider: string, model: string, vocabulary: string[]): ExtractSummary {
+  return {
+    graph, provider, model, promptVersion: PROMPT_VERSION, candidates: 1, selected: 1, fromCache: 0, plannedCalls: 1,
+    llmCalls: 0, failures: [], tokens: { ...NO_TOKENS }, linkCalls: 0, linkSystems: 0, vocabulary, dryRun: false,
+    estimatedInputTokens: 0, estimatedOutputTokens: 0, extracted: [], rawSystemNames: new Map(), canonicalizer: null, rejectedLinks: 0,
+  };
 }
 
 /**

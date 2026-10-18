@@ -5,7 +5,7 @@ import { Maximize2, Waypoints } from "lucide-react";
 import { GraphCanvas } from "@/components/graph-canvas";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { AgentTurn } from "@/hooks/use-ask";
-import { artifactKey, orphanedKeys, toCanvasGraph } from "@/lib/graph";
+import { artifactKey, discoveryOrder, orphanedKeys, toCanvasGraph } from "@/lib/graph";
 
 interface TurnGraphProps {
   turn: AgentTurn;
@@ -30,6 +30,8 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
   const canvas = useMemo(() => toCanvasGraph(turn.paths), [turn.paths]);
   const finalKeys = useMemo(() => (turn.finalPath ? toCanvasGraph([turn.finalPath]).nodes.map((n) => n.key) : NONE), [turn.finalPath]);
   const red = useMemo(() => orphanedKeys(turn.paths), [turn.paths]);
+  // What the agent found first is whitish orange, what it found last is orange.
+  const order = useMemo(() => discoveryOrder(turn.paths, turn.pathRoots), [turn.paths, turn.pathRoots]);
 
   const { highlighted, faded } = useMemo(() => {
     if (citation) {
@@ -79,6 +81,7 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
       highlightedIds={highlighted}
       fadedIds={faded}
       redIds={red}
+      pathOrder={order}
       interactive={interactive}
     />
   );
@@ -91,6 +94,7 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">The agent&apos;s path</span> · {caption}
         </p>
+        {!citation && <PathLegend />}
         {citation && (
           <button type="button" onClick={onClearCitation} className="shrink-0 text-xs font-semibold text-muted-foreground hover:text-foreground">
             Whole path
@@ -109,15 +113,49 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
 
       <Sheet open={expanded} onOpenChange={setExpanded}>
         <SheetContent side="right" className="w-full gap-0 sm:max-w-none lg:w-[min(72rem,80vw)]">
-          <SheetHeader className="gap-1 border-b px-6 pt-6 pb-4 pr-14">
+          <SheetHeader className="gap-2 border-b px-6 pt-6 pb-4 pr-14">
             <SheetTitle className="text-lg leading-snug font-semibold tracking-tight">The agent&apos;s path</SheetTitle>
-            <SheetDescription className="truncate">
-              “{turn.question}” · {caption}
+            <SheetDescription className="min-w-0 truncate text-sm">
+              &ldquo;{turn.question}&rdquo;
             </SheetDescription>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  <span className="font-semibold text-foreground">{canvas.nodes.length}</span> node{canvas.nodes.length === 1 ? "" : "s"}
+                </span>
+                <span>
+                  <span className="font-semibold text-foreground">{canvas.edges.length}</span> edge{canvas.edges.length === 1 ? "" : "s"}
+                </span>
+                <span>
+                  <span className="font-semibold text-foreground">{turn.steps.length}</span> tool call{turn.steps.length === 1 ? "" : "s"}
+                </span>
+                {citation && (
+                  <span>
+                    Showing <span className="code-id">{citation}</span>
+                  </span>
+                )}
+              </div>
+              {!citation && <PathLegend />}
+            </div>
           </SheetHeader>
           {graph(true, "flex-1")}
         </SheetContent>
       </Sheet>
     </div>
+  );
+}
+
+/** How to read the path's colours: from what the agent found first (whitish orange) to last (orange). */
+function PathLegend() {
+  return (
+    <span className="hidden shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground sm:flex" title="The order in which the agent found each node">
+      first
+      <span
+        aria-hidden
+        className="h-2.5 w-28 rounded-full"
+        style={{ background: "linear-gradient(to right, color-mix(in oklch, var(--signal) 45%, transparent), color-mix(in oklch, var(--signal) 85%, black))" }}
+      />
+      last
+    </span>
   );
 }

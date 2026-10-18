@@ -5,6 +5,7 @@ import { AnalyticsService } from '../src/analytics/analytics.service';
 import { ArtifactsService } from '../src/artifacts/artifacts.service';
 import type { TextStore } from '../src/ingest/text-store';
 import { createKeystoneMcpServer, type ToolEnvelope } from '../src/mcp/keystone-mcp-server';
+import { MemoryService } from '../src/memory/memory.service';
 import { ProjectionService } from '../src/projection/projection.service';
 import { WhatIfService } from '../src/whatif/whatif.service';
 import { fixtureExpertise, useFixtureGraph } from './graph-test-utils';
@@ -59,6 +60,8 @@ describe('Keystone MCP server on the fixture graph', () => {
   };
   const search = jest.fn(async () => stubSearch);
 
+  let memory: MemoryService;
+
   beforeAll(async () => {
     await fixtureExpertise(fx.graph).refresh({ graph: fx.name, asOfDay: 12 });
     // Links between artifacts (the fixture has none): PR-1 fixes T-1, T-2 references T-1.
@@ -74,8 +77,9 @@ describe('Keystone MCP server on the fixture graph', () => {
       projectionGraph: projection(),
       scratchPrefix: `${fx.name}_whatif_`,
     });
+    memory = new MemoryService(fx.graph, { graph: fx.name });
     const server = createKeystoneMcpServer(
-      { analytics, whatIf, retrieval: { search }, actions, artifacts: new ArtifactsService(fx.graph, textStore) },
+      { analytics, whatIf, retrieval: { search }, actions, artifacts: new ArtifactsService(fx.graph, textStore), memory },
       { graph: fx.name, projectionGraph: projection() },
     );
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -107,15 +111,64 @@ describe('Keystone MCP server on the fixture graph', () => {
   it('lists every tool with a description and an input schema', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
-      'bridge_people', 'bus_factor', 'check_causal_link', 'check_follow_up', 'check_involvement', 'check_visibility', 'create_runbook_task',
-      'draft_handover', 'find_artifacts', 'find_event', 'find_stale_docs', 'get_artifact', 'list_people', 'list_systems',
-      'propose_reassignment', 'search_knowledge', 'simulate_departure', 'trace_decision', 'what_followed', 'who_knows',
+      'bridge_people', 'bus_factor', 'central_people', 'check_causal_link', 'check_follow_up', 'check_involvement', 'check_visibility', 'create_runbook_task',
+      'draft_handover', 'find_artifacts', 'find_event', 'find_stale_docs', 'get_artifact', 'how_connected', 'list_people', 'list_systems', 'propose_reassignment', 'recall_memory', 'search_knowledge', 'simulate_departure', 'trace_decision', 'what_followed', 'who_knows',
     ]);
     for (const tool of tools) {
       expect(tool.description!.length).toBeGreaterThan(80);
       expect(tool.inputSchema.type).toBe('object');
     }
     expect(tools.find((t) => t.name === 'who_knows')!.inputSchema.required).toEqual(['system']);
+  });
+
+  it('central_people: PageRank on the collaboration network, the most central first (algo.pageRank)', async () => {
+    const { envelope } = await call<{ people: { person: string; relativeScore: number }[] }>('central_people');
+    expectEnvelope(envelope);
+    // Only active people are in the projection (Cara left); Dev links both departments, so is the most central.
+    expect(envelope.data.people.map((p) => p.person).sort()).toEqual(['Ada', 'Ben', 'Dev', 'Eve']);
+    expect(envelope.data.people[0]).toMatchObject({ relativeScore: 1 });
+    expect(envelope.data.people.every((p, i, all) => i === 0 || p.relativeScore <= all[i - 1].relativeScore)).toBe(true);
+  });
+
+  it('how_connected: the shortest chain, with the documents each pair of colleagues shared (shortestPath)', async () => {
+    // Eve and Ben never worked together: Dev links them (T-3 with Eve, PR-3 with Ben).
+    const people = await call<{ connected: boolean; hops: number; steps: { from: string; type: string; to: string; shared?: string[] }[] }>('how_connected', { from: 'Eve', to: 'Ben' });
+    expectEnvelope(people.envelope, true);
+    expect(people.envelope.data).toMatchObject({ connected: true, hops: 2 });
+    expect(people.envelope.data.steps.map((s) => [s.from, s.type, s.to])).toEqual([['Eve', 'COLLAB', 'Dev'], ['Dev', 'COLLAB', 'Ben']]);
+    expect(people.envelope.evidence).toEqual(expect.arrayContaining(['T-3', 'PR-3']));
+
+    const system = await call<{ connected: boolean; hops: number }>('how_connected', { from: 'TitanDB', to: 'Eve' });
+    expect(system.envelope.data.connected).toBe(true);
+    expect(system.envelope.evidence.length).toBeGreaterThan(0);
+
+    // T-4 mentions both systems.
+    const twoSystems = await call<{ connected: boolean }>('how_connected', { from: 'TitanDB', to: 'MobileApp' });
+    expect(twoSystems.envelope.data.connected).toBe(true);
+    expect(twoSystems.envelope.evidence).toContain('T-4');
+  });
+
+  it('who_knows gives relativeScore (1 = the top expert) and never the raw score', async () => {
+    const { envelope } = await call<{ experts: Record<string, unknown>[] }>('who_knows', { system: 'TitanDB' });
+    expect(envelope.data.experts[0]).toMatchObject({ person: 'Ada', relativeScore: 1 });
+    for (const expert of envelope.data.experts) expect(expert).not.toHaveProperty('score');
+  });
+
+  it('recall_memory: approved notes (citable as evidence) and how often a subject was asked about', async () => {
+    const turnId = await memory.recordTurn({
+      sessionId: 'mcp-chat', question: 'Who owns PaymentsAPI?', answer: 'Ada [P-1].', label: 'who_knows', outcome: 'answered',
+      toolCalls: [{ name: 'who_knows', args: { system: 'PaymentsAPI' } }], cited: ['P-1'], latencyMs: 1,
+    });
+    const { noteId } = await memory.feedback(turnId, { rating: 'down', correction: 'Dev is the PaymentsAPI owner since day 11.' });
+    const before = await call<{ found: { notes: unknown[] }[] }>('recall_memory', { subjects: ['PaymentsAPI'] });
+    expect(before.envelope.data.found[0].notes).toEqual([]); // still proposed
+    expect(before.envelope.evidence).toEqual([]);
+
+    await memory.review(noteId!, 'approved');
+    const { envelope } = await call<{ found: { subject: string; timesAsked: number; notes: { id: string }[] }[] }>('recall_memory', { subjects: ['PaymentsAPI'] });
+    expectEnvelope(envelope);
+    expect(envelope.data.found[0]).toMatchObject({ subject: 'PaymentsAPI', timesAsked: 1, notes: [{ id: noteId }] });
+    expect(envelope.evidence).toEqual([noteId]);
   });
 
   it('search_knowledge: passages with their artifact ids as evidence', async () => {
@@ -323,9 +376,11 @@ describe('Keystone MCP server on the fixture graph', () => {
   });
 
   it('find_stale_docs: the page that asserts a superseded decision', async () => {
-    const { envelope } = await call<{ pages: { stalePage: string }[] }>('find_stale_docs');
+    const { envelope } = await call<{ pages: Record<string, unknown>[] }>('find_stale_docs');
     expectEnvelope(envelope);
-    expect(envelope.data.pages.map((p) => p.stalePage)).toEqual(['P-3']);
+    expect(envelope.data.pages.map((p) => p.page)).toEqual(['P-3']);
+    // No decision ids: they are not artifacts and cannot be cited.
+    expect(JSON.stringify(envelope.data)).not.toMatch(/"D-\d/);
     expect(envelope.evidence).toEqual(['P-3', 'M-1']);
   });
 

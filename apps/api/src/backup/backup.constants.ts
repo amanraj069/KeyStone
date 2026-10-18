@@ -46,6 +46,9 @@ export const EXPORTS_DIR = 'exports';
 /** The export the seed command restores actions from. */
 export const LATEST_ACTIONS_EXPORT = `${EXPORTS_DIR}/actions-latest.jsonl`;
 
+/** The export the seed command restores the agent's memory from (Stage 16). */
+export const LATEST_MEMORY_EXPORT = `${EXPORTS_DIR}/memory-latest.jsonl`;
+
 /** Actions read per page when exporting (well under FalkorDB's RESULTSET_SIZE). */
 export const EXPORT_PAGE = 1000;
 

@@ -44,7 +44,15 @@ function splitIds(inner: string): string[] {
     .filter((id) => id.length > 0);
 }
 
-/** Removes the spaces a dropped citation leaves behind ("word ." -> "word."). */
-function tidy(text: string): string {
-  return text.replace(/[ \t]+([.,;:!?])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim();
+/**
+ * Removes what a dropped citation leaves behind: spaces before punctuation ("word ." ->
+ * "word.") and a doubled full stop ("leaves [X]." -> "leaves.."-> "leaves."); a real
+ * ellipsis ("...") stays.
+ */
+export function tidy(text: string): string {
+  return text
+    .replace(/[ \t]+([.,;:!?])/g, '$1')
+    .replace(/(?<!\.)([.!?])\.(?!\.)/g, '$1')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
 }

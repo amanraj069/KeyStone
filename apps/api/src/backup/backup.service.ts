@@ -1,9 +1,10 @@
-import { ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ExpertiseService } from '../analytics/expertise.service';
 import { APEX_GRAPH, BACKUP_GRAPH } from '../graph/graph.constants';
 import { GraphService } from '../graph/graph.service';
 import { ProjectionService } from '../projection/projection.service';
 import { type ActionsRestoreSummary, ActionsExportService } from './actions-export.service';
+import { MemoryExportService } from './memory-export.service';
 import { BACKUP_SETTINGS, BACKUP_WAIT_MS, type BackupSettings } from './backup.constants';
 import { countPeople } from './count-people';
 import { GraphLock } from './graph-lock';
@@ -37,6 +38,7 @@ export class BackupService {
     private readonly expertise: ExpertiseService,
     private readonly projection: ProjectionService,
     @Inject(BACKUP_SETTINGS) private readonly settings: BackupSettings,
+    @Optional() private readonly memoryExport?: MemoryExportService,
   ) {}
 
   /**
@@ -87,8 +89,11 @@ export class BackupService {
       const started = performance.now();
       // Approvals made since the last 6-hourly export exist only in the apex being replaced.
       const live = options.reapplyActions ? await this.actionsExport.snapshotActions(APEX_GRAPH) : [];
+      // The same for the agent's memory: chats and approved notes since the backup.
+      const liveMemory = options.reapplyActions && this.memoryExport ? await this.memoryExport.snapshotMemory(APEX_GRAPH) : [];
       await this.graph.replaceGraph(BACKUP_GRAPH, APEX_GRAPH);
       const actions = options.reapplyActions ? await this.actionsExport.restoreLatestInto(APEX_GRAPH, live) : null;
+      if (options.reapplyActions && this.memoryExport) await this.memoryExport.restoreLatestInto(APEX_GRAPH, liveMemory);
       if (actions && actions.actions > 0) await this.expertise.refresh({ graph: APEX_GRAPH });
       await this.projection.rebuild();
       const people = await countPeople(this.graph, APEX_GRAPH);

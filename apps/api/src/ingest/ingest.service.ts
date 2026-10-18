@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { GraphCounts, IngestProgress, ReplayRequest } from '@keystone/shared';
 import { GraphService } from '../graph/graph.service';
 import { SchemaService } from '../graph/schema.service';
-import { readArtifacts } from './artifact-record';
+import { type ArtifactRecord, readArtifacts } from './artifact-record';
 import { readCalendar } from './calendar';
 import { INGEST_SETTINGS, type IngestSettings, TEXT_STORE } from './ingest.constants';
 import { buildPlan, type IngestPlan, type IngestSlice, sliceFor } from './ingest-plan';
@@ -71,6 +71,25 @@ export class IngestService {
         `days ${plan.days[0]}..${plan.days.at(-1)}`,
     );
     return plan;
+  }
+
+  /**
+   * Adds one new artifact to `graphName` without touching the rest (a live document):
+   * the plan is rebuilt with it, so its roles, links and departure announcements follow
+   * exactly the rules of a full ingest. Returns the rows written, by kind.
+   */
+  async ingestOne(graphName: string, record: ArtifactRecord): Promise<Record<string, number>> {
+    const records = await readArtifacts(this.settings.dataDir);
+    if (records.some((r) => r.doc_id === record.doc_id)) throw new Error(`Artifact "${record.doc_id}" already exists`);
+    const plan = buildPlan([...records, record], await readCalendar(this.settings.dataDir));
+    const added = await this.writeSlice(graphName, sliceFor(plan, (r) => r.doc_id === record.doc_id));
+    this.logger.log(`Ingested ${record.doc_id} into ${graphName}: ${JSON.stringify(added)}`);
+    return added;
+  }
+
+  /** Whether a name is an employee by the same rules ingestion uses (only employees get edges). */
+  async isEmployee(name: string): Promise<boolean> {
+    return buildPlan(await readArtifacts(this.settings.dataDir)).roster.isEmployee(name);
   }
 
   /** Deletes `graphName` (if it exists) and recreates its indexes. */

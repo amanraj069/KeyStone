@@ -24,6 +24,8 @@ export interface GraphCanvasProps {
   redIds?: readonly string[];
   /** Node keys or artifact ids with a pulsing signal ring (newly at risk). */
   pulseIds?: readonly string[];
+  /** When each node of the agent's path was found, 0 (first) to 1 (last): whitish orange to orange. */
+  pathOrder?: ReadonlyMap<string, number>;
   /** How long highlight changes animate (default 300 ms). */
   animationMs?: number;
   /** Shown when there are no nodes. */
@@ -50,6 +52,7 @@ export function GraphCanvas({
   fadedIds = NONE,
   redIds = NONE,
   pulseIds = NONE,
+  pathOrder,
   animationMs = 300,
   emptyHint,
   interactive = true,
@@ -78,6 +81,7 @@ export function GraphCanvas({
             fadedIds={faded}
             redIds={red}
             pulseIds={pulse}
+            pathOrder={pathOrder}
             animationMs={animationMs}
             interactive={interactive}
             onArtifactClick={setOpenArtifact}

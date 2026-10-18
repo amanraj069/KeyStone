@@ -4,7 +4,7 @@
 
 {$API_DOMAIN} {
 	# Server-Sent Events and MCP streams: send every byte as soon as the API writes it.
-	@streams path /agent/ask /ingest/events /ingest/jobs/*/events /mcp
+	@streams path /agent/ask /live/artifacts /ingest/events /ingest/jobs/*/events /mcp
 	handle @streams {
 		reverse_proxy api:4000 {
 			flush_interval -1

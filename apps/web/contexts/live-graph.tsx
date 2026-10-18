@@ -25,6 +25,8 @@ interface LiveGraphValue {
   replay: ReplayState | null;
   /** Called after POST /ingest/replay: follow this job and show the replay graph. */
   followReplay: (jobId: string) => void;
+  /** Refetch what is on screen now (after a live document changed the graph). */
+  refresh: () => void;
 }
 
 const LiveGraphContext = createContext<LiveGraphValue | null>(null);
@@ -102,6 +104,7 @@ export function LiveGraphProvider({ children }: { children: ReactNode }) {
         revision,
         replay,
         followReplay,
+        refresh: () => setRevision((r) => r + 1),
       }}
     >
       {children}

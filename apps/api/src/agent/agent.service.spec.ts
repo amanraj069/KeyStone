@@ -1,17 +1,21 @@
 import { NOT_IN_RECORDS, SYSTEM_PROMPT } from './agent.constants';
 import { AgentService, type AgentSettings, sentences, withHint } from './agent.service';
-import type { AgentEvent, AgentModel, AgentTools, ModelTurn, ToolEnvelope } from './agent.types';
+import type { AgentEvent, AgentMessage, AgentModel, AgentTools, ModelTurn, ToolEnvelope } from './agent.types';
+import type { AgentMemory, MemoryContext } from '../memory/memory.service';
 
 /** A model that plays back scripted turns, recording what it was asked. */
 function scriptedModel(turns: (ModelTurn | ((n: number) => ModelTurn))[]) {
   const calls: { allowTools: boolean; messages: number }[] = [];
-  const model: AgentModel & { calls: typeof calls } = {
+  const inputs: AgentMessage[][] = [];
+  const model: AgentModel & { calls: typeof calls; inputs: typeof inputs } = {
     provider: 'scripted',
     model: 'test',
     calls,
+    inputs,
     step: jest.fn(async (input) => {
       expect(input.system).toBe(SYSTEM_PROMPT);
       calls.push({ allowTools: input.allowTools, messages: input.messages.length });
+      inputs.push([...input.messages]);
       const next = turns[Math.min(calls.length - 1, turns.length - 1)];
       return typeof next === 'function' ? next(calls.length) : next;
     }),
@@ -28,7 +32,7 @@ function fakeTools(result: (name: string) => ToolEnvelope | Promise<ToolEnvelope
   };
 }
 
-function agent(model: AgentModel, tools: AgentTools, label = 'who_knows', settings: Partial<AgentSettings> = {}) {
+function agent(model: AgentModel, tools: AgentTools, label = 'who_knows', settings: Partial<AgentSettings> = {}, memory?: AgentMemory) {
   const llm = { generateObjectWithUsage: jest.fn(async () => ({ value: { label }, usage: {}, cached: true })) };
   const graph = {
     roQuery: jest.fn(async (_g: string, _q: string, params: { ids: string[] }) =>
@@ -41,8 +45,21 @@ function agent(model: AgentModel, tools: AgentTools, label = 'who_knows', settin
     budgetMs: 60_000,
     finalAnswerGraceMs: 20_000,
     ...settings,
-  });
+  }, memory);
   return { service, graph };
+}
+
+/** A memory that returns `context` before answering and records what it was asked to store. */
+function fakeMemory(context: Partial<MemoryContext> = {}, fail = false) {
+  const recordTurn = jest.fn(async () => {
+    if (fail) throw new Error('graph down');
+    return 'turn-1';
+  });
+  const contextFor = jest.fn(async () => {
+    if (fail) throw new Error('graph down');
+    return { priorTurns: [], notes: [], subjects: [], ...context };
+  });
+  return { contextFor, recordTurn } satisfies AgentMemory;
 }
 
 async function collect(stream: AsyncGenerator<AgentEvent>): Promise<AgentEvent[]> {
@@ -127,7 +144,9 @@ describe('AgentService', () => {
 
   it('the question carries its type, and a tool recipe for the event types', () => {
     expect(withHint('Was a ticket opened?', 'event')).toMatch(/Question type: event\. 1\) find_event .*2\) check_follow_up/);
-    expect(withHint('Who knows Kafka?', 'who_knows')).toMatch(/Question type: who_knows\. Use it to choose tools/);
+    expect(withHint('Why did we pick Kafka?', 'why')).toMatch(/Question type: why\. Use it to choose tools/);
+    expect(withHint('How is Chloe connected to TitanDB?', 'who_knows')).toMatch(/Question type: who_knows\. .*how_connected/);
+    expect(withHint('Is the runbook current?', 'freshness')).toMatch(/Question type: freshness\. Call find_stale_docs first/);
   });
 
   it("normalizes the model's own refusal and drops its citations", async () => {
@@ -214,5 +233,86 @@ describe('sentences', () => {
     const text = 'Priya scores 100.47. [A]\n\n- Jax 65.4 [B]';
     expect(sentences(text)).toEqual(['Priya scores 100.47. [A]\n\n', '- Jax 65.4 [B]']);
     expect(sentences(text).join('')).toBe(text);
+  });
+
+  describe('with memory (Stage 16)', () => {
+    const priorTurn = { id: 'turn-0', n: 1, question: 'Who knows TitanDB?', summary: 'Priya is the top expert [CONF-OLD].', cited: ['CONF-OLD'], subjects: ['TitanDB', 'Priya'] };
+
+    it('shows the chat so far to the model, keeps its citations valid and stores the new turn', async () => {
+      const model = scriptedModel([
+        { text: null, toolCalls: [{ id: 'c1', name: 'simulate_departure', args: { person: 'Priya' } }] },
+        { text: 'Jax would cover TitanDB [CONF-1]; Priya is still the top expert [CONF-OLD].', toolCalls: [] },
+      ]);
+      const memory = fakeMemory({ priorTurns: [priorTurn], subjects: ['TitanDB', 'Priya'] });
+      const { service } = agent(model, fakeTools(), 'what_if', {}, memory);
+      const events = await collect(service.run('And if she leaves?', 'chat-1', { userId: 'u1' }));
+
+      expect(events[1]).toEqual({ type: 'memory', priorTurns: 1, notes: [], subjects: ['TitanDB', 'Priya'] });
+      expect(model.inputs[0].slice(0, 2)).toEqual([
+        { role: 'user', text: 'Who knows TitanDB?' },
+        { role: 'assistant', text: 'Priya is the top expert [CONF-OLD].', toolCalls: [] },
+      ]);
+      expect(model.inputs[0][2]).toMatchObject({ role: 'user', text: expect.stringContaining('And if she leaves?') });
+      // CONF-OLD came from the earlier turn, not from a tool now: it still counts as evidence.
+      expect(answerOf(events)).toBe('Jax would cover TitanDB [CONF-1]; Priya is still the top expert [CONF-OLD].');
+      expect(doneOf(events).turnId).toBe('turn-1');
+      expect(memory.contextFor).toHaveBeenCalledWith('chat-1', 'And if she leaves?');
+      expect(memory.recordTurn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'u1',
+          sessionId: 'chat-1',
+          question: 'And if she leaves?',
+          label: 'what_if',
+          outcome: 'answered',
+          toolCalls: [{ name: 'simulate_departure', args: { person: 'Priya' } }],
+          cited: ['CONF-1', 'CONF-OLD'],
+        }),
+      );
+    });
+
+    it('adds approved notes to the question and lets the answer cite them', async () => {
+      const model = scriptedModel([{ text: 'Tom took over TitanDB in March [NOTE-1a2b3c4d], after Priya [CONF-OLD].', toolCalls: [] }]);
+      const note = { id: 'NOTE-1a2b3c4d', text: 'Tom took over TitanDB on-call in March.', day: 60 };
+      const memory = fakeMemory({ priorTurns: [priorTurn], notes: [note], subjects: ['TitanDB'] });
+      const { service, graph } = agent(model, fakeTools(), 'who_knows', {}, memory);
+      const events = await collect(service.run('Who owns TitanDB now?', 'chat-2'));
+
+      const asked = model.inputs[0].at(-1) as Extract<AgentMessage, { role: 'user' }>;
+      expect(asked.text).toContain('- [NOTE-1a2b3c4d] Tom took over TitanDB on-call in March.');
+      expect(answerOf(events)).toContain('[NOTE-1a2b3c4d]');
+      expect(doneOf(events).citations.map((c) => c.id)).toEqual(['NOTE-1a2b3c4d', 'CONF-OLD']);
+      // Notes are looked up as notes (CITED_NOTES), and are not stored as cited artifacts of the turn.
+      expect(graph.roQuery.mock.calls.some(([, cypher]) => cypher.includes('MATCH (n:Note)'))).toBe(true);
+      expect(memory.recordTurn).toHaveBeenCalledWith(expect.objectContaining({ cited: ['CONF-OLD'] }));
+    });
+
+    it('a note that was not recalled is still a hallucinated citation', async () => {
+      const model = scriptedModel([{ text: 'Tom owns it [NOTE-deadbeef] [CONF-OLD].', toolCalls: [] }]);
+      const { service } = agent(model, fakeTools(), 'who_knows', {}, fakeMemory({ priorTurns: [priorTurn] }));
+      const events = await collect(service.run('Who owns TitanDB now?', 'chat-3'));
+      expect(answerOf(events)).toBe('Tom owns it [CONF-OLD].');
+    });
+
+    it('answers without memory when reading or storing it fails', async () => {
+      const model = scriptedModel([
+        { text: null, toolCalls: [{ id: 'c1', name: 'who_knows', args: { system: 'TitanDB' } }] },
+        { text: 'Priya knows TitanDB best [CONF-1].', toolCalls: [] },
+      ]);
+      const memory = fakeMemory({}, true);
+      const { service } = agent(model, fakeTools(), 'who_knows', {}, memory);
+      const events = await collect(service.run('Who knows TitanDB best?', 'chat-4'));
+      expect(events.some((e) => e.type === 'memory' || e.type === 'error')).toBe(false);
+      expect(answerOf(events)).toBe('Priya knows TitanDB best [CONF-1].');
+      expect(doneOf(events).turnId).toBeNull();
+    });
+
+    it('without memory nothing is recalled or stored', async () => {
+      const model = scriptedModel([{ text: 'Priya [CONF-1].', toolCalls: [] }]);
+      const { service } = agent(model, fakeTools(), 'general');
+      const events = await collect(service.run('Hi', 'chat-5'));
+      expect(events.some((e) => e.type === 'memory')).toBe(false);
+      expect(doneOf(events).turnId).toBeNull();
+      expect(model.inputs[0]).toHaveLength(1);
+    });
   });
 });

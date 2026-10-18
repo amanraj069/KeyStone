@@ -1,8 +1,10 @@
-import { Inject, Injectable, Logger, type OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, Logger, type OnApplicationBootstrap, Optional } from '@nestjs/common';
 import { z } from 'zod';
 import { GraphService } from '../graph/graph.service';
 import { LlmService } from '../llm/llm.service';
 import { type LlmTokenUsage, NO_TOKENS } from '../llm/llm.types';
+import { AGENT_MEMORY, NOTE_ID_PREFIX } from '../memory/memory.constants';
+import { type AgentMemory, EMPTY_CONTEXT, type MemoryContext, type PriorTurn } from '../memory/memory.service';
 import {
   AGENT_MODEL,
   AGENT_TOOLS,
@@ -21,7 +23,7 @@ import {
 import type { AgentEvent, AgentMessage, AgentModel, AgentTools, Citation, GraphPath, ToolEnvelope } from './agent.types';
 import { checkCitations } from './citations';
 import { unionGraphPaths } from './graph-union';
-import { CITED_ARTIFACTS } from './queries/agent.queries';
+import { CITED_ARTIFACTS, CITED_NOTES } from './queries/agent.queries';
 
 /** Injection token for agent settings. */
 export const AGENT_SETTINGS = Symbol('AGENT_SETTINGS');
@@ -41,6 +43,8 @@ export interface RunOptions {
   onUsage?: (usage: LlmTokenUsage) => void;
   /** Called with the evidence ids of every tool result (what the model had in front of it). */
   onEvidence?: (ids: string[]) => void;
+  /** Who asks (the browser's anonymous id): stored with the turn so each user's chats stay theirs. */
+  userId?: string;
 }
 
 /** One question answered without streaming (AgentService.ask): what the event stream adds up to. */
@@ -70,7 +74,9 @@ class OutOfTime extends Error {}
  * Keystone's question answering agent. It is an MCP client: the tools come from
  * the Keystone MCP server, and the model (OpenAI or Gemini, per USE_OPENAI) picks
  * them. Answers cite artifact ids, and only ids that a tool returned as evidence
- * survive. Nothing about the conversation is stored (memory comes in Stage 16).
+ * survive. With memory (Stage 16), each answer is stored as a Turn of its chat:
+ * a follow-up sees the earlier turns, and approved notes about the question's
+ * systems and people are added to it and can be cited like artifacts.
  */
 @Injectable()
 export class AgentService implements OnApplicationBootstrap {
@@ -84,6 +90,8 @@ export class AgentService implements OnApplicationBootstrap {
     private readonly llm: LlmService,
     private readonly graph: GraphService,
     @Inject(AGENT_SETTINGS) private readonly settings: AgentSettings,
+    /** Absent in the benchmark and the CLI: then every question is answered on its own and nothing is stored. */
+    @Optional() @Inject(AGENT_MEMORY) private readonly memory?: AgentMemory,
   ) {}
 
   /** List the MCP tools once at startup, as soon as the API accepts requests (a failure is retried on first use). */
@@ -99,6 +107,7 @@ export class AgentService implements OnApplicationBootstrap {
     const deadline = started + this.settings.budgetMs;
     const timings = { classifyMs: 0, modelMs: 0, toolsMs: 0 };
     const toolsUsed: string[] = [];
+    const toolCalls: { name: string; args: Record<string, unknown> }[] = [];
     const evidence = new Set<string>();
     const graphPaths: GraphPath[] = [];
     let label: QuestionLabel = 'general';
@@ -110,13 +119,24 @@ export class AgentService implements OnApplicationBootstrap {
 
     try {
       const t0 = Date.now();
+      // Memory is read while the question is classified; a failure there means no memory, never no answer.
+      const recalled = this.recall(sessionId, question);
       label = await this.classify(question, options);
       timings.classifyMs = Date.now() - t0;
       yield { type: 'classified', label };
 
+      const memory = await recalled;
+      if (memory.priorTurns.length > 0 || memory.notes.length > 0) {
+        yield { type: 'memory', priorTurns: memory.priorTurns.length, notes: memory.notes.map((n) => ({ id: n.id, text: n.text })), subjects: memory.subjects };
+      }
+      // Earlier answers of this chat passed the guardrail, so their citations stay valid; notes are cited by id.
+      memory.priorTurns.forEach((turn) => turn.cited.forEach((id) => evidence.add(id)));
+      memory.notes.forEach((note) => evidence.add(note.id));
+
       const tools = await this.tools.list();
       const messages: AgentMessage[] = [
-        { role: 'user', text: withHint(question, label) },
+        ...priorMessages(memory.priorTurns),
+        { role: 'user', text: withMemory(withHint(question, label), memory) },
       ];
       let answer: string | null = null;
 
@@ -149,6 +169,7 @@ export class AgentService implements OnApplicationBootstrap {
           }
           steps++;
           toolsUsed.push(call.name);
+          toolCalls.push({ name: call.name, args: call.args });
           yield { type: 'tool_call', name: call.name, args: call.args };
           const envelope = await this.callTool(call.name, call.args, timings, deadline);
           envelope.evidence.forEach((id) => evidence.add(id));
@@ -192,11 +213,23 @@ export class AgentService implements OnApplicationBootstrap {
 
       for (const chunk of sentences(text)) yield { type: 'answer_delta', text: chunk };
       citations = await this.lookUpCitations(cited);
+      const turnId = await this.remember({
+        userId: options.userId,
+        sessionId,
+        question,
+        answer: text,
+        label,
+        outcome,
+        toolCalls,
+        cited: cited.filter((id) => !id.startsWith(NOTE_ID_PREFIX)),
+        latencyMs: Date.now() - started,
+      });
       yield {
         type: 'done',
         citations,
         graphPath: unionGraphPaths(graphPaths),
         timings: { ...timings, steps, totalMs: Date.now() - started },
+        turnId,
       };
     } catch (error) {
       outcome = 'error';
@@ -300,10 +333,36 @@ export class AgentService implements OnApplicationBootstrap {
     }
   }
 
-  /** Title, type and day of each cited artifact, in citation order (one query). */
+  /** The chat so far and approved notes on the question's subjects; no memory (or a failure) gives none. */
+  private async recall(sessionId: string, question: string): Promise<MemoryContext> {
+    if (!this.memory) return EMPTY_CONTEXT;
+    try {
+      return await this.memory.contextFor(sessionId, question);
+    } catch (error) {
+      this.logger.warn(`Memory not read, answering without it: ${String(error)}`);
+      return EMPTY_CONTEXT;
+    }
+  }
+
+  /** Stores the answered question as a Turn; returns its id, or null without memory or on a failure. */
+  private async remember(turn: Parameters<AgentMemory['recordTurn']>[0]): Promise<string | null> {
+    if (!this.memory) return null;
+    try {
+      return await this.memory.recordTurn(turn);
+    } catch (error) {
+      this.logger.warn(`Turn not stored: ${String(error)}`);
+      return null;
+    }
+  }
+
+  /** Title, type and day of each cited artifact or note, in citation order. */
   private async lookUpCitations(ids: string[]): Promise<Citation[]> {
     if (ids.length === 0) return [];
-    const rows = await this.graph.roQuery<Citation>(this.settings.graph, CITED_ARTIFACTS, { ids });
+    const noteIds = ids.filter((id) => id.startsWith(NOTE_ID_PREFIX));
+    const rows = [
+      ...(await this.graph.roQuery<Citation>(this.settings.graph, CITED_ARTIFACTS, { ids })),
+      ...(noteIds.length > 0 ? await this.graph.roQuery<Citation>(this.settings.graph, CITED_NOTES, { ids: noteIds }) : []),
+    ];
     const byId = new Map(rows.map((row) => [row.id, row]));
     return ids.map((id) => byId.get(id) ?? { id, title: null, type: null, day: null });
   }
@@ -335,6 +394,28 @@ export function summarize(envelope: ToolEnvelope): string {
 export function withHint(question: string, label: QuestionLabel): string {
   const hint = LABEL_HINTS[label];
   return `${question}\n\n(Question type: ${label}. ${hint ?? 'Use it to choose tools; answer the question as asked.'})`;
+}
+
+/** Earlier turns of the chat as the conversation the model sees: each question and the start of its answer. */
+export function priorMessages(turns: PriorTurn[]): AgentMessage[] {
+  return turns.flatMap((turn): AgentMessage[] => [
+    { role: 'user', text: turn.question },
+    { role: 'assistant', text: turn.summary, toolCalls: [] },
+  ]);
+}
+
+/**
+ * The question with the approved notes about its subjects, if any. Notes are newer
+ * than some documents (a change of owner, a correction), so the model may cite them
+ * and must give both when one contradicts the documents.
+ */
+export function withMemory(text: string, memory: MemoryContext): string {
+  if (memory.notes.length === 0) return text;
+  const notes = memory.notes.map((note) => `- [${note.id}] ${note.text}`).join('\n');
+  return (
+    `${text}\n\nApproved notes from colleagues about ${memory.subjects.join(', ')}. They can be newer than the documents: cite ` +
+    `them by id like an artifact, and if one contradicts the documents, give both.\n${notes}`
+  );
 }
 
 /** The fallback answer when nothing in the records supports one. */

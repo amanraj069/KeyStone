@@ -14,21 +14,42 @@
  * 0.5 x min(messages, 4) / 4: one line 0.125, four or more lines 0.5. Before,
  * every participant was an author (3.0), so people in many busy channels "knew"
  * every system discussed there and topped every suggestion.
+ * CHANGE: evidence is the 5 artifacts most *about* the system, not the first 5
+ * found. Each artifact's share of the score (contrib) is weighted by its MENTIONS
+ * weight, x4 when its title names the system, and divided by how many systems it
+ * mentions (a stack list naming 8 systems is about none of them). The score is
+ * the same sum as before, only grouped per artifact first. Needs
+ * SET_MENTIONED_SYSTEMS to have run.
  */
 export const K2_MATERIALISE_KNOWS = `
-  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System)
+  MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[m:MENTIONS]->(s:System)
   WHERE a.day IS NOT NULL AND a.day <= $asOfDay
-  WITH p, s,
+  WITH p, s, a, m,
        sum(CASE type(r)
              WHEN 'AUTHORED' THEN 3.0
              WHEN 'REVIEWED' THEN 2.0
              WHEN 'ASSIGNED' THEN 1.0
              ELSE 0.5 * (CASE WHEN coalesce(r.messages, 1) >= 4 THEN 4 ELSE coalesce(r.messages, 1) END) / 4.0
-           END * exp(-($asOfDay - a.day) / 30.0)) AS score,
-       max(a.day) AS lastDay,
-       collect(a.id)[0..5] AS evidence
+           END * exp(-($asOfDay - a.day) / 30.0)) AS contrib
+  WITH p, s, a, contrib,
+       contrib * coalesce(m.weight, 1.0)
+         * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+         / coalesce(a.mentionedSystems, 1) AS relevance
+  ORDER BY relevance DESC
+  WITH p, s, sum(contrib) AS score, max(a.day) AS lastDay, collect(a.id)[0..5] AS evidence
   MERGE (p)-[k:KNOWS]->(s)
   SET k.score = score, k.lastDay = lastDay, k.evidence = evidence
+`;
+
+/**
+ * Before K2: how many systems each artifact mentions (a.mentionedSystems), so K2
+ * and K3b can prefer artifacts that are about one system over ones that list many.
+ * Counted once here because counting per row inside K2 made it time out.
+ */
+export const SET_MENTIONED_SYSTEMS = `
+  MATCH (a:Artifact)-[:MENTIONS]->(s:System)
+  WITH a, count(s) AS n
+  SET a.mentionedSystems = n
 `;
 
 /**
@@ -103,20 +124,36 @@ export const EXPERTISE_COUNTS = `
 
 // ---------------------------------------------------------------- experts (apex)
 
-/** K3a. Who knows this system: the 5 strongest active experts, with evidence ids. Unchanged. */
+/**
+ * K3a. Who knows this system: the 5 strongest active experts, with evidence ids.
+ * CHANGE: also relativeScore, the score as a share of the top active expert's
+ * (1.0 = the strongest), because the raw score is an unbounded decayed sum that
+ * reads like a percentage ("Priya, 100.47") when quoted.
+ */
 export const K3A_SYSTEM_EXPERTS = `
-  MATCH (s:System {name:$system})<-[k:KNOWS]-(p:Person {active:true})
-  RETURN p.name AS person, k.score AS score, k.lastDay AS lastActive, k.evidence AS evidence
+  MATCH (s:System {name:$system})<-[k:KNOWS]-(:Person {active:true})
+  WITH s, max(k.score) AS top
+  MATCH (s)<-[k:KNOWS]-(p:Person {active:true})
+  RETURN p.name AS person, k.score AS score, round(100.0 * k.score / top) / 100.0 AS relativeScore,
+         k.lastDay AS lastActive, k.evidence AS evidence
   ORDER BY score DESC LIMIT 5
 `;
 
 /**
- * K3b. Evidence paths for one person and system: their 10 most recent artifacts about it.
+ * K3b. Evidence paths for one person and system: their 10 artifacts most about it.
  * CHANGE: includes PARTICIPATED (threads and meetings are evidence too).
+ * CHANGE: ranked like K2's evidence (mention weight, x4 when the title names the
+ * system, divided by the systems the artifact mentions), then newest first; it
+ * was newest first only, which surfaced pages that name the system in passing.
  */
 export const K3B_EVIDENCE_PATH = `
-  MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System {name:$system})
-  RETURN path ORDER BY a.day DESC LIMIT 10
+  MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)-[m:MENTIONS]->(s:System {name:$system})
+  RETURN path
+  ORDER BY coalesce(m.weight, 1.0)
+             * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+             / coalesce(a.mentionedSystems, 1) DESC,
+           a.day DESC
+  LIMIT 10
 `;
 
 /** Does a system exist? Lets the API answer 404 instead of an empty list. */
@@ -264,6 +301,18 @@ export const K8B_BRIDGES = `
 `;
 
 /**
+ * K8c. Central people: PageRank on the collaboration graph (apex_proj, where COLLAB
+ * is stored both ways). Not in the spec. Betweenness (K8b) finds who connects teams;
+ * PageRank finds who the most-connected colleagues work with: the centre of the network.
+ */
+export const K8C_CENTRAL_PEOPLE = `
+  CALL algo.pageRank('Person', 'COLLAB')
+  YIELD node, score
+  RETURN node.name AS person, score
+  ORDER BY score DESC LIMIT 10
+`;
+
+/**
  * Evidence for a bridge person (apex): up to 5 artifacts they share with people
  * from other departments, with who those people are. Not in the spec; added so
  * the bridges answer can cite sources.
@@ -373,4 +422,46 @@ export const SYSTEMS_WITH_DECISIONS = `
   WHERE s.core = true OR changes > 0
   RETURN s.name AS name, coalesce(s.core, false) AS core, decisions, changes
   ORDER BY changes DESC, decisions DESC, name
+`;
+
+// ---------------------------------------------------------------- how two things are connected
+// algo.SPpaths, FalkorDB's shortest-path procedure, in both directions: COLLAB is stored
+// once per pair and MENTIONS points from an artifact to a system, so a directed
+// shortestPath() would miss most chains. $relTypes says which edges a chain may use
+// (COLLAB only between two people; work edges and MENTIONS when a system is involved).
+
+/** The shortest chain (at most 5 steps) from person $from to system $to ({path}); no row when there is none. */
+export const SHORTEST_PERSON_TO_SYSTEM = `
+  MATCH (a:Person {name: $from}), (b:System {name: $to})
+  CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: $relTypes, relDirection: 'both', maxLen: 5, pathCount: 1})
+  YIELD path
+  RETURN path
+`;
+
+/** The shortest chain of collaborators (at most 5) from person $from to person $to ({path}). */
+export const SHORTEST_PERSON_TO_PERSON = `
+  MATCH (a:Person {name: $from}), (b:Person {name: $to})
+  CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: $relTypes, relDirection: 'both', maxLen: 5, pathCount: 1})
+  YIELD path
+  RETURN path
+`;
+
+/** The shortest chain (at most 5 steps) between systems $from and $to, through documents and people ({path}). */
+export const SHORTEST_SYSTEM_TO_SYSTEM = `
+  MATCH (a:System {name: $from}), (b:System {name: $to})
+  CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: $relTypes, relDirection: 'both', maxLen: 5, pathCount: 1})
+  YIELD path
+  RETURN path
+`;
+
+/**
+ * For each [x, y] in $pairs (consecutive people on a COLLAB chain), the two most recent
+ * artifacts they both worked on: the evidence for that hop ({a, b, shared}).
+ */
+export const SHARED_ARTIFACTS = `
+  UNWIND $pairs AS pair
+  MATCH (x:Person {name: pair[0]})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(art:Artifact)<-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]-(y:Person {name: pair[1]})
+  WITH pair, art ORDER BY art.day DESC
+  WITH pair, collect(DISTINCT art.id)[0..2] AS shared
+  RETURN pair[0] AS a, pair[1] AS b, shared
 `;

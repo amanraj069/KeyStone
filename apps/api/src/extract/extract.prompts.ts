@@ -114,3 +114,31 @@ export function staleLinksPrompt(input: StaleLinksPromptInput): string {
     ...input.claims.map((c) => `- ${c.pageId} (page written day ${c.pageDay ?? '?'}): ${c.claim}`),
   ].join('\n');
 }
+
+/**
+ * Live documents: the decisions of ONE new document against the earlier decisions
+ * about the same system. Focused on what is new, so a change of value, tool or
+ * practice is found even among hundreds of older decisions (the general links pass
+ * is deliberately conservative and sees everything at once).
+ */
+export const LIVE_LINKS_PROMPT_VERSION = 'links-live-v1';
+
+export const LIVE_LINKS_SYSTEM_PROMPT = [
+  'A new document records one or more decisions about a technical system. You also get the earlier decisions about it, oldest first.',
+  'Return {"supersedes": [{"newerId", "olderId"}], "asserts": []}: for each new decision, the earlier decisions it replaces,',
+  'reverses or changes on the same aspect (a new value or limit, a different tool or approach, a dropped practice).',
+  'Not when it only adds detail or concerns a different aspect. newerId must be a new decision, olderId an earlier one.',
+  'Use only the ids given. Use empty arrays when nothing applies.',
+].join('\n');
+
+export function liveLinksPrompt(input: { system: string; earlier: LinksPromptInput['decisions']; added: LinksPromptInput['decisions'] }): string {
+  return [
+    `System: ${input.system}`,
+    '',
+    'New decisions:',
+    ...input.added.map((d) => `- ${d.id} (day ${d.day ?? '?'}): ${d.summary}`),
+    '',
+    'Earlier decisions (oldest first):',
+    ...(input.earlier.length ? input.earlier.map((d) => `- ${d.id} (day ${d.day ?? '?'}): ${d.summary}`) : ['(none)']),
+  ].join('\n');
+}

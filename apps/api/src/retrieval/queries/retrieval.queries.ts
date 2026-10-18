@@ -4,6 +4,9 @@
 /** Removes all chunks before a rebuild, so re-indexing never duplicates them. */
 export const DELETE_CHUNKS = 'MATCH (c:Chunk) DETACH DELETE c';
 
+/** One artifact's chunks ($artifactId), before re-indexing it alone (a live document). */
+export const DELETE_CHUNKS_OF = 'MATCH (c:Chunk {artifactId: $artifactId}) DETACH DELETE c';
+
 /**
  * One Chunk per row, linked to its artifact ({id, artifactId, model, vector}).
  * `model` records which embedding model made the vector, so a query embedded

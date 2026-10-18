@@ -4,6 +4,9 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Env } from '../config/env.schema';
 import { APEX_GRAPH } from '../graph/graph.constants';
 import { LLM_SETTINGS, type LlmSettings } from '../llm/llm.types';
+import { AGENT_MEMORY } from '../memory/memory.constants';
+import { MemoryModule } from '../memory/memory.module';
+import { MemoryService } from '../memory/memory.service';
 import { AGENT_MODEL, AGENT_TOOLS, BUDGET_MS, FINAL_ANSWER_GRACE_MS, MAX_STEPS } from './agent.constants';
 import { AgentController } from './agent.controller';
 import { AGENT_SETTINGS, AgentService, type AgentSettings } from './agent.service';
@@ -14,6 +17,7 @@ import { OpenAiAgentModel } from './models/openai-agent.model';
 
 /** POST /agent/ask: the question-answering agent, an MCP client of this API's own /mcp (Stage 10). */
 @Module({
+  imports: [MemoryModule],
   controllers: [AgentController],
   providers: [
     {
@@ -36,6 +40,8 @@ import { OpenAiAgentModel } from './models/openai-agent.model';
       useFactory: (config: ConfigService<Env, true>) =>
         new McpToolClient(() => new StreamableHTTPClientTransport(new URL('/mcp', config.get('API_BASE_URL', { infer: true })))),
     },
+    // Remembers each chat and uses approved notes (Stage 16). Left out by the benchmark and the CLI.
+    { provide: AGENT_MEMORY, useExisting: MemoryService },
     AgentService,
   ],
 })

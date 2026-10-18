@@ -14,6 +14,7 @@ import { useApi } from "@/hooks/use-api";
 import { api } from "@/lib/api";
 import { ActionTable } from "./action-table";
 import { AuditFilters, type KindFilter, type StatusFilter } from "./audit-filters";
+import { NotesPanel } from "./notes-panel";
 
 const PAGE_SIZE = 20;
 
@@ -57,6 +58,7 @@ export function AuditRoom() {
             : "Keystone only proposes; nothing changes until someone approves."
         }
       />
+      <NotesPanel onOpenArtifact={setOpenArtifact} />
       <AuditFilters status={status} kind={kind} onStatus={changeStatus} onKind={changeKind} />
 
       {list.error ? (

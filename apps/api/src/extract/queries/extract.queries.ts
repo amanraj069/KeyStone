@@ -20,6 +20,14 @@ export const SELECT_CANDIDATES = `
   ORDER BY id
 `;
 
+/** One artifact as SELECT_CANDIDATES returns it (a live document, extracted on its own). */
+export const CANDIDATE_BY_ID = `
+  MATCH (a:Artifact {id: $id})
+  OPTIONAL MATCH (p:Person)-[:AUTHORED|PARTICIPATED]->(a)
+  WITH a, collect(DISTINCT p.name) AS authors
+  RETURN a.id AS id, [l IN labels(a) WHERE l <> 'Artifact'][0] AS label, a.title AS title, a.day AS day, authors
+`;
+
 /** Every artifact id (the vocabulary reads all bodies, not only the selected ones). */
 export const ALL_ARTIFACT_IDS = 'MATCH (a:Artifact) RETURN a.id AS id';
 
@@ -84,6 +92,21 @@ export const MERGE_CLAIMS = `
  */
 export const SYSTEMS_FOR_LINKING = `
   MATCH (s:System)
+  OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+  WITH s, d ORDER BY coalesce(d.day, 1000000), d.id
+  WITH s, collect(CASE WHEN d IS NULL THEN NULL ELSE {id: d.id, day: d.day, summary: d.summary} END) AS decisions
+  OPTIONAL MATCH (p:Page)-[:CLAIMS]->(c:Claim {system: s.name})
+  WITH s, decisions, p, c ORDER BY p.id, c.id
+  WITH s, decisions, collect(CASE WHEN c IS NULL THEN NULL ELSE {pageId: p.id, claim: c.claim} END) AS claims
+  WHERE size(decisions) >= 1 AND size(decisions) + size(claims) >= 2
+  RETURN s.name AS system, decisions, claims
+  ORDER BY system
+`;
+
+/** SYSTEMS_FOR_LINKING for the systems in $systems only (the second pass after one live document). */
+export const SYSTEMS_FOR_LINKING_IN = `
+  MATCH (s:System)
+  WHERE s.name IN $systems
   OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
   WITH s, d ORDER BY coalesce(d.day, 1000000), d.id
   WITH s, collect(CASE WHEN d IS NULL THEN NULL ELSE {id: d.id, day: d.day, summary: d.summary} END) AS decisions

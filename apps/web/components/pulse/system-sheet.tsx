@@ -68,7 +68,8 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="text-sm font-semibold">{expert.person}</span>
                         <span className="text-xs text-muted-foreground tabular-nums">
-                          score {expert.score.toFixed(1)} · last active day {expert.lastActive}
+                          {expert.relativeScore >= 1 ? "top expert" : `${Math.round(expert.relativeScore * 100)}% of the top`} · last
+                          active day {expert.lastActive}
                         </span>
                       </div>
                       <Meter className="mt-2" percent={(expert.score / maxScore) * 100} label={`${expert.person}'s score`} />

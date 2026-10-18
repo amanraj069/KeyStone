@@ -5,6 +5,7 @@ import { AnalyticsModule } from '../analytics/analytics.module';
 import type { Env } from '../config/env.schema';
 import { ProjectionModule } from '../projection/projection.module';
 import { ActionsExportService } from './actions-export.service';
+import { MemoryExportService } from './memory-export.service';
 import { AdminController } from './admin.controller';
 import { BACKUP_SETTINGS, type BackupSettings, EXPORT_STORE, GRAPH_LOCK_REDIS, MAINTENANCE_EVERY_MS } from './backup.constants';
 import { BackupService } from './backup.service';
@@ -51,9 +52,10 @@ import { MaintenanceJobs } from './maintenance.jobs';
     },
     GraphLock,
     ActionsExportService,
+    MemoryExportService,
     BackupService,
     MaintenanceJobs,
   ],
-  exports: [GraphLock, ActionsExportService, BackupService, MaintenanceJobs],
+  exports: [GraphLock, ActionsExportService, MemoryExportService, BackupService, MaintenanceJobs],
 })
 export class BackupModule {}

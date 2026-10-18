@@ -53,6 +53,9 @@ COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 COPY --from=build /repo/packages/shared/dist ./packages/shared/dist
 COPY --from=build /repo/apps/api/dist ./apps/api/dist
+# The published benchmark results (tracked by git): GET /bench/results serves them, so a new run
+# reaches the site with a commit and a deploy, no upload of the data folder.
+COPY apps/api/bench-results ./apps/api/bench-results
 # The data folder belongs to the non-root `node` user (uid 1000, like `ubuntu` on the EC2 host).
 RUN mkdir -p /repo/data && chown node:node /repo/data
 USER node

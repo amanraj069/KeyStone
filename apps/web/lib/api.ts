@@ -32,8 +32,19 @@ import {
   HandoverPlanSchema,
   type ExpertsResponse,
   ExpertsResponseSchema,
+  type FeedbackRequest,
+  type FeedbackResponse,
+  FeedbackResponseSchema,
+  type Note,
+  NoteSchema,
+  type NoteStatus,
   type HealthResponse,
   HealthResponseSchema,
+  type LiveArtifact,
+  LiveArtifactSchema,
+  type LiveEvent,
+  LiveEventSchema,
+  type LivePost,
   type IngestEvent,
   IngestEventSchema,
   type IngestJob,
@@ -48,6 +59,11 @@ import {
 } from "@keystone/shared";
 import { z } from "zod";
 import { env } from "./env";
+
+const QueryEntrySchema = z.object({ id: z.string(), title: z.string(), file: z.string(), cypher: z.string() });
+const QueryRegistrySchema = z.object({ tools: z.record(z.string(), z.array(z.string())), queries: z.record(z.string(), QueryEntrySchema) });
+export type QueryEntry = z.infer<typeof QueryEntrySchema>;
+export type QueryRegistry = z.infer<typeof QueryRegistrySchema>;
 
 /** Base URL of the Keystone API (NEXT_PUBLIC_API_BASE_URL, see apps/web/.env.example). */
 export const API_BASE_URL = env.apiBaseUrl;
@@ -126,6 +142,8 @@ export const api = {
 
   bridges: (graph: ViewGraph, signal?: AbortSignal): Promise<Bridge[]> =>
     getJson(`/analytics/bridges${query({ graph })}`, z.array(BridgeSchema), signal),
+  centralPeople: (graph: ViewGraph, signal?: AbortSignal): Promise<Bridge[]> =>
+    getJson(`/analytics/central-people${query({ graph })}`, z.array(BridgeSchema), signal),
 
   experts: (system: string, graph: ViewGraph, signal?: AbortSignal): Promise<ExpertsResponse> =>
     getJson(`/systems/${encodeURIComponent(system)}/experts${query({ graph })}`, ExpertsResponseSchema, signal),
@@ -167,6 +185,24 @@ export const api = {
     postJson(`/actions/${id}/approve`, {}, ApprovedActionSchema, adminHeaders(adminToken)),
   rejectAction: (id: string, reason: string, adminToken?: string): Promise<ActionRow> =>
     postJson(`/actions/${id}/reject`, { reason }, ActionRowSchema, adminHeaders(adminToken)),
+
+  // Memory: rate an answer (a thumbs-down with a correction proposes a Note); a person approves notes.
+  feedback: (turnId: string, body: FeedbackRequest): Promise<FeedbackResponse> =>
+    postJson(`/memory/turns/${turnId}/feedback`, { ...body, userId: body.userId ?? userId() }, FeedbackResponseSchema),
+  notes: (status: NoteStatus | null, signal?: AbortSignal): Promise<Note[]> =>
+    getJson(`/memory/notes${status ? query({ status }) : ""}`, z.array(NoteSchema), signal),
+  approveNote: (id: string, adminToken?: string): Promise<Note> =>
+    postJson(`/memory/notes/${id}/approve`, {}, NoteSchema, adminHeaders(adminToken)),
+  rejectNote: (id: string, reason: string, adminToken?: string): Promise<Note> =>
+    postJson(`/memory/notes/${id}/reject`, { reason }, NoteSchema, adminHeaders(adminToken)),
+
+  // Show Cypher: the queries behind every MCP tool, exactly as the API runs them.
+  queries: (signal?: AbortSignal): Promise<QueryRegistry> => getJson("/queries", QueryRegistrySchema, signal),
+
+  // Live documents: post one now and see the graph change; reset removes them all (admin token when set).
+  liveArtifacts: (signal?: AbortSignal): Promise<LiveArtifact[]> => getJson("/live/artifacts", z.array(LiveArtifactSchema), signal),
+  resetLive: (adminToken?: string): Promise<{ deleted: number; reactivated: number; departuresUndone: string[] }> =>
+    postJson("/live/reset", {}, z.object({ deleted: z.number(), reactivated: z.number(), departuresUndone: z.array(z.string()) }), adminHeaders(adminToken)),
 
   // Benchmark: the last `pnpm bench` run; null until it has run (the API answers 404).
   benchResults: (signal?: AbortSignal): Promise<BenchResults | null> =>
@@ -214,10 +250,11 @@ export async function streamPost<S extends z.ZodType>(
   schema: S,
   onEvent: (event: z.infer<S>) => void,
   signal?: AbortSignal,
+  headers: Record<string, string> = {},
 ): Promise<void> {
   const response = await request(path, {
     method: "POST",
-    headers: { "content-type": "application/json", accept: "text/event-stream" },
+    headers: { "content-type": "application/json", accept: "text/event-stream", ...headers },
     body: JSON.stringify(body),
     signal,
   });
@@ -245,9 +282,36 @@ function emitDataLine<S extends z.ZodType>(line: string, schema: S, onEvent: (ev
   if (parsed.success) onEvent(parsed.data);
 }
 
-/** POST /agent/ask: streams classified, tool_call, tool_result, answer_delta and done (or error). */
+/** POST /live/artifacts: streams each step (ingest, extract, embed, refresh, diff), then done with what changed (or error). */
+export function postLive(post: LivePost, onEvent: (event: LiveEvent) => void, adminToken?: string): Promise<void> {
+  return streamPost("/live/artifacts", post, LiveEventSchema, onEvent, undefined, adminHeaders(adminToken));
+}
+
+/** POST /agent/ask: streams classified, memory, tool_call, tool_result, answer_delta and done (or error). */
 export function askAgent(request: AskRequest, onEvent: (event: AgentEvent) => void, signal?: AbortSignal): Promise<void> {
-  return streamPost("/agent/ask", request, AgentEventSchema, onEvent, signal);
+  return streamPost("/agent/ask", { ...request, userId: request.userId ?? userId() }, AgentEventSchema, onEvent, signal);
+}
+
+const USER_ID_KEY = "keystone.userId";
+let memoryUserId: string | null = null;
+
+/**
+ * This browser's anonymous user id, sent with questions and feedback so the API
+ * keeps each person's chats apart. Kept in localStorage; when that is unavailable
+ * (private mode, blocked storage) it lasts for this page only.
+ */
+export function userId(): string {
+  if (memoryUserId) return memoryUserId;
+  try {
+    memoryUserId = window.localStorage.getItem(USER_ID_KEY);
+    if (!memoryUserId) {
+      memoryUserId = crypto.randomUUID();
+      window.localStorage.setItem(USER_ID_KEY, memoryUserId);
+    }
+  } catch {
+    memoryUserId = memoryUserId ?? crypto.randomUUID();
+  }
+  return memoryUserId;
 }
 
 function safeJson(text: string): unknown {

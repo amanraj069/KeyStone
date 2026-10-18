@@ -1,22 +1,44 @@
+"use client";
+
+import { useState } from "react";
 import type { Bridge } from "@keystone/shared";
 import { Meter } from "@/components/ui/meter";
+import { OptionPills } from "@/components/ui/option-pills";
 import { Panel, PanelHeading } from "@/components/ui/panel";
 import { ErrorState, SkeletonRows } from "@/components/ui/states";
 
 interface BridgesPanelProps {
   bridges: Bridge[] | null;
+  /** PageRank on the same network (K8c): null while loading or if it failed. */
+  central?: Bridge[] | null;
   error: string | null;
   onOpenArtifact: (id: string) => void;
 }
 
-/** The people who connect teams (betweenness on who works with whom), strongest first. */
-export function BridgesPanel({ bridges, error, onOpenArtifact }: BridgesPanelProps) {
+const VIEWS = [
+  { value: "bridges", label: "Connect teams" },
+  { value: "central", label: "Centre of the network" },
+] as const;
+
+/**
+ * Two readings of who works with whom: the people who connect teams (betweenness,
+ * K8b) and the people at the centre of the network (PageRank, K8c), strongest first.
+ */
+export function BridgesPanel({ bridges: bridgeRows, central, error, onOpenArtifact }: BridgesPanelProps) {
+  const [view, setView] = useState<(typeof VIEWS)[number]["value"]>("bridges");
+  const showCentral = view === "central" && central;
+  const bridges = showCentral ? central : bridgeRows;
   const max = bridges?.[0]?.score || 1;
   return (
     <Panel className="p-5 sm:p-8">
       <PanelHeading
-        title="Bridge people"
-        description="The people most often on the shortest path between colleagues who work together. If they leave, teams stop talking to each other."
+        title={showCentral ? "Central people" : "Bridge people"}
+        description={
+          showCentral
+            ? "PageRank on who works with whom: people whose colleagues are themselves well connected. Losing one slows everyone around them."
+            : "The people most often on the shortest path between colleagues who work together. If they leave, teams stop talking to each other."
+        }
+        action={central ? <OptionPills label="Measure" options={VIEWS} value={view} onChange={setView} /> : undefined}
       />
       <div className="mt-6">
         {error && !bridges ? (
@@ -36,7 +58,7 @@ export function BridgesPanel({ bridges, error, onOpenArtifact }: BridgesPanelPro
                     <p className="shrink-0 text-xs text-muted-foreground">{bridge.dept?.replace(/_/g, " ") ?? "No department"}</p>
                   </div>
                   <div className="mt-2 flex items-center gap-3">
-                    <Meter percent={(bridge.score / max) * 100} label={`${bridge.person}'s betweenness`} />
+                    <Meter percent={(bridge.score / max) * 100} label={`${bridge.person}'s ${showCentral ? "PageRank" : "betweenness"}`} />
                     {bridge.evidence[0] && (
                       <button type="button" className="code-id shrink-0 text-muted-foreground hover:text-foreground hover:underline" onClick={() => onOpenArtifact(bridge.evidence[0])} title={bridge.evidence[0]}>
                         source

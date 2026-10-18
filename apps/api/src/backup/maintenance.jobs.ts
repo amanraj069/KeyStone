@@ -1,9 +1,10 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { type Job, Queue, Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { closeWithin } from '../common/close-within';
 import { bullConnection } from '../ingest/redis-connection';
 import { ActionsExportService } from './actions-export.service';
+import { MemoryExportService } from './memory-export.service';
 import {
   BACKUP_JOB,
   BACKUP_SETTINGS,
@@ -30,6 +31,8 @@ export class MaintenanceJobs implements OnModuleDestroy {
     private readonly backup: BackupService,
     private readonly actionsExport: ActionsExportService,
     @Inject(BACKUP_SETTINGS) private readonly settings: BackupSettings,
+    /** The agent's memory is exported with the actions: both are made by people (Stage 16). */
+    @Optional() private readonly memoryExport?: MemoryExportService,
   ) {}
 
   async start(): Promise<void> {
@@ -58,7 +61,10 @@ export class MaintenanceJobs implements OnModuleDestroy {
   /** Runs one job; the result (done or skipped, with the reason) is kept in Redis by BullMQ. */
   async process(job: Job): Promise<object> {
     if (job.name === BACKUP_JOB) return this.backup.backupNow();
-    if (job.name === EXPORT_ACTIONS_JOB) return this.actionsExport.exportNow();
+    if (job.name === EXPORT_ACTIONS_JOB) {
+      const actions = await this.actionsExport.exportNow();
+      return this.memoryExport ? { ...actions, memory: await this.memoryExport.exportNow() } : actions;
+    }
     throw new Error(`Unknown maintenance job "${job.name}"`);
   }
 

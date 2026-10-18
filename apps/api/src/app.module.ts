@@ -13,6 +13,8 @@ import { ArtifactsModule } from './artifacts/artifacts.module';
 import { AgentModule } from './agent/agent.module';
 import { BenchModule } from './bench/bench.module';
 import { McpModule } from './mcp/mcp.module';
+import { LiveModule } from './live/live.module';
+import { MemoryModule } from './memory/memory.module';
 import { WhatIfModule } from './whatif/whatif.module';
 import { RetrievalModule } from './retrieval/retrieval.module';
 import { RedisModule } from './redis/redis.module';
@@ -20,7 +22,7 @@ import { BackupModule } from './backup/backup.module';
 import { SeedModule } from './seed/seed.module';
 
 @Module({
-  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule, AgentModule, ActionsModule, ArtifactsModule, BenchModule, BackupModule, SeedModule],
+  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule, AgentModule, MemoryModule, LiveModule, ActionsModule, ArtifactsModule, BenchModule, BackupModule, SeedModule],
   providers: [{ provide: APP_FILTER, useClass: ApiExceptionFilter }],
 })
 export class AppModule {}

@@ -105,3 +105,77 @@ export const REAPPLY_APPROVED_REASSIGNMENT = `
   SET n.day = act.approvedDay, n.via = act.id, n.status = coalesce(n.status, status)
   RETURN act.id AS id, size(olds) AS moved
 `;
+
+// ---------------------------------------------------------------- memory (Stage 16)
+// The agent's memory (User, Session, Turn, Feedback, Note) is made by people, like
+// Actions, so it cannot be rebuilt from artifacts.jsonl: it is exported to
+// exports/memory-latest.jsonl and put back by the seed and by a restore.
+
+/**
+ * Every memory node, page by page, with its outgoing edges ({label, id, props, edges}).
+ * Each edge names its end by kind and key: memory nodes and artifacts by id, systems
+ * and people by name, so they can be linked again in a rebuilt graph.
+ */
+export const EXPORT_MEMORY = `
+  MATCH (x)
+  WHERE x:User OR x:Session OR x:Turn OR x:Feedback OR x:Note
+  WITH x ORDER BY x.id SKIP $skip LIMIT $limit
+  OPTIONAL MATCH (x)-[r]->(y)
+  WITH x, collect(CASE WHEN y IS NULL THEN NULL ELSE {
+         type: type(r),
+         toKind: CASE WHEN y:Artifact THEN 'Artifact' WHEN y:System THEN 'System' WHEN y:Person THEN 'Person' ELSE labels(y)[0] END,
+         to: CASE WHEN y:System OR y:Person THEN y.name ELSE y.id END
+       } END) AS edges
+  RETURN CASE WHEN x:User THEN 'User' WHEN x:Session THEN 'Session' WHEN x:Turn THEN 'Turn' WHEN x:Feedback THEN 'Feedback' ELSE 'Note' END AS label,
+         x.id AS id, properties(x) AS props, edges
+`;
+
+/**
+ * Restores memory nodes of one label ($rows of {id, props}) with MERGE, so running it
+ * twice adds nothing. A note already approved or rejected keeps its decision: an
+ * older export can never send it back to "proposed".
+ */
+const restoreMemoryNodes = (label: string) => `
+  UNWIND $rows AS row
+  MERGE (x:${label} {id: row.id})
+  WITH x, row
+  WHERE NOT (coalesce(x.status, '') IN ['approved', 'rejected'] AND coalesce(row.props.status, '') = 'proposed')
+  SET x += row.props
+`;
+
+export const RESTORE_MEMORY_NODES = {
+  User: restoreMemoryNodes('User'),
+  Session: restoreMemoryNodes('Session'),
+  Turn: restoreMemoryNodes('Turn'),
+  Feedback: restoreMemoryNodes('Feedback'),
+  Note: restoreMemoryNodes('Note'),
+} as const;
+
+/**
+ * Re-creates one kind of memory edge ($rows of {from, to}) with MERGE. Ends that the
+ * rebuilt graph no longer has (an artifact or system that is gone) are skipped.
+ * Labels and types come only from the fixed table below, never from input.
+ */
+const restoreMemoryEdge = (from: string, type: string, to: string, toKey: 'id' | 'name') => `
+  UNWIND $rows AS row
+  MATCH (a:${from} {id: row.from})
+  MATCH (b:${to} {${toKey}: row.to})
+  MERGE (a)-[:${type}]->(b)
+`;
+
+/** Every memory edge, keyed "<from label>|<type>|<to kind>" as EXPORT_MEMORY names them. */
+export const RESTORE_MEMORY_EDGES: Record<string, string> = {
+  'User|STARTED|Session': restoreMemoryEdge('User', 'STARTED', 'Session', 'id'),
+  'User|GAVE|Feedback': restoreMemoryEdge('User', 'GAVE', 'Feedback', 'id'),
+  'User|WROTE|Note': restoreMemoryEdge('User', 'WROTE', 'Note', 'id'),
+  'Session|HAS_TURN|Turn': restoreMemoryEdge('Session', 'HAS_TURN', 'Turn', 'id'),
+  'Turn|NEXT|Turn': restoreMemoryEdge('Turn', 'NEXT', 'Turn', 'id'),
+  'Turn|CITED|Artifact': restoreMemoryEdge('Turn', 'CITED', 'Artifact', 'id'),
+  'Turn|CONCERNS|System': restoreMemoryEdge('Turn', 'CONCERNS', 'System', 'name'),
+  'Turn|CONCERNS|Person': restoreMemoryEdge('Turn', 'CONCERNS', 'Person', 'name'),
+  'Feedback|ON|Turn': restoreMemoryEdge('Feedback', 'ON', 'Turn', 'id'),
+  'Note|CORRECTS|Turn': restoreMemoryEdge('Note', 'CORRECTS', 'Turn', 'id'),
+  'Note|BASED_ON|Artifact': restoreMemoryEdge('Note', 'BASED_ON', 'Artifact', 'id'),
+  'Note|CONCERNS|System': restoreMemoryEdge('Note', 'CONCERNS', 'System', 'name'),
+  'Note|CONCERNS|Person': restoreMemoryEdge('Note', 'CONCERNS', 'Person', 'name'),
+};

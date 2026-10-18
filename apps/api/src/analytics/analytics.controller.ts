@@ -32,6 +32,12 @@ export class AnalyticsController {
     return this.analytics.bridges(projectionGraphFor(graph), graph);
   }
 
+  @Get('central-people')
+  centralPeople(@Query() query: unknown): Promise<Bridge[]> {
+    const { graph } = DashboardQuerySchema.parse(query);
+    return this.analytics.centralPeople(projectionGraphFor(graph), graph);
+  }
+
   @Get('stale-docs')
   staleDocs(): Promise<StaleDoc[]> {
     return this.analytics.staleDocs();

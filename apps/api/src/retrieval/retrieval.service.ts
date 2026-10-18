@@ -142,6 +142,25 @@ export class RetrievalService {
     return summary;
   }
 
+  /** Chunks, embeds (cached) and writes one artifact's chunks, replacing any it had (a live document). */
+  async indexOne(graphName: string, artifactId: string, title: string): Promise<{ chunks: number; embedCalls: number }> {
+    await this.ensureVectorIndex(graphName);
+    const body = (await this.textStore.get('artifacts', artifactId)) ?? '';
+    const texts = chunkText(title, body, { maxChunks: DEFAULT_MAX_CHUNKS_PER_ARTIFACT });
+    const rows = texts.map((text, n) => ({ id: chunkId(artifactId, n), artifactId, text }));
+    await Promise.all(rows.map((row) => this.textStore.put('chunks', row.id, row.text)));
+    const before = this.llm.usage();
+    const vectors = rows.length > 0 ? await this.llm.embed(rows.map((row) => row.text)) : [];
+    await this.graph.query(graphName, Q.DELETE_CHUNKS_OF, { artifactId });
+    await this.graph.batchWrite(
+      graphName,
+      Q.CREATE_CHUNKS,
+      rows.map((row, i) => ({ id: row.id, artifactId, model: this.settings.embedModel, vector: vectors[i] })),
+      CHUNK_WRITE_BATCH,
+    );
+    return { chunks: rows.length, embedCalls: this.llm.usage().embedCalls - before.embedCalls };
+  }
+
   /**
    * Steps 1-2 of indexAll, with no writes and no embedding calls: every artifact's
    * chunks, capped per artifact (the cap is lowered if the vectors would pass

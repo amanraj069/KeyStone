@@ -59,17 +59,26 @@ reviewed, owned or discussed about it, with older work counting less.
 Graph: `apex` (and replay graphs, after each replayed day).
 
 ```cypher
-MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System)
+// Before: count how many systems each artifact mentions (SET_MENTIONED_SYSTEMS)
+MATCH (a:Artifact)-[:MENTIONS]->(s:System)
+WITH a, count(s) AS n
+SET a.mentionedSystems = n
+
+MATCH (p:Person)-[r:AUTHORED|ASSIGNED|REVIEWED|PARTICIPATED]->(a:Artifact)-[m:MENTIONS]->(s:System)
 WHERE a.day IS NOT NULL AND a.day <= $asOfDay
-WITH p, s,
+WITH p, s, a, m,
      sum(CASE type(r)
            WHEN 'AUTHORED' THEN 3.0
            WHEN 'REVIEWED' THEN 2.0
            WHEN 'ASSIGNED' THEN 1.0
            ELSE 0.5 * (CASE WHEN coalesce(r.messages, 1) >= 4 THEN 4 ELSE coalesce(r.messages, 1) END) / 4.0
-         END * exp(-($asOfDay - a.day) / 30.0)) AS score,
-     max(a.day) AS lastDay,
-     collect(a.id)[0..5] AS evidence
+         END * exp(-($asOfDay - a.day) / 30.0)) AS contrib
+WITH p, s, a, contrib,
+     contrib * coalesce(m.weight, 1.0)
+       * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+       / coalesce(a.mentionedSystems, 1) AS relevance
+ORDER BY relevance DESC
+WITH p, s, sum(contrib) AS score, max(a.day) AS lastDay, collect(a.id)[0..5] AS evidence
 MERGE (p)-[k:KNOWS]->(s)
 SET k.score = score, k.lastDay = lastDay, k.evidence = evidence
 ```
@@ -77,6 +86,10 @@ SET k.score = score, k.lastDay = lastDay, k.evidence = evidence
 Changes:
 - PARTICIPATED counts 0.5 x min(messages, 4) / 4: taking part in a conversation is weaker evidence than writing a document.
 - All KNOWS edges are deleted before the query and edges below 0.05 after it, so a refresh "as of" an earlier day leaves nothing newer behind.
+- Evidence is the five artifacts most *about* the system, not the first five found: each artifact's share of the score,
+  times its MENTIONS weight, x4 when its title names the system, divided by how many systems it mentions (a stack list
+  naming eight systems is about none of them). The score is the same sum, grouped per artifact first (on apex: 10,801
+  KNOWS, total score unchanged). `mentionedSystems` is counted once beforehand; counting it per row timed out.
 
 ## K3a. Who knows this system
 
@@ -84,24 +97,37 @@ Purpose: the five strongest active experts on a system, with evidence ids.
 Graph: `apex`.
 
 ```cypher
-MATCH (s:System {name:$system})<-[k:KNOWS]-(p:Person {active:true})
-RETURN p.name AS person, k.score AS score, k.lastDay AS lastActive, k.evidence AS evidence
+MATCH (s:System {name:$system})<-[k:KNOWS]-(:Person {active:true})
+WITH s, max(k.score) AS top
+MATCH (s)<-[k:KNOWS]-(p:Person {active:true})
+RETURN p.name AS person, k.score AS score, round(100.0 * k.score / top) / 100.0 AS relativeScore,
+       k.lastDay AS lastActive, k.evidence AS evidence
 ORDER BY score DESC LIMIT 5
 ```
 
+Changes:
+- `relativeScore`: the score as a share of the top active expert (1 = the strongest). The raw score is an unbounded
+  decayed sum; the `who_knows` MCP tool gives the agent only `relativeScore`, so answers never quote "100.47".
+
 ## K3b. Evidence path for one person and system
 
-Purpose: the person's ten most recent artifacts about the system, as graph paths
+Purpose: the person's ten artifacts most about the system, as graph paths
 for the UI canvas.
 Graph: `apex`.
 
 ```cypher
-MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)-[:MENTIONS]->(s:System {name:$system})
-RETURN path ORDER BY a.day DESC LIMIT 10
+MATCH path = (p:Person {name:$person})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(a:Artifact)-[m:MENTIONS]->(s:System {name:$system})
+RETURN path
+ORDER BY coalesce(m.weight, 1.0)
+           * (CASE WHEN toLower(coalesce(a.title, '')) CONTAINS toLower(s.name) THEN 4.0 ELSE 1.0 END)
+           / coalesce(a.mentionedSystems, 1) DESC,
+         a.day DESC
+LIMIT 10
 ```
 
 Changes:
 - Includes PARTICIPATED: threads and meetings are evidence too.
+- Ranked like K2's evidence, then newest first (it was newest first only, which surfaced pages naming the system in passing).
 
 ## K4. Bus factor
 
@@ -228,6 +254,18 @@ Changes:
 
 Each bridge person is returned with up to five artifacts they share with other departments, as evidence.
 
+## K8c. Central people (not in the spec)
+
+Purpose: who sits at the centre of the collaboration network. Betweenness (K8b) finds the people who connect teams;
+PageRank finds the people whose colleagues are themselves well connected. Graph: `apex_proj` (COLLAB both ways).
+
+```cypher
+CALL algo.pageRank('Person', 'COLLAB')
+YIELD node, score
+RETURN node.name AS person, score
+ORDER BY score DESC LIMIT 10
+```
+
 ## K9. What-if knowledge islands
 
 Purpose: systems that nobody connects to any more once a person is removed.
@@ -303,3 +341,164 @@ Changes:
 - Optional "as of day" filter, applied after the vector call (vector queries take no property filters).
 - An artifact does not list itself as related through a two-hop loop.
 - Authors include PARTICIPATED, the people in a thread or meeting.
+
+## M. Agent memory (Stage 16)
+
+Code: `apps/api/src/memory/queries/memory.queries.ts`. Graph: `apex`. Memory nodes (`User`, `Session`,
+`Turn`, `Feedback`, `Note`) are written by people using the app, never from `artifacts.jsonl` or the
+answer key, and are exported and restored like Actions (`EXPORT_MEMORY`, `RESTORE_MEMORY_*` in
+`apps/api/src/backup/queries/backup.queries.ts`). Their edges to systems and people are `CONCERNS`,
+kept apart from the Decision `ABOUT` edges.
+
+### M1. Store an answered question
+
+```cypher
+MERGE (u:User {id: $userId}) ON CREATE SET u.firstAt = $at
+MERGE (s:Session {id: $sessionId}) ON CREATE SET s.startedAt = $at, s.title = $title, s.turns = 0
+MERGE (u)-[:STARTED]->(s)
+SET s.lastAt = $at, s.turns = s.turns + 1
+CREATE (t:Turn {id: $id, n: s.turns, question: $question, summary: $summary, label: $label, outcome: $outcome,
+                tools: $tools, at: $at, day: $day, latencyMs: $latencyMs}),
+       (s)-[:HAS_TURN]->(t)
+WITH s, t
+OPTIONAL MATCH (s)-[:HAS_TURN]->(prev:Turn) WHERE prev.n = t.n - 1
+FOREACH (x IN CASE WHEN prev IS NULL THEN [] ELSE [prev] END | CREATE (x)-[:NEXT]->(t))
+RETURN t.id AS id, t.n AS n
+```
+
+Then `(t)-[:CITED]->(:Artifact)` for its valid citations and `(t)-[:CONCERNS]->(:System|:Person)` for the
+subjects named in the question or in the tool arguments (`who_knows {system}`, `simulate_departure {person}`).
+
+### M2. The chat so far (before a follow-up)
+
+```cypher
+MATCH (:Session {id: $sessionId})-[:HAS_TURN]->(t:Turn)
+WITH t ORDER BY t.n DESC LIMIT $limit
+OPTIONAL MATCH (t)-[:CITED]->(a:Artifact)
+WITH t, collect(DISTINCT a.id) AS cited
+OPTIONAL MATCH (t)-[:CONCERNS]->(x)
+RETURN t.id AS id, t.n AS n, t.question AS question, t.summary AS summary, cited, collect(DISTINCT x.name) AS subjects
+ORDER BY n
+```
+
+### M3. Who and what a text names
+
+`$terms` are the text's lower-cased words and runs of up to four words, matched exactly (so "Tom" never
+matches "tomorrow"), against core system names and aliases and against people:
+
+```cypher
+MATCH (s:System)
+WHERE s.core = true
+  AND (toLower(s.name) IN $terms OR any(alias IN coalesce(s.aliases, []) WHERE toLower(alias) IN $terms))
+RETURN s.name AS name
+```
+
+### M4. Approved notes about the question's subjects
+
+```cypher
+MATCH (n:Note {status: 'approved'})-[:CONCERNS]->(x)
+WHERE x.name IN $names AND (x:System OR x:Person)
+WITH DISTINCT n
+RETURN n.id AS id, n.text AS text, n.day AS day
+ORDER BY n.createdAt DESC LIMIT $limit
+```
+
+### M5. A correction becomes a proposed note
+
+```cypher
+MATCH (t:Turn {id: $turnId})
+MERGE (u:User {id: $userId}) ON CREATE SET u.firstAt = $at
+CREATE (n:Note {id: $id, text: $text, kind: 'correction', status: 'proposed', day: t.day, createdAt: $at}),
+       (n)-[:CORRECTS]->(t), (u)-[:WROTE]->(n)
+WITH n, t
+OPTIONAL MATCH (t)-[:CONCERNS]->(x)
+WITH n, t, collect(x) AS subjects
+FOREACH (y IN subjects | MERGE (n)-[:CONCERNS]->(y))
+WITH n, t
+OPTIONAL MATCH (t)-[:CITED]->(a:Artifact)
+WITH n, collect(a) AS cited
+FOREACH (y IN cited | MERGE (n)-[:BASED_ON]->(y))
+RETURN n.id AS id
+```
+
+A person approves it with `SET n.status = 'approved'` (only while it is `proposed`); there is no MCP tool for that.
+
+### M6. What Keystone remembers about a subject (`recall_memory`)
+
+```cypher
+UNWIND $names AS name
+OPTIONAL MATCH (s:System {name: name})
+OPTIONAL MATCH (p:Person {name: name})
+WITH name, s, coalesce(s, p) AS x
+WHERE x IS NOT NULL
+OPTIONAL MATCH (n:Note {status: 'approved'})-[:CONCERNS]->(x)
+WITH s, x, collect(DISTINCT CASE WHEN n IS NULL THEN NULL ELSE {id: n.id, text: n.text, day: n.day} END) AS notes
+OPTIONAL MATCH (t:Turn)-[:CONCERNS]->(x)
+WITH s, x, notes, t ORDER BY t.at DESC
+WITH s, x, notes, count(t) AS timesAsked,
+     collect(CASE WHEN t IS NULL THEN NULL ELSE {question: t.question, summary: t.summary, at: t.at} END) AS turns
+RETURN x.name AS subject, CASE WHEN s IS NULL THEN 'person' ELSE 'system' END AS kind, timesAsked, notes,
+       turns[0..$maxQuestions] AS pastQuestions
+```
+
+## L. Live documents (Stage 17)
+
+Code: `apps/api/src/live/queries/live.queries.ts`, `CANDIDATE_BY_ID` and `SYSTEMS_FOR_LINKING_IN` in
+`apps/api/src/extract/queries/extract.queries.ts`. A posted document goes through the corpus queries (ingest MERGEs,
+`MERGE_MENTIONS`, `MERGE_DECISIONS`, `MERGE_SUPERSEDES`), so after it K10b finds the pages it made stale:
+
+```cypher
+// The earlier decisions about the systems a new document decides on (the live-links prompt shortlists them)
+MATCH (s:System) WHERE s.name IN $systems
+OPTIONAL MATCH (d:Decision)-[:ABOUT]->(s)
+WITH s, d ORDER BY coalesce(d.day, 1000000), d.id
+WITH s, collect(CASE WHEN d IS NULL THEN NULL ELSE {id: d.id, day: d.day, summary: d.summary} END) AS decisions
+...
+```
+
+Reset removes every live document with what it added, and puts back what it changed:
+
+```cypher
+// People whose departure only a live document announced
+MATCH (p:Person)-[:DEPARTURE_ANNOUNCED_IN]->(:Artifact {live: true})
+WITH DISTINCT p
+OPTIONAL MATCH (p)-[d:DEPARTURE_ANNOUNCED_IN]->(other:Artifact) WHERE other.live IS NULL
+WITH p, min(d.departedDay) AS corpusDay
+SET p.departedDay = corpusDay
+
+// The documents, their chunks and the decisions made in them
+MATCH (a:Artifact {live: true})
+OPTIONAL MATCH (c:Chunk)-[:PART_OF]->(a)
+OPTIONAL MATCH (d:Decision)-[:DECIDED_IN]->(a)
+WITH collect(DISTINCT a) + collect(DISTINCT c) + collect(DISTINCT d) AS doomed
+UNWIND doomed AS x
+DETACH DELETE x
+
+// Decisions only they had replaced are active again
+MATCH (d:Decision {status: 'superseded'}) WHERE NOT ()-[:SUPERSEDES]->(d)
+SET d.status = 'active'
+```
+
+## P. How two things are connected (`how_connected`)
+
+Code: `SHORTEST_PERSON_TO_SYSTEM`, `SHORTEST_PERSON_TO_PERSON`, `SHORTEST_SYSTEM_TO_SYSTEM`, `SHARED_ARTIFACTS` in
+`apps/api/src/analytics/queries/analytics.queries.ts`. FalkorDB's `shortestPath()` is directed only, and `COLLAB` is stored
+once per pair, so the procedure `algo.SPpaths` is used in both directions. Between two people a chain may use `COLLAB` only;
+with a system it may use work edges and `MENTIONS` too.
+
+```cypher
+MATCH (a:Person {name: $from}), (b:System {name: $to})
+CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: $relTypes, relDirection: 'both', maxLen: 5, pathCount: 1})
+YIELD path
+RETURN path
+```
+
+Each `COLLAB` step then gets its evidence: the two most recent artifacts both people worked on.
+
+```cypher
+UNWIND $pairs AS pair
+MATCH (x:Person {name: pair[0]})-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]->(art:Artifact)<-[:AUTHORED|REVIEWED|ASSIGNED|PARTICIPATED]-(y:Person {name: pair[1]})
+WITH pair, art ORDER BY art.day DESC
+WITH pair, collect(DISTINCT art.id)[0..2] AS shared
+RETURN pair[0] AS a, pair[1] AS b, shared
+```

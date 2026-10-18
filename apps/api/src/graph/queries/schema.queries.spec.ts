@@ -11,7 +11,7 @@ describe('schema queries', () => {
     expect(() => chunkEmbeddingVectorIndex(dim)).toThrow(/EMBED_DIM/);
   });
 
-  it('has 7 statements', () => {
-    expect(schemaStatements(768)).toHaveLength(7);
+  it('has 11 statements', () => {
+    expect(schemaStatements(768)).toHaveLength(11);
   });
 });

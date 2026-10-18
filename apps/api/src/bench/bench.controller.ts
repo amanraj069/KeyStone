@@ -4,7 +4,7 @@ import type { BenchResults } from '@keystone/shared';
 import type { Env } from '../config/env.schema';
 import { readResults } from './results-store';
 
-/** GET /bench/results: the last `pnpm bench` run (data/bench/results.json). Running it stays a CLI job. */
+/** GET /bench/results: the published run (apps/api/bench-results/results.json, tracked by git), else data/bench/results.json. Running it stays a CLI job. */
 @Controller('bench')
 export class BenchController {
   constructor(private readonly config: ConfigService<Env, true>) {}

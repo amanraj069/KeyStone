@@ -58,7 +58,10 @@ export type GraphView = z.infer<typeof GraphViewSchema>;
 
 export const ExpertSchema = z.object({
   person: z.string(),
+  /** Recency-weighted activity sum (K2): unbounded, only meaningful next to other scores. */
   score: z.number(),
+  /** score / the top active expert's score on the same system: 1 is the strongest. */
+  relativeScore: z.number(),
   lastActive: z.number(),
   evidence: z.array(z.string()),
 });

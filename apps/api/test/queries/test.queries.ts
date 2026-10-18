@@ -275,3 +275,44 @@ export const SEEN_EDGES = `
   RETURN p.name AS person, type(r) AS rel, a.id AS artifact, r.day AS day
   ORDER BY artifact, person
 `;
+
+/**
+ * Ada's newest TitanDB work: a page that only lists TitanDB among four systems and
+ * does not name it in its title (the "stack list" case K2's evidence ranking demotes).
+ */
+export const ADD_STACK_LIST_PAGE = `
+  MATCH (ada:Person {name: 'Ada'}), (titan:System {name: 'TitanDB'}), (pay:System {name: 'PaymentsAPI'}),
+        (legacy:System {name: 'LegacyAuth'}), (mobile:System {name: 'MobileApp'})
+  CREATE (pg:Artifact:Page {id: 'P-STACK', type: 'confluence', title: 'Q1 infrastructure budget', day: 12, isIncident: false, bodyLength: 900}),
+         (ada)-[:AUTHORED {day: 12}]->(pg),
+         (pg)-[:MENTIONS {weight: 1}]->(titan), (pg)-[:MENTIONS {weight: 1}]->(pay),
+         (pg)-[:MENTIONS {weight: 1}]->(legacy), (pg)-[:MENTIONS {weight: 1}]->(mobile)
+`;
+
+/** One KNOWS edge's score and evidence ids ({score, evidence}). */
+export const KNOWS_EVIDENCE = `
+  MATCH (:Person {name: $person})-[k:KNOWS]->(:System {name: $system})
+  RETURN k.score AS score, k.evidence AS evidence
+`;
+
+/** How many systems each listed artifact mentions, as SET_MENTIONED_SYSTEMS stored it ({id, n}). */
+export const MENTIONED_SYSTEMS = `
+  MATCH (a:Artifact) WHERE a.id IN $ids
+  RETURN a.id AS id, a.mentionedSystems AS n ORDER BY id
+`;
+
+/** The turn that follows turn $id in its chat ({id}). */
+export const NEXT_TURN = 'MATCH (:Turn {id: $id})-[:NEXT]->(t:Turn) RETURN t.id AS id';
+
+/** How many memory nodes there are and how many edges leave them ({nodes, edges}). */
+export const MEMORY_COUNTS = `
+  MATCH (x) WHERE x:User OR x:Session OR x:Turn OR x:Feedback OR x:Note
+  OPTIONAL MATCH (x)-[r]->()
+  RETURN count(DISTINCT x) AS nodes, count(r) AS edges
+`;
+
+/** Deletes every memory node and its edges (a graph rebuilt from files has none). */
+export const DELETE_MEMORY = `
+  MATCH (x) WHERE x:User OR x:Session OR x:Turn OR x:Feedback OR x:Note
+  DETACH DELETE x
+`;
