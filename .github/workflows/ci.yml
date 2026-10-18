@@ -1,0 +1,46 @@
+# Lint, type-check and unit-test every push and pull request. No Docker or API keys needed:
+# the unit tests never reach FalkorDB or an LLM (integration tests run locally: pnpm --filter @keystone/api test:int).
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          # Caching needs pnpm on the PATH before it is installed below (see deploy.yml).
+          package-manager-cache: false
+
+      # The exact pnpm the lockfile was made with (package.json "packageManager").
+      - name: Install dependencies
+        run: |
+          npm install --global pnpm@10.33.0
+          pnpm install --frozen-lockfile
+
+      # The API and web app import @keystone/shared from its build output.
+      - name: Build shared schemas
+        run: pnpm --filter @keystone/shared build
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type-check
+        run: |
+          pnpm --filter @keystone/api exec tsc --noEmit -p tsconfig.json
+          pnpm --filter @keystone/web exec tsc --noEmit
+
+      - name: Unit tests
+        run: pnpm test
