@@ -21,7 +21,7 @@ export function ArtifactSheet({ artifactId, onClose }: ArtifactSheetProps) {
       <SheetContent side="right" className="w-full gap-0 sm:max-w-md">
         <SheetHeader className="gap-2 border-b px-6 pt-6 pb-5">
           <p className="code-id text-muted-foreground">{artifactId}</p>
-          <SheetTitle className="text-xl leading-snug font-extrabold tracking-tight">
+          <SheetTitle className="text-xl leading-snug font-semibold tracking-tight">
             {shown?.title ?? (loading ? <Skeleton className="h-6 w-3/4" /> : "Untitled")}
           </SheetTitle>
           <SheetDescription asChild>

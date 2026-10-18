@@ -1,4 +1,4 @@
-import { Activity, ChartColumn, GitFork, type LucideIcon, Milestone, MessagesSquare, ScrollText } from "lucide-react";
+import { Activity, ChartColumn, GitFork, type LucideIcon, Milestone, MessagesSquare, ScrollText, Terminal } from "lucide-react";
 
 export interface NavItem {
   href: string;
@@ -12,7 +12,7 @@ export interface NavGroup {
 }
 
 /** The rooms, grouped by what you do there, in the order they read in the sidebar. */
-export const NAV_GROUPS: readonly NavGroup[] = [
+const PRODUCT_GROUPS: readonly NavGroup[] = [
   {
     label: "Insights",
     items: [
@@ -36,14 +36,24 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   },
 ];
 
-export const NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
+/**
+ * The ops console (service health, full/replay ingest with a destructive full reset):
+ * local development only. A production build (e.g. the deployed demo) never links to
+ * it, so a visitor on the live link cannot find or trigger it from the nav; the /ingest
+ * page itself also 404s in production (see app/ingest/page.tsx).
+ */
+const DEVELOPER_GROUP: NavGroup = {
+  label: "Developer",
+  items: [{ href: "/ingest", label: "Console", icon: Terminal }],
+};
 
-/** Pages reachable from elsewhere (the top bar), named in the breadcrumb. */
-export const OTHER_PAGES: Record<string, string> = { "/ingest": "Developer console" };
+export const NAV_GROUPS: readonly NavGroup[] = process.env.NODE_ENV === "production" ? PRODUCT_GROUPS : [...PRODUCT_GROUPS, DEVELOPER_GROUP];
+
+export const NAV_ITEMS: readonly NavItem[] = NAV_GROUPS.flatMap((group) => group.items);
 
 /** "/" matches only itself; other items also match their sub-pages. */
 export const isActive = (href: string, pathname: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
 /** The page's name for the breadcrumb. */
 export const pageName = (pathname: string) =>
-  NAV_ITEMS.find((item) => isActive(item.href, pathname))?.label ?? OTHER_PAGES[pathname] ?? "Keystone";
+  NAV_ITEMS.find((item) => isActive(item.href, pathname))?.label ?? "Keystone";

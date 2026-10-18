@@ -15,32 +15,26 @@ export function CompanyBlock({ expanded, onNavigate }: { expanded: boolean; onNa
   // While the shown graph is being replayed, the replay's own day is ahead of the (debounced) summary.
   const replayDay = live && replay?.progress?.graph === graph ? replay.progress.day : null;
   const day = replayDay ?? summary?.day ?? null;
-
-  const badge = (
-    <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.06] text-xs font-bold">
-      AA
-      {live && <span className="live-dot absolute -top-0.5 -right-0.5 size-2.5 rounded-full border-2 border-card bg-foreground" />}
-    </span>
-  );
+  const status = live ? `Replaying · day ${replayDay ?? "…"}` : `Day ${day ?? "–"} · ${graph === "apex" ? "full company" : "replay"}`;
 
   return (
-    <div className="shrink-0 border-t px-3 pt-3 pb-4">
-      {expanded ? (
-        <Link href="/" onClick={onNavigate} className="flex items-center gap-3 rounded-xl p-1.5 transition-colors hover:bg-foreground/5">
-          {badge}
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-bold">Apex Athletics</span>
-            <span className={cn("block truncate text-[11px] font-light text-muted-foreground", live && "text-foreground")}>
-              {live ? `Replaying · day ${replayDay ?? "…"}` : `Day ${day ?? "–"} · ${graph === "apex" ? "full company" : "replay"}`}
-            </span>
+    <div className="shrink-0 border-t px-3 py-3">
+      <SidebarTooltip label={`Apex Athletics · ${status}`} show={!expanded}>
+        <Link
+          href="/"
+          onClick={onNavigate}
+          className="flex items-center gap-3 rounded-lg p-1 transition-colors hover:bg-hover"
+          aria-label={expanded ? undefined : `Apex Athletics, ${status}`}
+        >
+          <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg bg-selected text-[11px] font-semibold tracking-wide ring-1 ring-border ring-inset">
+            AA
+          </span>
+          <span className={cn("min-w-0 flex-1 whitespace-nowrap transition-opacity duration-200", expanded ? "opacity-100 delay-75" : "opacity-0")}>
+            <span className="block truncate text-[13px] font-medium">Apex Athletics</span>
+            <span className={cn("block truncate text-xs text-muted-foreground tabular-nums", live && "text-foreground")}>{status}</span>
           </span>
         </Link>
-      ) : (
-        <div className="group/item relative flex justify-center">
-          {badge}
-          <SidebarTooltip>{`Apex Athletics · day ${day ?? "–"}${live ? " · replaying" : ""}`}</SidebarTooltip>
-        </div>
-      )}
+      </SidebarTooltip>
     </div>
   );
 }

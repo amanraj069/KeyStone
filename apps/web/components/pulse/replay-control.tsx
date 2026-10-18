@@ -72,14 +72,14 @@ export function ReplayControl() {
       {(replay || error) && (
         <div className="mt-6 border-t pt-5">
           <Meter percent={progress?.percent ?? 0} label="Replay progress" />
-          <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-light text-muted-foreground">
+          <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {error ? (
               <span className="text-foreground">{error}</span>
             ) : replay?.failedReason ? (
               <span className="text-foreground">Replay failed: {replay.failedReason}</span>
             ) : progress ? (
               <>
-                {progress.day != null && <span className="font-bold text-foreground tabular-nums">Day {progress.day}</span>}
+                {progress.day != null && <span className="font-semibold text-foreground tabular-nums">Day {progress.day}</span>}
                 <span>{progress.message}</span>
                 <span className="tabular-nums">
                   {progress.totals.people} people · {progress.totals.artifacts} artifacts · {progress.totals.edges} edges

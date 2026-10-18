@@ -22,6 +22,7 @@ export function isIndexAlreadyExistsError(error: unknown): boolean {
 @Injectable()
 export class SchemaService implements OnApplicationBootstrap {
   private readonly logger = new Logger(SchemaService.name);
+  private bootstrapped: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly graph: GraphService,
@@ -34,10 +35,20 @@ export class SchemaService implements OnApplicationBootstrap {
    * after the first FalkorDB connection, so a slow database never blocks startup.
    */
   onApplicationBootstrap(): void {
-    void this.graph
+    this.bootstrapped = this.graph
       .whenConnected()
       .then(() => this.ensureSchema(APEX_GRAPH))
+      .then(() => undefined)
       .catch((error: unknown) => this.logger.error(`ensureSchema(${APEX_GRAPH}) failed: ${String(error)}`));
+  }
+
+  /**
+   * Resolves once the startup ensureSchema has finished (or failed). The startup
+   * graph check (SeedService) waits for it, so it never deletes "apex" while this
+   * is still creating it.
+   */
+  whenBootstrapped(): Promise<void> {
+    return this.bootstrapped;
   }
 
   /** Runs every schema statement; "already indexed" is fine, any other error is thrown. */

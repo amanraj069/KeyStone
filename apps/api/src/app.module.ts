@@ -16,9 +16,11 @@ import { McpModule } from './mcp/mcp.module';
 import { WhatIfModule } from './whatif/whatif.module';
 import { RetrievalModule } from './retrieval/retrieval.module';
 import { RedisModule } from './redis/redis.module';
+import { BackupModule } from './backup/backup.module';
+import { SeedModule } from './seed/seed.module';
 
 @Module({
-  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule, AgentModule, ActionsModule, ArtifactsModule, BenchModule],
+  imports: [AppConfigModule, GraphModule, RedisModule, HealthModule, LlmModule, TextStoreModule, JobsModule, RetrievalModule, AnalyticsModule, WhatIfModule, McpModule, AgentModule, ActionsModule, ArtifactsModule, BenchModule, BackupModule, SeedModule],
   providers: [{ provide: APP_FILTER, useClass: ApiExceptionFilter }],
 })
 export class AppModule {}

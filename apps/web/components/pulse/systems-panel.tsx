@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useState } from "react";
 import type { BusFactorRow, RiskLevel } from "@keystone/shared";
 import { ArrowRight } from "lucide-react";
 import { OptionPills } from "@/components/ui/option-pills";
@@ -41,11 +41,11 @@ export function SystemsPanel({ rows, onOpen }: SystemsPanelProps) {
         ) : rows.length === 0 ? (
           <EmptyState description="No core systems yet. They appear once enough artifacts mention them." />
         ) : shown.length === 0 ? (
-          <p className="py-6 text-center text-sm font-light text-muted-foreground">No systems at this level.</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">No systems at this level.</p>
         ) : (
-          <ul className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-            {shown.map((row) => (
-              <li key={row.system}>
+          <ul key={level} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {shown.map((row, index) => (
+              <li key={row.system} className="animate-rise" style={{ "--i": index } as CSSProperties}>
                 <SystemRow row={row} onOpen={onOpen} />
               </li>
             ))}
@@ -57,21 +57,19 @@ export function SystemsPanel({ rows, onOpen }: SystemsPanelProps) {
 }
 
 function SystemRow({ row, onOpen }: { row: BusFactorRow; onOpen: (row: BusFactorRow) => void }) {
-  const atRisk = row.riskLevel === "orphaned" || row.riskLevel === "critical";
   return (
     <button
       type="button"
       onClick={() => onOpen(row)}
-      className="group flex w-full items-center gap-3 rounded-xl bg-surface px-4 py-3 text-left transition-colors hover:bg-accent"
+      className="group flex w-full items-center gap-3 rounded-lg border bg-surface px-4 py-3 text-left transition-[background-color,border-color,box-shadow] duration-200 hover:border-input hover:bg-card hover:shadow-raised"
     >
-      <span className={cn("size-2 shrink-0 rounded-full", atRisk ? "bg-signal" : "bg-foreground/25")} aria-hidden />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">{row.system}</span>
-        <span className={cn("block truncate text-xs", row.names.length === 0 ? "text-signal" : "font-light text-muted-foreground")}>
+        <span className="block truncate text-sm font-medium">{row.system}</span>
+        <span className={cn("block truncate text-xs", row.names.length === 0 ? "text-signal" : "text-muted-foreground")}>
           {row.names.length === 0 ? "No active expert" : row.names.join(", ")}
         </span>
       </span>
-      <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-300 group-hover:translate-x-1" />
+      <ArrowRight className="size-4 shrink-0 -translate-x-1 text-faint opacity-0 transition-all duration-300 ease-out-expo group-hover:translate-x-0 group-hover:text-foreground group-hover:opacity-100" />
     </button>
   );
 }

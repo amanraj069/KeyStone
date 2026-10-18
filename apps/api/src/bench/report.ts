@@ -284,8 +284,23 @@ function renderB1(b1: B1Results): string[] {
       'read these as worked examples, not as a score.',
     '',
     'For each departure inside the simulated days, departure impact (K5, minScore ' +
-      `${b1.minScore}) ran on a projection built as of the day before, and the systems it lists were compared with the ` +
-      "person's knowledge domains: normalised names (aliases.json), then fuzzy matching, then an LLM yes/no for leftover pairs.",
+      `${b1.minScore}) ran on a projection built as of the day before. Headline metric: the strict prediction — only the systems K5 says the ` +
+      "person orphans (no backup left) — matched against the person's actual knowledge domains (normalised names from aliases.json, then fuzzy " +
+      'matching, then an LLM yes/no for leftover pairs). This is what the departure actually leaves uncovered.',
+    '',
+    '| Person | Left on day | Orphaned (K5 backups = 0) | Gold domains | Precision | Recall | F1 |',
+    '| --- | ---: | --- | --- | ---: | ---: | ---: |',
+    ...d.map(
+      (r) =>
+        `| ${r.person} | ${r.day} | ${cell(list(r.orphaned))}${r.error ? ` (error: ${cell(r.error)})` : ''} | ${cell(list(r.domains))} | ` +
+        `${pct(r.orphanedOnly.precision)} | ${pct(r.orphanedOnly.recall)} | ${pct(r.orphanedOnly.f1)} |`,
+    ),
+    `| **Overall (micro)** | | | | ${pct(b1.overallOrphanedOnly.precision)} | ${pct(b1.overallOrphanedOnly.recall)} | ${pct(b1.overallOrphanedOnly.f1)} |`,
+    '',
+    ...b1Summary(b1),
+    '',
+    'Broad prediction, for context (every system K5 counts the person as an expert on, not only what leaves with them — precision is low ' +
+      'here by construction):',
     '',
     '| Person | Left on day | Projection | Predicted (K5) | Gold domains | Matches | Precision | Recall | F1 |',
     '| --- | ---: | --- | --- | --- | --- | ---: | ---: | ---: |',
@@ -296,15 +311,6 @@ function renderB1(b1: B1Results): string[] {
         `${pct(r.precision)} | ${pct(r.recall)} | ${pct(r.f1)} |`,
     ),
     `| **Overall (micro)** | | | | | | ${pct(b1.overall.precision)} | ${pct(b1.overall.recall)} | ${pct(b1.overall.f1)} |`,
-    '',
-    ...b1Summary(b1),
-    '',
-    'Orphaned-only prediction (only the systems K5 says the person leaves with no backup):',
-    '',
-    '| Person | Orphaned (K5 backups = 0) | Precision | Recall | F1 |',
-    '| --- | --- | ---: | ---: | ---: |',
-    ...d.map((r) => `| ${r.person} | ${cell(list(r.orphaned))} | ${pct(r.orphanedOnly.precision)} | ${pct(r.orphanedOnly.recall)} | ${pct(r.orphanedOnly.f1)} |`),
-    `| **Overall (micro)** | | ${pct(b1.overallOrphanedOnly.precision)} | ${pct(b1.overallOrphanedOnly.recall)} | ${pct(b1.overallOrphanedOnly.f1)} |`,
     '',
     'A second predictor (not K5): systems, core or not, where the person holds at least a quarter of everyone\'s knowledge as of ' +
       'the day before, thread participation included:',

@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import type { DecisionTraceRow } from "@keystone/shared";
-import { ArrowUpRight, FileText, History, Mail, MessageSquare, Ticket, Users, Video, type LucideIcon } from "lucide-react";
+import { CornerDownRight, FileText, History, Mail, MessageSquare, Ticket, Users, Video, type LucideIcon } from "lucide-react";
+import type { CSSProperties } from "react";
 import { EvidenceChip } from "@/components/evidence-chip";
 import { Button } from "@/components/ui/button";
+import { CountUp } from "@/components/ui/count-up";
 import { OptionPills, type PillOption } from "@/components/ui/option-pills";
 import { cn } from "@/lib/utils";
 
@@ -17,14 +19,6 @@ const FLASH_MS = 1600;
 const ALL = "all";
 const REPLACEMENTS = "replacements";
 const kindFilter = (kind: string) => `kind:${kind}`;
-
-/** Each kind gets a graph colour, so the tag reads at a glance. */
-const KIND_COLOR: Record<string, string> = {
-  change: "var(--node-person)",
-  adopt: "var(--node-system)",
-  policy: "var(--node-ticket)",
-  deprecate: "var(--signal)",
-};
 
 /** Where a decision was made, by the source artifact's doc type. */
 const SOURCES: Record<string, { icon: LucideIcon; name: string }> = {
@@ -95,52 +89,61 @@ export function DecisionTimeline({ rows, onOpenArtifact }: DecisionTimelineProps
 
   return (
     <div>
-      <div className="flex flex-col gap-5 border-b px-5 py-5 sm:px-8 xl:flex-row xl:items-center xl:justify-between">
+      <div className="flex flex-col gap-5 border-b px-5 py-5 sm:px-7 xl:flex-row xl:items-center xl:justify-between">
         <dl className="flex flex-wrap gap-x-10 gap-y-3">
           <Figure label="Decisions" value={rows.length} />
           <Figure label="Replacements" value={changes} />
           <Figure label="Span" value={span(rows)} />
         </dl>
         {rows.length > 1 && options.length > 2 && (
-          <div className="-mx-1 overflow-x-auto px-1 pb-1 xl:pb-0">
+          <div className="-mx-1 overflow-x-auto px-1 py-0.5">
             <OptionPills label="Show" options={options} value={filter} onChange={choose} />
           </div>
         )}
       </div>
 
-      <div className="px-5 py-6 sm:px-8 sm:py-8">
+      <div className="px-5 py-6 sm:px-7 sm:py-8">
         {filtered.length === 0 ? (
-          <p className="text-sm font-light text-muted-foreground">No decisions match.</p>
+          <p className="text-sm text-muted-foreground">No decisions match.</p>
         ) : (
-          <ol className="space-y-8">
+          // Keyed by filter, so a new filter replays the entrance.
+          <ol key={filter}>
             {groups.map((group, index) => (
-              <li key={`${group.day}-${index}`} className="grid gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-6">
-                <div className="sm:sticky sm:top-6 sm:self-start sm:pt-4">
-                  <p className="text-sm font-extrabold tracking-tight tabular-nums">Day {group.day ?? "?"}</p>
-                  <p className="text-xs font-light text-muted-foreground">
+              <li
+                key={`${group.day}-${index}`}
+                className="animate-rise grid gap-2 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-0"
+                style={{ "--i": index } as CSSProperties}
+              >
+                {/* The top bar is 3.5rem, so the day sticks just below it. */}
+                <div className="sm:sticky sm:top-20 sm:self-start sm:pt-3.5 sm:pr-6 sm:text-right">
+                  <p className="text-sm font-semibold tabular-nums">Day {group.day ?? "?"}</p>
+                  <p className="text-xs text-muted-foreground">
                     {group.rows.length} decision{group.rows.length === 1 ? "" : "s"}
                   </p>
                 </div>
-                <ol className="space-y-3">
-                  {group.rows.map((row) => (
-                    <DecisionCard
-                      key={row.id}
-                      row={row}
-                      replacement={replacedBy.get(row.id) ?? null}
-                      earlier={row.replacedId ? (byId.get(row.replacedId) ?? null) : null}
-                      flashed={flashed === row.id}
-                      onJump={jump}
-                      onOpenArtifact={onOpenArtifact}
-                    />
-                  ))}
-                </ol>
+                <div className={cn("relative sm:border-l sm:pl-5", index < groups.length - 1 && "pb-6 sm:pb-8")}>
+                  <ol className="space-y-1">
+                    {group.rows.map((row) => (
+                      <DecisionCard
+                        key={row.id}
+                        row={row}
+                        replacement={replacedBy.get(row.id) ?? null}
+                        earlier={row.replacedId ? (byId.get(row.replacedId) ?? null) : null}
+                        flashed={flashed === row.id}
+                        onJump={jump}
+                        onOpenArtifact={onOpenArtifact}
+                      />
+                    ))}
+                  </ol>
+                </div>
               </li>
             ))}
           </ol>
         )}
         {filtered.length > limit && (
-          <Button variant="outline" size="sm" className="mt-8 sm:ml-[7rem]" onClick={() => setLimit((n) => n + PAGE)}>
-            Show {Math.min(PAGE, filtered.length - limit)} older ({filtered.length - limit} left)
+          <Button variant="outline" size="sm" className="mt-8 sm:ml-[6.75rem]" onClick={() => setLimit((n) => n + PAGE)}>
+            Show {Math.min(PAGE, filtered.length - limit)} older
+            <span className="text-muted-foreground tabular-nums">{filtered.length - limit} left</span>
           </Button>
         )}
       </div>
@@ -169,21 +172,27 @@ function DecisionCard({ row, replacement, earlier, flashed, onJump, onOpenArtifa
     <li
       id={anchor(row.id)}
       className={cn(
-        "rounded-xl border p-4 transition-shadow duration-500 sm:p-5",
-        superseded ? "border-dashed" : "bg-surface",
-        flashed && "ring-2 ring-ring ring-offset-2 ring-offset-card",
+        "group/card scroll-mt-24 rounded-lg px-3 py-3 transition-colors duration-200 hover:bg-surface sm:px-4 sm:py-3.5",
+        flashed && "animate-flash bg-surface",
       )}
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
         <KindTag kind={row.kind} />
-        {superseded && <span className="text-xs font-semibold text-faint">Replaced</span>}
+        {superseded && <span className="text-[11px] font-medium text-faint">Replaced</span>}
         <span className="ml-auto flex min-w-0 items-center gap-1.5 text-muted-foreground" title={source.name}>
-          <SourceIcon className="size-3.5 shrink-0" aria-label={source.name} />
-          <EvidenceChip id={row.source} onOpen={onOpenArtifact} title={`Decided in ${row.source}`} />
+          <SourceIcon className="size-3.5 shrink-0" strokeWidth={1.8} aria-label={source.name} />
+          <span className="min-w-0 max-w-[22rem]">
+            <EvidenceChip id={row.source} onOpen={onOpenArtifact} title={`Decided in ${row.source}`} />
+          </span>
         </span>
       </div>
 
-      <p className={cn("mt-3 text-[15px] leading-snug font-semibold", superseded && "font-normal text-muted-foreground line-through decoration-faint")}>
+      <p
+        className={cn(
+          "mt-2.5 text-[15px] leading-snug font-medium text-pretty",
+          superseded && "font-normal text-muted-foreground line-through decoration-faint/70",
+        )}
+      >
         {row.summary}
       </p>
 
@@ -193,35 +202,38 @@ function DecisionCard({ row, replacement, earlier, flashed, onJump, onOpenArtifa
         <button
           type="button"
           onClick={() => onJump(replacement.id)}
-          className="mt-3 flex items-start gap-1.5 text-left text-xs font-semibold underline-offset-2 hover:underline"
+          className="group/link mt-2.5 flex items-start gap-1.5 text-left text-xs text-foreground/90"
         >
-          <ArrowUpRight className="mt-px size-3.5 shrink-0" />
-          Replaced on day {replacement.day ?? "?"} by: {truncate(replacement.summary, 110)}
+          <CornerDownRight className="mt-px size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-hover/link:translate-x-0.5" />
+          <span className="underline-offset-2 group-hover/link:underline">
+            <span className="font-medium">Replaced on day {replacement.day ?? "?"}</span>
+            <span className="text-muted-foreground"> by {truncate(replacement.summary, 110)}</span>
+          </span>
         </button>
       )}
 
-      <p className="mt-3 flex items-center gap-1.5 text-xs font-light text-muted-foreground">
-        <Users className="size-3.5 shrink-0" />
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Users className="size-3.5 shrink-0" strokeWidth={1.8} />
         {authors}
       </p>
     </li>
   );
 }
 
-/** What a decision replaced, struck through; a link to it when it is on this timeline. */
+/** What a decision replaced, as a struck-through quote; a link to it when it is on this timeline. */
 function ReplacedNote({ text, earlier, onJump }: { text: string; earlier: DecisionTraceRow | null; onJump: (id: string) => void }) {
   const body = (
     <>
-      <span className="flex items-center gap-1.5 font-semibold text-muted-foreground">
-        <History className="size-3.5 shrink-0" />
+      <span className="flex items-center gap-1.5 font-medium text-muted-foreground">
+        <History className="size-3.5 shrink-0" strokeWidth={1.8} />
         {earlier ? `Replaces a day ${earlier.day ?? "?"} decision` : "Replaces an earlier decision about another system"}
       </span>
-      <span className="mt-1 block leading-relaxed text-muted-foreground line-through decoration-faint">{truncate(text, 200)}</span>
+      <span className="mt-1 block leading-relaxed text-muted-foreground/90 line-through decoration-faint/60">{truncate(text, 200)}</span>
     </>
   );
-  const box = "mt-3 block w-full rounded-lg border border-dashed px-3 py-2.5 text-left text-xs";
+  const box = "mt-3 block w-full border-l-2 border-border py-0.5 pl-3 text-left text-xs";
   return earlier ? (
-    <button type="button" onClick={() => onJump(earlier.id)} className={cn(box, "transition-colors hover:border-foreground/30 hover:bg-foreground/[0.03]")}>
+    <button type="button" onClick={() => onJump(earlier.id)} className={cn(box, "transition-colors duration-200 hover:border-foreground/40")}>
       {body}
     </button>
   ) : (
@@ -231,8 +243,7 @@ function ReplacedNote({ text, earlier, onJump }: { text: string; earlier: Decisi
 
 function KindTag({ kind }: { kind: string }) {
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border bg-card px-2 py-0.5 text-[11px] font-bold">
-      <span className="size-1.5 rounded-full" style={{ background: KIND_COLOR[kind] ?? "var(--node-artifact)" }} aria-hidden />
+    <span className={cn("inline-flex items-center rounded-md px-1.5 py-0.5 text-[11px] font-medium", kind === "deprecate" ? "bg-signal-soft text-signal" : "bg-foreground/[0.06] text-foreground/80")}>
       {capitalize(kind)}
     </span>
   );
@@ -242,7 +253,9 @@ function Figure({ label, value }: { label: string; value: number | string }) {
   return (
     <div>
       <dt className="section-label">{label}</dt>
-      <dd className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{value}</dd>
+      <dd className="mt-0.5 text-2xl font-semibold tracking-tight tabular-nums">
+        <CountUp value={value} />
+      </dd>
     </div>
   );
 }

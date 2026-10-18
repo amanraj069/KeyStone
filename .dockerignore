@@ -1,0 +1,18 @@
+# Only what apps/api/Dockerfile needs: workspace manifests, the lockfile, shared and api sources.
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/*.tsbuildinfo
+.git
+.claude
+# Secrets and data never go into the image (data is mounted at runtime).
+.env
+.env.*
+data
+docs
+deploy
+scripts
+# The web app is deployed on Vercel; only its package.json is needed (for the lockfile).
+apps/web/*
+!apps/web/package.json

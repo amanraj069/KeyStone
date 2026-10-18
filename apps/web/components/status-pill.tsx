@@ -1,19 +1,13 @@
-import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 export type PillState = "up" | "down" | "checking";
 
-const STYLES: Record<PillState, string> = {
-  up: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  down: "bg-red-500/15 text-red-700 dark:text-red-400",
-  checking: "bg-muted text-muted-foreground",
-};
-
-/** A rounded label like "FalkorDB · up", coloured by state. */
+/** A service and its state, like "FalkorDB up"; a service that is down reads in the signal colour. */
 export function StatusPill({ label, state }: { label: string; state: PillState }) {
   return (
-    <Badge className={`h-7 gap-2 px-3 text-sm ${STYLES[state]}`}>
-      <span aria-hidden className="size-2 rounded-full bg-current" />
-      {label} · {state}
-    </Badge>
+    <span className={cn("inline-flex h-8 items-center gap-2 rounded-lg border bg-surface px-3 text-sm", state === "down" && "border-signal/40")}>
+      <span className="font-medium">{label}</span>
+      <span className={cn("text-muted-foreground", state === "down" && "text-signal", state === "checking" && "animate-pulse")}>{state}</span>
+    </span>
   );
 }

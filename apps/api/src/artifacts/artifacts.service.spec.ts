@@ -1,6 +1,17 @@
-import { descriptionWords, rarity, snippet } from './artifacts.service';
+import { descriptionWords, looksBroadcast, rarity, snippet } from './artifacts.service';
 
 describe('artifact helpers', () => {
+  it('looksBroadcast: incidents, outages, postmortems and knowledge gaps are broadcast; private documents are not', () => {
+    expect(looksBroadcast('P1 incident Redis cache TTL misconfiguration')).toBe(true);
+    expect(looksBroadcast('the incident resolved event')).toBe(true);
+    expect(looksBroadcast('a postmortem being written')).toBe(true);
+    expect(looksBroadcast('a knowledge gap in auth-service')).toBe(true);
+    expect(looksBroadcast('vendor email routed')).toBe(false);
+    expect(looksBroadcast('a PR review')).toBe(false);
+    expect(looksBroadcast('a Confluence page was created')).toBe(false);
+    expect(looksBroadcast('a watercooler chat')).toBe(false);
+  });
+
   it("descriptionWords keeps the words that can identify a document, not stopwords, numbers or the people's names", () => {
     expect(descriptionWords('Was a postmortem created for the incident on Day 13 involving Yusuf?', ['Yusuf'])).toEqual(['postmortem', 'incident']);
     expect(descriptionWords('Metro United FC email email')).toEqual(['metro', 'united', 'email']);

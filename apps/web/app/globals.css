@@ -35,6 +35,13 @@
   --color-signal-soft: var(--signal-soft);
   --color-signal-foreground: var(--signal-foreground);
   --color-faint: var(--faint);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.36, 0.64, 1);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -43,39 +50,46 @@
 }
 
 /*
- * Keystone palette: cool slate paper, white cards, a deep navy "ink" for what is
- * selected or primary, and one vermilion signal for risk. The --node-* colours
- * are the graph canvas's label colours (low chroma, so the signal stands out).
+ * Keystone palette: cool neutral paper, white cards with hairline borders, a deep
+ * navy "ink" for the primary action, and one vermilion signal for risk. Selection is
+ * a neutral tint, never a block of colour. The --node-* colours are the graph
+ * canvas's label colours (low chroma, so the signal stands out).
  */
 :root {
   color-scheme: light;
   --radius: 0.625rem;
-  --background: #eceff2;
-  --foreground: #161d26;
-  --card: #fbfcfd;
-  --card-foreground: #161d26;
-  --popover: #fbfcfd;
-  --popover-foreground: #161d26;
-  --surface: #f2f4f6;
-  --primary: #1d3557;
-  --primary-hover: #172b47;
+  --background: #f4f5f7;
+  --foreground: #11161d;
+  --card: #ffffff;
+  --card-foreground: #11161d;
+  --popover: #ffffff;
+  --popover-foreground: #11161d;
+  --surface: #f7f8fa;
+  --primary: #1b2f4e;
+  --primary-hover: #13233b;
   --primary-foreground: #ffffff;
-  --secondary: #f2f4f6;
-  --secondary-foreground: #161d26;
-  --muted: #f2f4f6;
-  --muted-foreground: #5f6b7a;
-  --faint: #8a95a3;
-  --accent: #e6eaee;
-  --accent-foreground: #161d26;
+  --secondary: #f1f3f5;
+  --secondary-foreground: #11161d;
+  --muted: #f1f3f5;
+  --muted-foreground: #5a6574;
+  --faint: #8c96a3;
+  --accent: #eef0f3;
+  --accent-foreground: #11161d;
   --destructive: #c8361c;
-  --border: #dbe0e6;
-  --input: #c9d0d8;
-  --ring: #1d3557;
+  --border: #e3e6eb;
+  --input: #d5dae1;
+  --ring: #3d68b0;
   --signal: #d4452a;
-  --signal-soft: #fbe8e3;
+  --signal-soft: #fcebe6;
   --signal-foreground: #ffffff;
-  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.36);
+  /* Hover and selection tints, the same in every list. */
+  --hover: rgb(17 22 29 / 0.04);
+  --selected: rgb(17 22 29 / 0.065);
+  --shadow-card: 0 1px 2px rgb(17 22 29 / 0.04), 0 0 0 1px rgb(17 22 29 / 0.015);
+  --shadow-raised: 0 1px 2px rgb(17 22 29 / 0.06), 0 4px 12px -2px rgb(17 22 29 / 0.08);
+  --shadow-overlay: 0 12px 32px -8px rgb(17 22 29 / 0.18), 0 2px 6px rgb(17 22 29 / 0.06);
+  --scrollbar-thumb: rgba(0, 0, 0, 0.16);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
 
   --node-person: #1d3557;
   --node-system: #4f7f6e;
@@ -89,8 +103,8 @@
   --node-decision: #8a6a3d;
   --node-action: #2b3440;
   --edge: #c3cad2;
-  --canvas-label: #161d26;
-  --canvas-label-bg: #fbfcfd;
+  --canvas-label: #11161d;
+  --canvas-label-bg: #ffffff;
 
   /* Benchmark chart series (dataviz reference slots 1-2, validated on --card in both modes). */
   --series-keystone: #2a78d6;
@@ -99,35 +113,41 @@
   --series-reference: #b3bbc4;
 }
 
+/* Dark: the primary action inverts to paper on ink, as in most pro tools. */
 html.dark,
 .dark {
   color-scheme: dark;
-  --background: #0b0f14;
-  --foreground: #eef1f5;
-  --card: #121820;
-  --card-foreground: #eef1f5;
-  --popover: #151c25;
-  --popover-foreground: #eef1f5;
-  --surface: #0f141b;
-  --primary: #24446d;
-  --primary-hover: #2b5182;
-  --primary-foreground: #ffffff;
-  --secondary: #1a222c;
-  --secondary-foreground: #eef1f5;
-  --muted: #1a222c;
-  --muted-foreground: #97a3b2;
-  --faint: #66727f;
-  --accent: #1a222c;
-  --accent-foreground: #eef1f5;
+  --background: #0a0c0f;
+  --foreground: #e9edf2;
+  --card: #111418;
+  --card-foreground: #e9edf2;
+  --popover: #15191e;
+  --popover-foreground: #e9edf2;
+  --surface: #0e1115;
+  --primary: #e9edf2;
+  --primary-hover: #ffffff;
+  --primary-foreground: #0a0c0f;
+  --secondary: #181c21;
+  --secondary-foreground: #e9edf2;
+  --muted: #181c21;
+  --muted-foreground: #97a1ae;
+  --faint: #636d79;
+  --accent: #1a1e24;
+  --accent-foreground: #e9edf2;
   --destructive: #f06a4a;
-  --border: #222c37;
-  --input: #2f3a47;
-  --ring: #5f86b8;
+  --border: #1f242b;
+  --input: #2b323b;
+  --ring: #7d9fd4;
   --signal: #f06a4a;
-  --signal-soft: #3a1c15;
-  --signal-foreground: #0b0f14;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.36);
+  --signal-soft: #34190f;
+  --signal-foreground: #0a0c0f;
+  --hover: rgb(233 237 242 / 0.045);
+  --selected: rgb(233 237 242 / 0.08);
+  --shadow-card: 0 0 0 1px rgb(0 0 0 / 0.2);
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 0.4), 0 4px 14px -2px rgb(0 0 0 / 0.45);
+  --shadow-overlay: 0 16px 40px -8px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.35);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.14);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.28);
 
   --node-person: #9fb6d6;
   --node-system: #7fb39f;
@@ -141,8 +161,8 @@ html.dark,
   --node-decision: #d1ad7d;
   --node-action: #dfe5ec;
   --edge: #2c3744;
-  --canvas-label: #eef1f5;
-  --canvas-label-bg: #121820;
+  --canvas-label: #e9edf2;
+  --canvas-label-bg: #111418;
 
   --series-keystone: #3987e5;
   --series-baseline: #d95926;
@@ -171,10 +191,14 @@ html.dark,
   }
   html {
     @apply font-sans;
+    font-feature-settings: "ss01", "cv11";
   }
   body {
     @apply bg-background text-foreground antialiased;
-    transition: background-color 0.2s ease, color 0.2s ease;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--ring) 28%, transparent);
   }
   *:focus-visible {
     outline: 2px solid var(--ring);
@@ -189,9 +213,9 @@ html.dark,
   }
 }
 
-/* The small uppercase label above a group ("TODAY'S MEALS" in Intake, "BRIDGE PEOPLE" here). */
+/* The small label above a group ("Bridge people", "Changed"): sentence case, quiet. */
 @utility section-label {
-  @apply text-[11px] font-bold tracking-[0.18em] text-muted-foreground uppercase;
+  @apply text-xs font-medium text-muted-foreground;
 }
 
 /* Ids, Cypher and other machine text. */
@@ -199,24 +223,82 @@ html.dark,
   @apply font-mono text-[0.78em] tracking-tight;
 }
 
-@keyframes enter-fade-up {
-  0% {
+/* A keyboard key, as in tooltips and hints. */
+@utility kbd {
+  @apply inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-[5px] border border-current/20 px-1 font-sans text-[10px] font-medium opacity-70;
+}
+
+/* ---------- Motion ---------- */
+
+/* A page arriving: a short rise and fade, with no transform left behind (sticky children keep working). */
+@keyframes page-in {
+  from {
     opacity: 0;
-    transform: translateY(14px);
+    transform: translateY(6px);
   }
-  100% {
+  to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }
 
-.animate-fade-up {
-  animation: enter-fade-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+.animate-page-in {
+  animation: page-in 0.45s var(--ease-out-expo) backwards;
+}
+
+/* Items of a list arriving one after another: set --i on each (capped, so long lists do not crawl). */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.5s var(--ease-out-expo) backwards;
+  animation-delay: calc(min(var(--i, 0), 12) * 35ms);
+}
+
+/* Placeholders: a soft highlight sweeping across, calmer than a blink. */
+@keyframes shimmer {
+  from {
+    background-position: 150% 0;
+  }
+  to {
+    background-position: -50% 0;
+  }
+}
+
+.animate-shimmer {
+  background-image: linear-gradient(90deg, transparent 0%, var(--hover) 40%, var(--selected) 50%, var(--hover) 60%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* A decision you jumped to: a ring that blooms and settles. */
+@keyframes flash-ring {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--ring) 55%, transparent);
+  }
+  30% {
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 35%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.animate-flash {
+  animation: flash-ring 1.6s var(--ease-out-expo);
 }
 
 @keyframes live-pulse {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in oklab, var(--foreground) 45%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 50%, transparent);
   }
   70% {
     box-shadow: 0 0 0 6px transparent;
@@ -230,9 +312,24 @@ html.dark,
   animation: live-pulse 1.6s ease-out infinite;
 }
 
+/* Theme switch: the new theme grows out of the toggle as a circle (see ThemeToggle). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .live-dot,
-  .animate-fade-up {
+  .animate-page-in,
+  .animate-rise,
+  .animate-flash,
+  .animate-shimmer {
     animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
   }
 }

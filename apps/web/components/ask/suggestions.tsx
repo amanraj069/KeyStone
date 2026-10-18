@@ -15,8 +15,8 @@ export const EXAMPLES = [
 export function Suggestions({ onPick, disabled }: { onPick: (question: string) => void; disabled: boolean }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-2 py-8 text-center">
-      <span className="flex size-12 items-center justify-center rounded-2xl bg-card text-primary shadow-sm dark:text-foreground">
-        <KeystoneIcon className="size-6" />
+      <span className="flex size-12 items-center justify-center text-foreground">
+        <KeystoneIcon className="size-9" />
       </span>
       <h2 className="mt-4 text-xl font-semibold tracking-tight">What do you want to know?</h2>
       <p className="mt-2 max-w-sm text-sm leading-relaxed font-light text-muted-foreground">

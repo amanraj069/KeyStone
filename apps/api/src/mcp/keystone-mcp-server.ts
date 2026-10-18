@@ -211,7 +211,14 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
         'records hold no such linked response in that window: answer No and cite the starting document as what you checked.',
       inputSchema: {
         id: z.string().trim().min(1).max(300).describe('The triggering document (find it with find_event).'),
-        kind: z.enum(FOLLOW_UP_KIND_NAMES).describe('The kind of response asked about.'),
+        kind: z
+          .enum(FOLLOW_UP_KIND_NAMES)
+          .describe(
+            'The kind of response asked about. Match the words in the question, not the general idea of "a ticket": ' +
+              '"Zendesk ticket/escalation/support case" is support_ticket; "Jira ticket/engineering ticket/bug" is ticket; ' +
+              'when the question just says "a ticket" with no system named, prefer support_ticket only if Zendesk, a customer, ' +
+              'or a support case was mentioned earlier in the question, otherwise ticket.',
+          ),
         days: z.number().int().min(0).max(FOLLOW_MAX_DAYS).optional().describe(`How many days after it to look (default ${FOLLOW_UP_DEFAULT_DAYS}).`),
       },
     },
@@ -250,10 +257,14 @@ export function createKeystoneMcpServer(services: KeystoneServices, options: Key
       description:
         "Answers 'could / would <person> have known about, seen or learned of <event> by Day N?' in one call: it finds the " +
         'event from the day and a description WITHOUT using the person (they may not be part of it), decides on the best ' +
-        "matching document, and checks the person's involvement in it by that day. verdict: 'could_have_known' (they wrote, " +
-        "reviewed, owned, took part in, received or were listed on it), 'no_record_of_involvement' (the records show no part in " +
-        "it, so they could not have known through it) or 'event_not_found'. Pass a quoted title as title, and other people the " +
-        'question names as part of the event as eventPeople. If event is clearly not the one asked about, call again with better words.',
+        "matching document, and checks the person's involvement in it by that day. verdict: 'could_have_known' either because " +
+        'they wrote, reviewed, owned, took part in, received or were listed on it (roles non-empty, or viaLinked non-empty), ' +
+        'or because broadcast is true: the event is an incident, outage, postmortem or detected knowledge gap, which goes out ' +
+        "company-wide rather than only to the people on the one matched document, so say it reached them through normal channels, " +
+        "not that they were personally listed on it. 'no_record_of_involvement' means a private document (a single PR review, a " +
+        "1:1 email, one page) with no direct or linked record and no broadcast signal, so they could not have known through it. " +
+        "'event_not_found' means nothing matched. Pass a quoted title as title, and other people the question names as part of " +
+        'the event as eventPeople. If event is clearly not the one asked about, call again with better words.',
       inputSchema: {
         person: z.string().trim().min(1).max(100).describe('The person whose knowledge is asked about.'),
         day: z.number().int().min(0).max(1000).describe('The day asked about ("by Day N").'),

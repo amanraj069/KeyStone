@@ -24,13 +24,13 @@ const MEASURES = [
 /** The Impact panel before a simulation: what is already known about the person, and what the run will measure. */
 export function ImpactPreview({ person, candidate, disabled, onSimulate, onOpenArtifact }: ImpactPreviewProps) {
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-full flex-col gap-6">
       {candidate && candidate.orphaned > 0 && (
         <div className="rounded-xl bg-surface p-4">
           <p className="section-label">Already known</p>
           <p className="mt-2 text-sm leading-relaxed">
-            <span className="font-bold">{candidate.person}</span> is the only expert on{" "}
-            <span className="font-bold text-signal">
+            <span className="font-semibold">{candidate.person}</span> is the only expert on{" "}
+            <span className="font-semibold text-signal">
               {candidate.orphaned} core system{candidate.orphaned === 1 ? "" : "s"}
             </span>
             .
@@ -56,7 +56,7 @@ export function ImpactPreview({ person, candidate, disabled, onSimulate, onOpenA
         <p className="section-label">The simulation measures</p>
         <ul className="mt-3 space-y-2.5">
           {MEASURES.map(({ icon: Icon, text }) => (
-            <li key={text} className="flex items-start gap-3 text-sm font-light text-muted-foreground">
+            <li key={text} className="flex items-start gap-3 text-sm text-muted-foreground">
               <Icon className="mt-0.5 size-4 shrink-0" />
               {text}
             </li>
@@ -64,8 +64,8 @@ export function ImpactPreview({ person, candidate, disabled, onSimulate, onOpenA
         </ul>
       </div>
 
-      <div className="rounded-xl border border-dashed p-4">
-        <p className="flex items-start gap-3 text-xs leading-relaxed font-light text-muted-foreground">
+      <div className="mt-auto rounded-lg bg-surface p-4">
+        <p className="flex items-start gap-3 text-xs leading-relaxed text-muted-foreground">
           <Users className="mt-px size-4 shrink-0" />
           It runs on a scratch copy of the people-and-systems graph, so nothing real changes.
         </p>

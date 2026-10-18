@@ -50,8 +50,8 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect }: Tur
       </div>
 
       <div className="flex items-end gap-2.5">
-        <span className="hidden size-8 shrink-0 items-center justify-center rounded-xl bg-card text-primary shadow-2xs sm:flex dark:text-foreground">
-          <KeystoneIcon className="size-4" />
+        <span className="hidden size-8 shrink-0 items-center justify-center text-foreground sm:flex">
+          <KeystoneIcon className="size-6" />
         </span>
         <div
           onClick={() => onSelect(turn.id)}

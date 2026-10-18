@@ -24,16 +24,16 @@ export function BridgesPanel({ bridges, error, onOpenArtifact }: BridgesPanelPro
         ) : !bridges ? (
           <SkeletonRows count={5} rowClassName="h-14" />
         ) : bridges.length === 0 ? (
-          <p className="text-sm font-light text-muted-foreground">Nobody works across teams yet.</p>
+          <p className="text-sm text-muted-foreground">Nobody works across teams yet.</p>
         ) : (
           <ol className="grid gap-x-10 gap-y-1 md:grid-cols-2">
             {bridges.slice(0, 8).map((bridge, index) => (
               <li key={bridge.person} className="grid grid-cols-[1.75rem_1fr] items-center gap-x-2 border-b py-3.5 last:border-b-0 md:[&:nth-last-child(2)]:border-b-0">
-                <span className="text-sm font-extrabold text-faint tabular-nums">{index + 1}</span>
+                <span className="text-xs font-medium text-faint tabular-nums">{String(index + 1).padStart(2, "0")}</span>
                 <div className="min-w-0">
                   <div className="flex items-baseline justify-between gap-3">
-                    <p className="truncate text-sm font-semibold">{bridge.person}</p>
-                    <p className="shrink-0 text-xs font-light text-muted-foreground">{bridge.dept?.replace(/_/g, " ") ?? "No department"}</p>
+                    <p className="truncate text-sm font-medium">{bridge.person}</p>
+                    <p className="shrink-0 text-xs text-muted-foreground">{bridge.dept?.replace(/_/g, " ") ?? "No department"}</p>
                   </div>
                   <div className="mt-2 flex items-center gap-3">
                     <Meter percent={(bridge.score / max) * 100} label={`${bridge.person}'s betweenness`} />

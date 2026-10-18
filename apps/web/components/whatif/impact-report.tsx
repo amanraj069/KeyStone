@@ -95,9 +95,9 @@ export function ImpactReport({ simulation: s, onOpenArtifact }: ImpactReportProp
         <Section key={section.key} section={section} />
       ))}
       {empty.length > 0 && (
-        <section className="rounded-xl border border-dashed px-4 py-3">
+        <section className="rounded-lg bg-surface px-4 py-3">
           <h3 className="section-label">Unchanged</h3>
-          <ul className="mt-2 space-y-1 text-xs font-light text-muted-foreground">
+          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
             {empty.map((section) => (
               <li key={section.key}>
                 <span className="font-semibold text-foreground">{section.title}:</span> {section.empty}.
@@ -133,19 +133,19 @@ function Scoreboard({ sections }: { sections: SectionSpec[] }) {
             disabled={count === 0}
             onClick={() => document.getElementById(sectionId(section.key))?.scrollIntoView({ behavior: "smooth", block: "start" })}
             className={cn(
-              "rounded-xl border px-3 py-2.5 text-left transition-colors enabled:hover:border-foreground/25 disabled:cursor-default",
-              count === 0 ? "border-dashed" : "bg-surface",
+              "rounded-lg border px-3 py-2.5 text-left transition-[border-color,box-shadow,transform] duration-200 ease-out-expo enabled:hover:-translate-y-px enabled:hover:border-input enabled:hover:shadow-raised disabled:cursor-default",
+              count === 0 ? "opacity-70" : "bg-surface",
             )}
           >
             <span
               className={cn(
-                "block text-2xl font-extrabold tracking-tight tabular-nums",
+                "block text-2xl font-semibold tracking-tight tabular-nums",
                 count === 0 ? "text-faint" : section.risk && "text-signal",
               )}
             >
               {count}
             </span>
-            <span className={cn("block text-[11px] leading-tight font-semibold", count === 0 ? "text-faint" : "text-muted-foreground")}>{section.title}</span>
+            <span className={cn("block text-[11px] leading-tight font-medium", count === 0 ? "text-faint" : "text-muted-foreground")}>{section.title}</span>
           </button>
         );
       })}
@@ -159,7 +159,7 @@ function Section({ section }: { section: SectionSpec }) {
   const shown = open ? section.items : section.items.slice(0, PREVIEW);
   return (
     <section id={sectionId(section.key)} className="scroll-mt-2">
-      <h3 className="mb-2.5 flex items-baseline gap-2 text-sm font-bold">
+      <h3 className="mb-2.5 flex items-baseline gap-2 text-sm font-semibold">
         <span className={cn(section.risk && "text-signal")}>{section.title}</span>
         <span className="text-xs font-semibold text-muted-foreground tabular-nums">{count}</span>
       </h3>
@@ -185,15 +185,15 @@ interface ItemProps {
 
 function Item({ title, detail, aside, id, onOpen, children }: ItemProps) {
   return (
-    <li className="rounded-xl bg-surface px-3.5 py-2.5 text-sm">
+    <li className="rounded-lg border bg-surface px-3.5 py-2.5 text-sm">
       <div className="flex items-baseline gap-2">
         {id && onOpen && <EvidenceChip id={id} onOpen={onOpen} />}
-        <span className="min-w-0 flex-1 truncate font-semibold" title={title}>
+        <span className="min-w-0 flex-1 truncate font-medium" title={title}>
           {title}
         </span>
         {aside}
       </div>
-      {detail && <div className="mt-1 text-xs font-light text-muted-foreground">{detail}</div>}
+      {detail && <div className="mt-1 text-xs text-muted-foreground">{detail}</div>}
       {children}
     </li>
   );

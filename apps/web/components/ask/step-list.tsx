@@ -17,7 +17,7 @@ export function StepList({ steps }: { steps: AgentStep[] }) {
           <span className="min-w-0">
             <span className="code-id font-semibold">{step.name}</span>
             {stepSubject(step) && <span className="ml-1.5 font-semibold">{stepSubject(step)}</span>}
-            {step.result && <span className="font-light text-muted-foreground"> · {stepOutcome(step)}</span>}
+            {step.result && <span className="text-muted-foreground"> · {stepOutcome(step)}</span>}
           </span>
         </li>
       ))}

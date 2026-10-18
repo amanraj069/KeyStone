@@ -102,8 +102,8 @@ export default function AskPage() {
         <Panel className="flex min-h-[60dvh] flex-col overflow-hidden lg:min-h-0" aria-label="Graph">
           <div className="flex items-start justify-between gap-4 border-b px-6 py-4">
             <div className="min-w-0">
-              <h2 className="text-base font-bold tracking-tight">The agent&apos;s path</h2>
-              <p className="mt-0.5 truncate text-xs font-light text-muted-foreground">
+              <h2 className="text-[15px] font-semibold tracking-tight">The agent&apos;s path</h2>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 {citation ? (
                   <>
                     Showing <span className="code-id">{citation}</span>
