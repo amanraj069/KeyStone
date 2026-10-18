@@ -146,7 +146,7 @@ export class LlmService implements OnModuleInit {
   async embed(texts: string[]): Promise<number[][]> {
     const provider = this.activeProvider();
     const dim = this.settings.embedDim;
-    const keys = texts.map((text) => LlmCache.key({ kind: 'embed', provider: provider.name, model: provider.embedModel, dim, text }));
+    const keys = this.embedKeys(provider, texts);
 
     const vectors: (number[] | null)[] = await Promise.all(keys.map((key) => this.cache.get<number[]>(key)));
     const missing = vectors.flatMap((vector, index) => (vector === null ? [index] : []));
@@ -169,6 +169,23 @@ export class LlmService implements OnModuleInit {
       }
     }
     return vectors as number[][];
+  }
+
+  /**
+   * Positions of the texts whose embedding is NOT cached. Reads the cache only,
+   * never calls the provider: the seed command uses it to list every missing
+   * entry before it starts, instead of failing on the first one.
+   */
+  async uncachedEmbeddings(texts: string[]): Promise<number[]> {
+    const keys = this.embedKeys(this.activeProvider(), texts);
+    const vectors = await Promise.all(keys.map((key) => this.cache.get<number[]>(key)));
+    return vectors.flatMap((vector, index) => (vector === null ? [index] : []));
+  }
+
+  /** The cache key of each text's embedding (embed and uncachedEmbeddings must agree on it). */
+  private embedKeys(provider: LlmProvider, texts: string[]): string[] {
+    const dim = this.settings.embedDim;
+    return texts.map((text) => LlmCache.key({ kind: 'embed', provider: provider.name, model: provider.embedModel, dim, text }));
   }
 
   usage(): LlmUsage {

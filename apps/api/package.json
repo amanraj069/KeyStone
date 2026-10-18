@@ -12,6 +12,7 @@
     "lint": "eslint src test scripts",
     "capability-check": "tsx scripts/capability-check.ts",
     "worker": "node dist/worker.js",
+    "seed": "node dist/seed.js",
     "llm-check": "tsx scripts/llm-check.ts",
     "extract-sample": "tsx scripts/extract-sample.ts",
     "extract": "tsx scripts/extract.ts",

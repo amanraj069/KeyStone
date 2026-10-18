@@ -18,6 +18,7 @@
     "expertise": "pnpm --filter @keystone/api expertise",
     "systems": "pnpm --filter @keystone/api systems",
     "reingest-roles": "pnpm --filter @keystone/api reingest-roles",
+    "seed": "pnpm --filter @keystone/api seed",
     "mcp:stdio": "pnpm --silent --filter @keystone/api mcp:stdio",
     "mcp:check": "pnpm --filter @keystone/api mcp:check",
     "ask": "pnpm --filter @keystone/api ask",

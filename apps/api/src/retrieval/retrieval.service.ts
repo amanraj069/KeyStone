@@ -53,6 +53,15 @@ export interface IndexSummary {
   seconds: number;
 }
 
+/** What planChunks found: the chunks indexAll would embed, and how the per-artifact cap was chosen. */
+export interface ChunkPlan {
+  artifacts: number;
+  rows: { id: string; artifactId: string; text: string }[];
+  requested: number;
+  choice: ReturnType<typeof chooseMaxChunks>;
+  memoryBefore: MemoryReport;
+}
+
 type HybridRow = {
   chunkId: string;
   id: string;
@@ -88,34 +97,10 @@ export class RetrievalService {
   /** Chunk, estimate memory, embed (cached) and write every artifact's chunks. */
   async indexAll(options: IndexOptions): Promise<IndexSummary> {
     const started = performance.now();
-    const requested = options.maxChunksPerArtifact ?? DEFAULT_MAX_CHUNKS_PER_ARTIFACT;
-
-    // 1. Chunk every artifact without a cap first, to know how many chunks each would make.
-    const artifacts = await this.graph.roQuery<{ id: string; title: string }>(options.graph, Q.ARTIFACTS_TO_CHUNK);
-    const bodies = await this.textStore.getMany('artifacts', artifacts.map((a) => a.id));
-    const allChunks = artifacts.map((a) => chunkText(a.title, bodies.get(a.id) ?? '', { maxChunks: Number.MAX_SAFE_INTEGER }));
-
-    // 2. Memory estimate; lower the per-artifact cap if the vectors would pass MEMORY_WARN_MB.
-    const memoryBefore = await this.graph.memoryReport();
-    const choice = chooseMaxChunks(
-      allChunks.map((chunks) => chunks.length),
-      requested,
-      this.settings.embedDim,
-      memoryBefore.usedMemoryMb ?? 0,
-      this.settings.memoryWarnMb,
-    );
-    this.logger.log(
-      `Memory estimate: ${choice.chunks} chunks x ${this.settings.embedDim} dims x 4 bytes x 2 = ${choice.estimateMb.toFixed(1)} MB; ` +
-        `FalkorDB uses ${memoryBefore.usedMemoryHuman}; warn at ${this.settings.memoryWarnMb} MB; ` +
-        `max chunks per artifact ${choice.maxChunks}${choice.lowered ? ` (lowered from ${requested})` : ''}`,
-    );
-
-    const rows = artifacts.flatMap((artifact, i) =>
-      allChunks[i].slice(0, choice.maxChunks).map((text, n) => ({ id: chunkId(artifact.id, n), artifactId: artifact.id, text })),
-    );
+    const { artifacts, rows, requested, choice, memoryBefore } = await this.planChunks(options.graph, options.maxChunksPerArtifact);
     const summary: IndexSummary = {
       graph: options.graph,
-      artifacts: artifacts.length,
+      artifacts,
       chunks: rows.length,
       requestedMaxChunks: requested,
       maxChunks: choice.maxChunks,
@@ -155,6 +140,40 @@ export class RetrievalService {
     summary.memoryAfter = await this.graph.assertMemoryBudget('embeddings');
     summary.seconds = (performance.now() - started) / 1000;
     return summary;
+  }
+
+  /**
+   * Steps 1-2 of indexAll, with no writes and no embedding calls: every artifact's
+   * chunks, capped per artifact (the cap is lowered if the vectors would pass
+   * MEMORY_WARN_MB). The seed command uses it to check the embedding cache first.
+   */
+  async planChunks(graphName: string, maxChunksPerArtifact?: number): Promise<ChunkPlan> {
+    const requested = maxChunksPerArtifact ?? DEFAULT_MAX_CHUNKS_PER_ARTIFACT;
+
+    // 1. Chunk every artifact without a cap first, to know how many chunks each would make.
+    const artifacts = await this.graph.roQuery<{ id: string; title: string }>(graphName, Q.ARTIFACTS_TO_CHUNK);
+    const bodies = await this.textStore.getMany('artifacts', artifacts.map((a) => a.id));
+    const allChunks = artifacts.map((a) => chunkText(a.title, bodies.get(a.id) ?? '', { maxChunks: Number.MAX_SAFE_INTEGER }));
+
+    // 2. Memory estimate; lower the per-artifact cap if the vectors would pass MEMORY_WARN_MB.
+    const memoryBefore = await this.graph.memoryReport();
+    const choice = chooseMaxChunks(
+      allChunks.map((chunks) => chunks.length),
+      requested,
+      this.settings.embedDim,
+      memoryBefore.usedMemoryMb ?? 0,
+      this.settings.memoryWarnMb,
+    );
+    this.logger.log(
+      `Memory estimate: ${choice.chunks} chunks x ${this.settings.embedDim} dims x 4 bytes x 2 = ${choice.estimateMb.toFixed(1)} MB; ` +
+        `FalkorDB uses ${memoryBefore.usedMemoryHuman}; warn at ${this.settings.memoryWarnMb} MB; ` +
+        `max chunks per artifact ${choice.maxChunks}${choice.lowered ? ` (lowered from ${requested})` : ''}`,
+    );
+
+    const rows = artifacts.flatMap((artifact, i) =>
+      allChunks[i].slice(0, choice.maxChunks).map((text, n) => ({ id: chunkId(artifact.id, n), artifactId: artifact.id, text })),
+    );
+    return { artifacts: artifacts.length, rows, requested, choice, memoryBefore };
   }
 
   /** Hybrid search: nearest chunks, then the graph adds related artifacts and authors. */
