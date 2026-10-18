@@ -89,7 +89,7 @@ export function IngestConsole() {
           <Stat label="Edges" value={totals.edges.toLocaleString()} />
         </div>
 
-        <ol className="max-h-72 overflow-y-auto rounded-lg border bg-surface p-3 font-mono text-xs leading-6">
+        <ol className="max-h-72 overflow-y-auto rounded-lg border bg-surface p-3 font-mono text-xs leading-6 break-words">
           {log.length === 0 && <li className="text-muted-foreground">No job yet.</li>}
           {log.map((line, index) => (
             <li

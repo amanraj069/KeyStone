@@ -48,16 +48,16 @@ export function ActionDecision({ action, onDecided }: ActionDecisionProps) {
   };
 
   return (
-    <div className="flex flex-col items-end gap-1.5">
+    <div className="flex max-w-full flex-col items-end gap-1.5">
       {rejecting ? (
-        <form onSubmit={submitReject} className="flex items-center gap-1.5">
+        <form onSubmit={submitReject} className="flex w-full flex-wrap items-center justify-end gap-1.5">
           <Input
             autoFocus
             value={reason}
             onChange={(e) => setReason(e.target.value)}
             placeholder="Why not?"
             maxLength={1000}
-            className="h-7 w-44 text-xs"
+            className="h-7 min-w-0 flex-1 text-xs sm:w-44 sm:flex-none"
             aria-label="Reason for rejecting"
           />
           <Button type="submit" size="xs" variant="secondary" disabled={busy || !reason.trim()}>
@@ -91,7 +91,7 @@ export function ActionDecision({ action, onDecided }: ActionDecisionProps) {
           onChange={(e) => setToken(e.target.value)}
           placeholder="Admin token"
           autoComplete="off"
-          className="h-7 w-44 text-xs"
+          className="h-7 w-full text-xs sm:w-44"
           aria-label="Admin token"
         />
       )}

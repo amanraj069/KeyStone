@@ -24,7 +24,7 @@ export function NotesPanel({ onOpenArtifact }: { onOpenArtifact: (id: string) =>
   const waiting = notes.filter((n) => n.status === "proposed").length;
 
   return (
-    <Panel className="mb-6 p-5">
+    <Panel className="mb-6 p-4 sm:p-5">
       <PanelHeading
         title="Corrections from colleagues"
         description={`${notes.length} note${notes.length === 1 ? "" : "s"}, ${waiting} waiting. Once approved, Keystone remembers a note and cites it whenever a question is about the same systems or people.`}
@@ -33,8 +33,8 @@ export function NotesPanel({ onOpenArtifact }: { onOpenArtifact: (id: string) =>
         {notes.map((note) => (
           <li key={note.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0 space-y-1.5">
-              <p className="text-sm font-medium">{note.text}</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm font-medium break-words">{note.text}</p>
+              <p className="text-xs break-words text-muted-foreground">
                 <span className="code-id">{note.id}</span>
                 {note.subjects.length > 0 && <> · about {note.subjects.join(", ")}</>}
                 {note.question && <> · corrects “{note.question}”</>}
@@ -88,10 +88,10 @@ function NoteDecision({ note, onDecided }: { note: Note; onDecided: (note: Note)
   };
 
   return (
-    <div className="flex shrink-0 flex-col items-end gap-1.5">
+    <div className="flex max-w-full shrink-0 flex-col items-end gap-1.5">
       {rejecting ? (
-        <form onSubmit={submitReject} className="flex items-center gap-1.5">
-          <Input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why not?" maxLength={1000} className="h-7 w-44 text-xs" aria-label="Reason for rejecting" />
+        <form onSubmit={submitReject} className="flex w-full flex-wrap items-center justify-end gap-1.5">
+          <Input autoFocus value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why not?" maxLength={1000} className="h-7 min-w-0 flex-1 text-xs sm:w-44 sm:flex-none" aria-label="Reason for rejecting" />
           <Button type="submit" size="xs" variant="secondary" disabled={busy || !reason.trim()}>
             Reject
           </Button>
@@ -112,7 +112,7 @@ function NoteDecision({ note, onDecided }: { note: Note; onDecided: (note: Note)
         </div>
       )}
       {needed && (
-        <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Admin token" autoComplete="off" className="h-7 w-44 text-xs" aria-label="Admin token" />
+        <Input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Admin token" autoComplete="off" className="h-7 w-full text-xs sm:w-44" aria-label="Admin token" />
       )}
       {error && <p className="max-w-60 text-right text-[0.7rem] text-muted-foreground">{error}</p>}
     </div>

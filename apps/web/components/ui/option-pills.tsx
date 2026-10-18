@@ -45,8 +45,9 @@ export function OptionPills<T extends string>({ label, options, value, onChange,
       ref={container}
       role="radiogroup"
       aria-label={label}
+      // On a narrow screen the track scrolls sideways (scrollbar hidden) rather than spilling out of its card.
       className={cn(
-        "relative items-center rounded-lg bg-foreground/[0.05] p-0.5 dark:bg-foreground/[0.06]",
+        "relative max-w-full items-center overflow-x-auto rounded-lg bg-foreground/[0.05] p-0.5 [scrollbar-width:none] dark:bg-foreground/[0.06] [&::-webkit-scrollbar]:hidden",
         fill ? "flex" : "inline-flex",
         size === "sm" ? "h-8" : "h-9",
         className,
@@ -71,7 +72,7 @@ export function OptionPills<T extends string>({ label, options, value, onChange,
             aria-checked={selected}
             onClick={() => onChange(option.value)}
             className={cn(
-              "relative z-10 flex h-full items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors duration-200 select-none",
+              "relative z-10 flex h-full shrink-0 items-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-colors duration-200 select-none",
               fill ? "flex-1 justify-center" : undefined,
               size === "sm" ? "px-3 text-xs" : "px-3.5 text-[13px]",
               selected ? "text-foreground" : "text-muted-foreground hover:text-foreground",

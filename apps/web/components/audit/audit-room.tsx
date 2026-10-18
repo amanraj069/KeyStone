@@ -91,7 +91,7 @@ export function AuditRoom() {
             onOpenArtifact={setOpenArtifact}
           />
           {pageCount > 1 && (
-            <div className="flex flex-col items-center justify-between gap-3 border-t px-5 py-3 sm:flex-row">
+            <div className="flex flex-col items-center justify-between gap-3 border-t px-4 py-3 sm:flex-row sm:px-5">
               <p className="text-xs text-muted-foreground">
                 Showing {(current - 1) * PAGE_SIZE + 1}–{Math.min(current * PAGE_SIZE, rows.length)} of {rows.length}
               </p>

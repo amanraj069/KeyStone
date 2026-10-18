@@ -89,20 +89,20 @@ export function DecisionTimeline({ rows, onOpenArtifact }: DecisionTimelineProps
 
   return (
     <div>
-      <div className="flex flex-col gap-5 border-b px-5 py-5 sm:px-7 xl:flex-row xl:items-center xl:justify-between">
-        <dl className="flex flex-wrap gap-x-10 gap-y-3">
+      <div className="flex flex-col gap-4 border-b px-4 py-5 sm:gap-5 sm:px-7 xl:flex-row xl:items-center xl:justify-between">
+        <dl className="flex flex-wrap gap-x-8 gap-y-3 sm:gap-x-10">
           <Figure label="Decisions" value={rows.length} />
           <Figure label="Replacements" value={changes} />
           <Figure label="Span" value={span(rows)} />
         </dl>
         {rows.length > 1 && options.length > 2 && (
-          <div className="-mx-1 overflow-x-auto px-1 py-0.5">
+          <div className="-mx-1 min-w-0 px-1 py-0.5">
             <OptionPills label="Show" options={options} value={filter} onChange={choose} />
           </div>
         )}
       </div>
 
-      <div className="px-5 py-6 sm:px-7 sm:py-8">
+      <div className="px-2.5 py-5 sm:px-7 sm:py-8">
         {filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground">No decisions match.</p>
         ) : (
@@ -111,11 +111,11 @@ export function DecisionTimeline({ rows, onOpenArtifact }: DecisionTimelineProps
             {groups.map((group, index) => (
               <li
                 key={`${group.day}-${index}`}
-                className="animate-rise grid gap-2 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-0"
+                className="animate-rise grid grid-cols-1 gap-1 sm:grid-cols-[5.5rem_minmax(0,1fr)] sm:gap-0"
                 style={{ "--i": index } as CSSProperties}
               >
                 {/* The top bar is 3.5rem, so the day sticks just below it. */}
-                <div className="sm:sticky sm:top-20 sm:self-start sm:pt-3.5 sm:pr-6 sm:text-right">
+                <div className="flex items-baseline gap-2 px-1.5 sm:sticky sm:top-20 sm:block sm:self-start sm:px-0 sm:pt-3.5 sm:pr-6 sm:text-right">
                   <p className="text-sm font-semibold tabular-nums">Day {group.day ?? "?"}</p>
                   <p className="text-xs text-muted-foreground">
                     {group.rows.length} decision{group.rows.length === 1 ? "" : "s"}
@@ -141,7 +141,7 @@ export function DecisionTimeline({ rows, onOpenArtifact }: DecisionTimelineProps
           </ol>
         )}
         {filtered.length > limit && (
-          <Button variant="outline" size="sm" className="mt-8 sm:ml-[6.75rem]" onClick={() => setLimit((n) => n + PAGE)}>
+          <Button variant="outline" size="sm" className="mt-6 ml-1.5 sm:mt-8 sm:ml-[6.75rem]" onClick={() => setLimit((n) => n + PAGE)}>
             Show {Math.min(PAGE, filtered.length - limit)} older
             <span className="text-muted-foreground tabular-nums">{filtered.length - limit} left</span>
           </Button>
@@ -172,16 +172,16 @@ function DecisionCard({ row, replacement, earlier, flashed, onJump, onOpenArtifa
     <li
       id={anchor(row.id)}
       className={cn(
-        "group/card scroll-mt-24 rounded-lg px-3 py-3 transition-colors duration-200 hover:bg-surface sm:px-4 sm:py-3.5",
+        "group/card scroll-mt-24 rounded-lg px-1.5 py-3 transition-colors duration-200 hover:bg-surface sm:px-4 sm:py-3.5",
         flashed && "animate-flash bg-surface",
       )}
     >
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
         <KindTag kind={row.kind} />
         {superseded && <span className="text-[11px] font-medium text-faint">Replaced</span>}
-        <span className="ml-auto flex min-w-0 items-center gap-1.5 text-muted-foreground" title={source.name}>
+        <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 text-muted-foreground" title={source.name}>
           <SourceIcon className="size-3.5 shrink-0" strokeWidth={1.8} aria-label={source.name} />
-          <span className="min-w-0 max-w-[22rem]">
+          <span className="max-w-[min(22rem,100%)] min-w-0">
             <EvidenceChip id={row.source} onOpen={onOpenArtifact} title={`Decided in ${row.source}`} />
           </span>
         </span>
@@ -189,7 +189,7 @@ function DecisionCard({ row, replacement, earlier, flashed, onJump, onOpenArtifa
 
       <p
         className={cn(
-          "mt-2.5 text-[15px] leading-snug font-medium text-pretty",
+          "mt-2.5 text-sm leading-snug font-medium text-pretty sm:text-[15px]",
           superseded && "font-normal text-muted-foreground line-through decoration-faint/70",
         )}
       >
@@ -212,7 +212,7 @@ function DecisionCard({ row, replacement, earlier, flashed, onJump, onOpenArtifa
         </button>
       )}
 
-      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <p className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
         <Users className="size-3.5 shrink-0" strokeWidth={1.8} />
         {authors}
       </p>
@@ -253,7 +253,7 @@ function Figure({ label, value }: { label: string; value: number | string }) {
   return (
     <div>
       <dt className="section-label">{label}</dt>
-      <dd className="mt-0.5 text-2xl font-semibold tracking-tight tabular-nums">
+      <dd className="mt-0.5 text-xl font-semibold sm:text-2xl tracking-tight tabular-nums">
         <CountUp value={value} />
       </dd>
     </div>

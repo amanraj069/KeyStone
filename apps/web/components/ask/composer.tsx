@@ -225,9 +225,9 @@ export function Composer({ value, onChange, busy, onAsk, onStop, onNewChat, inpu
           aria-controls={SLASH_MENU_ID}
           aria-expanded={menuOpen}
           aria-autocomplete="list"
-          className="block min-h-14 w-full resize-none bg-transparent px-5 pt-4 pb-2 text-[15px] leading-relaxed placeholder:text-faint focus:outline-none focus-visible:outline-none"
+          className="block min-h-12 w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-base leading-relaxed sm:min-h-14 sm:px-5 sm:pt-4 sm:text-[15px] placeholder:text-faint focus:outline-none focus-visible:outline-none"
         />
-        <div className="flex items-center gap-2 px-3 pb-3">
+        <div className="flex items-center gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}

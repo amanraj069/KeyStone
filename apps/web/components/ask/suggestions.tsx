@@ -29,22 +29,22 @@ const EXAMPLES = [
  */
 export function Suggestions({ onPick }: { onPick: (template: Template) => void }) {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center py-10 text-center">
-      <span className="flex size-12 items-center justify-center rounded-2xl border border-foreground/10 bg-card text-foreground shadow-card">
+    <div className="flex flex-1 flex-col items-center justify-center py-6 text-center sm:py-10">
+      <span className="flex size-11 items-center sm:size-12 justify-center rounded-2xl border border-foreground/10 bg-card text-foreground shadow-card">
         <KeystoneIcon className="size-7" />
       </span>
-      <h1 className="mt-4 text-2xl font-bold tracking-tight">What do you want to know?</h1>
+      <h1 className="mt-4 text-xl font-bold tracking-tight sm:text-2xl">What do you want to know?</h1>
       <p className="mt-2 max-w-sm text-sm leading-relaxed font-light text-muted-foreground">
         Answers come from Apex&apos;s company graph, and every claim cites the document it came from.
       </p>
 
-      <div className="mt-8 grid w-full max-w-3xl grid-cols-1 gap-3 text-left sm:grid-cols-2 sm:gap-3.5">
+      <div className="mt-6 grid w-full max-w-3xl grid-cols-1 gap-2.5 text-left sm:mt-8 sm:grid-cols-2 sm:gap-3.5">
         {EXAMPLES.map(({ label, description, template, icon: Icon }) => (
           <button
             key={label}
             type="button"
             onClick={() => onPick(template)}
-            className="group flex items-center gap-4 rounded-2xl border border-foreground/10 bg-card px-5 py-3.5 shadow-card transition-all duration-200 ease-out hover:scale-[1.02] hover:border-foreground/25 hover:shadow-raised active:scale-[0.98]"
+            className="group flex items-center gap-3.5 rounded-2xl border border-foreground/10 bg-card px-4 py-3 text-left shadow-card sm:gap-4 sm:px-5 sm:py-3.5 transition-all duration-200 ease-out hover:scale-[1.02] hover:border-foreground/25 hover:shadow-raised active:scale-[0.98]"
           >
             <Icon className="size-5 shrink-0 text-foreground/80 transition-colors group-hover:text-foreground" strokeWidth={1.75} />
             <span className="min-w-0 flex-1">
@@ -55,7 +55,7 @@ export function Suggestions({ onPick }: { onPick: (template: Template) => void }
           </button>
         ))}
       </div>
-      <p className="mt-5 text-xs font-light text-faint">
+      <p className="mt-5 hidden text-xs font-light text-faint sm:block">
         Type <kbd className="kbd">/</kbd> in the box to mention a person or system.
       </p>
     </div>

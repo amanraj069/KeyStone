@@ -1,0 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800&family=Geist+Mono:wght@400;500&display=block');
+:root {
+  --bg: #f4f5f7; --card: #ffffff; --ink: #11161d; --muted: #5a6574; --faint: #8c96a3;
+  --border: #e3e6eb; --primary: #1b2f4e; --signal: #d4452a; --signal-soft: #fcebe6;
+  --llm: #3d68b0; --doc: #6b7684;
+  --person: #1d3557; --system: #4f7f6e; --page: #5b8aa6; --meeting: #6d73a6; --decision: #8a6a3d; --ticket: #b08a4f;
+  --keystone: #2a78d6; --baseline: #eb6834;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: #ffffff; font-family: 'Geist', system-ui, sans-serif; color: var(--ink); }
+#frame { background: var(--bg); padding: 56px 64px; position: relative; overflow: hidden; }
+.eyebrow { font-size: 18px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--signal); margin-bottom: 10px; }
+h1 { font-size: 46px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.sub { font-size: 23px; font-weight: 300; color: var(--muted); margin-top: 12px; line-height: 1.4; max-width: 1350px; }
+.mono { font-family: 'Geist Mono', ui-monospace, monospace; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; box-shadow: 0 1px 2px rgb(17 22 29 / .05), 0 4px 12px -2px rgb(17 22 29 / .06); }
+.chip { display: inline-block; font-family: 'Geist Mono', monospace; font-size: 15px; color: var(--muted); border: 1px solid var(--border); background: var(--bg); border-radius: 7px; padding: 3px 8px; }
+.brand { position: absolute; right: 64px; bottom: 26px; font-size: 16px; color: var(--faint); font-weight: 500; }
+svg text { font-family: 'Geist', system-ui, sans-serif; }

@@ -60,7 +60,7 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
         <div className="flex flex-col items-end gap-1.5">
           <span className="text-xs font-semibold text-muted-foreground">You</span>
           {/* Fixed room on the right for the menu, so the text never rewraps on hover. */}
-          <div className="group relative max-w-[75%] rounded-2xl rounded-tr-md bg-primary py-2.5 pr-10 pl-4 text-[15px] leading-relaxed whitespace-pre-wrap text-primary-foreground shadow-card">
+          <div className="group relative max-w-[88%] rounded-2xl rounded-tr-md bg-primary py-2.5 pr-10 pl-4 text-sm leading-relaxed break-words sm:max-w-[75%] sm:text-[15px] whitespace-pre-wrap text-primary-foreground shadow-card">
             {turn.question}
             {!streaming && (
               <MessageActions text={turn.question} variant="primary" onDelete={() => onDelete(turn.id, "question")} className="top-1.5 right-1.5" />
@@ -101,7 +101,7 @@ export function TurnView({ turn, active, activeCitation, onCite, onSelect, onCle
                   setStepsOpen((open) => !open);
                 }}
                 aria-expanded={stepsOpen}
-                className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                className="flex items-center gap-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
               >
                 <ChevronRight className={cn("size-3.5 transition-transform duration-200", stepsOpen && "rotate-90")} />
                 Walked the graph with {turn.steps.length} tool{turn.steps.length === 1 ? "" : "s"} · {sources} source{sources === 1 ? "" : "s"}
@@ -216,7 +216,7 @@ function Sources({ citations, numbers, activeId, onCite, feedback }: SourcesProp
               <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center self-center rounded-[5px] bg-foreground/[0.08] px-1 text-[10.5px] font-semibold text-muted-foreground tabular-nums">
                 {numbers.get(citation.id) ?? "•"}
               </span>
-              <span className="code-id max-w-[40%] shrink-0 truncate text-muted-foreground">{citation.id}</span>
+              <span className="code-id hidden max-w-[40%] shrink-0 truncate text-muted-foreground sm:inline">{citation.id}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">{citation.title ?? citation.type ?? ""}</span>
                 {/* The sentence that names what the answer is about: why this source backs the claim. */}
@@ -256,9 +256,9 @@ function MemoryLine({ memory }: { memory: NonNullable<AgentTurn["memory"]> }) {
           setOpen((value) => !value);
         }}
         aria-expanded={open}
-        className="flex items-center gap-1.5 font-semibold enabled:hover:text-foreground"
+        className="flex items-start gap-1.5 text-left font-semibold enabled:hover:text-foreground"
       >
-        <History className="size-3.5" />
+        <History className="mt-px size-3.5 shrink-0" />
         Remembered {parts.join(" and ")}
         {memory.subjects.length > 0 && <span className="font-normal">· about {memory.subjects.slice(0, 4).join(", ")}</span>}
       </button>

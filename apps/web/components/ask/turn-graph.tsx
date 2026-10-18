@@ -89,7 +89,7 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
   return (
     // Clicks inside the graph belong to the graph, not to the answer around it.
     <div onClick={(event) => event.stopPropagation()} className="overflow-hidden rounded-xl border bg-surface/60">
-      <div className="flex items-center gap-2 border-b px-3.5 py-2">
+      <div className="flex items-center gap-2 border-b px-3 py-2 sm:px-3.5">
         <Waypoints className="size-3.5 shrink-0 text-muted-foreground" />
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           <span className="font-semibold text-foreground">The agent&apos;s path</span> · {caption}
@@ -103,17 +103,18 @@ export function TurnGraph({ turn, active, citation, onSelect, onClearCitation }:
         <button
           type="button"
           onClick={() => setExpanded(true)}
+          aria-label="Expand the graph"
           className="flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground"
         >
           <Maximize2 className="size-3.5" />
-          Expand
+          <span className="hidden sm:inline">Expand</span>
         </button>
       </div>
       {graph(false, "h-64 sm:h-72")}
 
       <Sheet open={expanded} onOpenChange={setExpanded}>
         <SheetContent side="right" className="w-full gap-0 sm:max-w-none lg:w-[min(72rem,80vw)]">
-          <SheetHeader className="gap-2 border-b px-6 pt-6 pb-4 pr-14">
+          <SheetHeader className="gap-2 border-b px-4 pt-5 pb-4 pr-12 sm:px-6 sm:pt-6 sm:pr-14">
             <SheetTitle className="text-lg leading-snug font-semibold tracking-tight">The agent&apos;s path</SheetTitle>
             <SheetDescription className="min-w-0 truncate text-sm">
               &ldquo;{turn.question}&rdquo;

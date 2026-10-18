@@ -13,15 +13,15 @@ interface PanelHeadingProps {
   className?: string;
 }
 
-/** A panel's own title row: title, one muted line, an action on the right. */
+/** A panel's own title row: title, one muted line, an action on the right (on phones, under the title). */
 export function PanelHeading({ title, description, action, className }: PanelHeadingProps) {
   return (
-    <div className={cn("flex items-start justify-between gap-4", className)}>
+    <div className={cn("flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4", className)}>
       <div className="min-w-0">
         <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
-        {description && <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">{description}</p>}
+        {description && <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-muted-foreground sm:text-sm">{description}</p>}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="max-w-full min-w-0 sm:shrink-0">{action}</div>}
     </div>
   );
 }

@@ -21,9 +21,9 @@ export function ArtifactSheet({ artifactId, onClose }: ArtifactSheetProps) {
   return (
     <Sheet open={artifactId !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent side="right" className={cn(SHEET_PANEL_WIDTH, "gap-0")}>
-        <SheetHeader className="gap-2 border-b px-6 pt-6 pb-5">
-          <p className="code-id text-muted-foreground">{artifactId}</p>
-          <SheetTitle className="text-xl leading-snug font-semibold tracking-tight">
+        <SheetHeader className="gap-2 border-b px-5 pt-6 pr-12 pb-5 sm:px-6 sm:pr-12">
+          <p className="code-id break-all text-muted-foreground">{artifactId}</p>
+          <SheetTitle className="text-lg leading-snug font-semibold tracking-tight break-words sm:text-xl">
             {shown?.title ?? (loading ? <Skeleton className="h-6 w-3/4" /> : "Untitled")}
           </SheetTitle>
           <SheetDescription asChild>
@@ -34,7 +34,7 @@ export function ArtifactSheet({ artifactId, onClose }: ArtifactSheetProps) {
             </div>
           </SheetDescription>
         </SheetHeader>
-        <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 overflow-y-auto px-5 py-5 sm:px-6">
           {error && <p className="text-sm text-muted-foreground">Could not load this artifact: {error}</p>}
           {loading && !shown && (
             <div className="space-y-2">

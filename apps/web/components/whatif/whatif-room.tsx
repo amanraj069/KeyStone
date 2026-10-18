@@ -123,12 +123,12 @@ export function WhatIfRoom() {
         }
       />
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)_360px] lg:grid-rows-[minmax(0,1fr)]">
-        <Panel className="h-80 overflow-hidden lg:h-auto" aria-label="People">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)_360px] lg:grid-rows-[minmax(0,1fr)]">
+        <Panel className="h-72 overflow-hidden sm:h-80 lg:h-auto" aria-label="People">
           <PersonPicker candidates={candidates.data} people={people.data} selected={person} onSelect={select} error={candidates.error ?? people.error} />
         </Panel>
 
-        <Panel className="relative flex min-h-[60dvh] flex-col overflow-hidden lg:min-h-0" aria-label="Departure graph">
+        <Panel className="relative flex min-h-[55dvh] flex-col overflow-hidden sm:min-h-[60dvh] lg:min-h-0" aria-label="Departure graph">
           <GraphCanvas
             className="flex-1"
             nodes={canvas.nodes}
@@ -148,7 +148,7 @@ export function WhatIfRoom() {
         </Panel>
 
         <Panel className="flex min-h-0 flex-col overflow-hidden" aria-label="Impact">
-          <div className="flex items-center justify-between gap-3 border-b px-5 py-3.5">
+          <div className="flex items-center justify-between gap-3 border-b px-4 py-3 sm:px-5 sm:py-3.5">
             {plan.status === "idle" ? (
               <h2 className="text-[15px] font-semibold tracking-tight">Impact</h2>
             ) : (
@@ -163,7 +163,7 @@ export function WhatIfRoom() {
               />
             )}
           </div>
-          <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex-1 overflow-y-auto p-4 sm:p-5">
             {tab === "impact" ? (
               simulation.status === "running" ? (
                 <SkeletonRows count={6} rowClassName="h-14" />
@@ -201,12 +201,12 @@ export function WhatIfRoom() {
 /** Names the beat that is playing, so the animation reads as a sentence. */
 function BeatCaption({ beat, person }: { beat: number; person: string | null }) {
   return (
-    <div className="pointer-events-none absolute top-4 left-4 flex flex-wrap gap-1.5" aria-live="polite">
+    <div className="pointer-events-none absolute inset-x-3 top-3 flex flex-wrap gap-1.5 sm:inset-x-auto sm:top-4 sm:left-4" aria-live="polite">
       {[1, 2, 3].map((n) => (
         <span
           key={n}
           className={cn(
-            "rounded-full border bg-card/85 px-2.5 py-1 text-xs font-medium shadow-raised backdrop-blur-md transition-all duration-500 ease-out-expo",
+            "rounded-full border bg-card/85 px-2 py-0.5 text-[11px] font-medium shadow-raised sm:px-2.5 sm:py-1 sm:text-xs backdrop-blur-md transition-all duration-500 ease-out-expo",
             beat >= n ? "translate-y-0 opacity-100" : "-translate-y-1 opacity-0",
           )}
         >

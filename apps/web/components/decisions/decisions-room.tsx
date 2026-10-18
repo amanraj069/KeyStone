@@ -42,8 +42,8 @@ export function DecisionsRoom() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start">
-        <Panel className="h-80 overflow-hidden lg:sticky lg:top-20 lg:h-[calc(100dvh-6.5rem)]" aria-label="Systems">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[270px_minmax(0,1fr)] lg:items-start">
+        <Panel className="h-72 overflow-hidden sm:h-80 lg:sticky lg:top-20 lg:h-[calc(100dvh-6.5rem)]" aria-label="Systems">
           <SystemPicker systems={systems.data} selected={system} onSelect={select} error={systems.error} />
         </Panel>
 

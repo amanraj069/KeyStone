@@ -1,0 +1,61 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#frame { width: 1600px; }
+.legend { display: flex; gap: 34px; margin-top: 28px; font-size: 19px; color: var(--muted); align-items: center; }
+.legend span { display: inline-flex; align-items: center; gap: 10px; }
+.sw { width: 16px; height: 16px; border-radius: 4px; display: inline-block; }
+.tick { width: 30px; height: 0; border-top: 4px solid var(--ink); display: inline-block; }
+.plot { margin-top: 18px; padding: 24px 24px 12px; }
+.foot { font-size: 16.5px; color: var(--muted); margin-top: 18px; line-height: 1.5; }
+</style></head><body>
+<div id="frame">
+  <div class="eyebrow">The benchmark, honestly</div>
+  <h1>The graph beats vectors on every question type,<br>and only just beats guessing the most common answer</h1>
+  <p class="sub">Accuracy on 78 OrgForge questions. Same model (gpt-5-nano), same 60k-character context, blinded judge. The black tick is what you would score by always giving each type's most common answer, which you can only know in hindsight.</p>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--keystone)"></i>Keystone (graph + agent)</span>
+    <span><i class="sw" style="background:var(--baseline)"></i>Vector-only RAG</span>
+    <span><i class="tick"></i>Most common answer (hindsight)</span>
+  </div>
+  <div class="card plot"><svg id="chart" width="1424" height="610" viewBox="0 0 1424 610"></svg></div>
+  <p class="foot">95% confidence intervals: overall Keystone 61–81%, vector-only 16–35%. Paired on the same questions: only Keystone right 42 times, only vector-only right 5 times (sign test p &lt; 0.001). The agent's prompts were tuned on these questions, so read this as a development-set score.</p>
+</div>
+<script>
+const data = [
+  { type: 'Counterfactual', n: 21, k: 62, v: 14, h: 90 },
+  { type: 'Perspective', n: 30, k: 80, v: 27, h: 63 },
+  { type: 'Silence', n: 27, k: 70, v: 30, h: 56 },
+  { type: 'Overall', n: 78, k: 72, v: 24, h: 68 },
+];
+const svg = document.getElementById('chart');
+const X0 = 80, X1 = 1410, YT = 30, YB = 500;
+const y = (pct) => YB - (pct / 100) * (YB - YT);
+const groupW = (X1 - X0) / data.length;
+const BW = 104, GAP = 4;
+let out = '';
+for (const g of [0, 25, 50, 75, 100]) {
+  out += `<line x1="${X0}" x2="${X1}" y1="${y(g)}" y2="${y(g)}" stroke="${g === 0 ? '#c3cad2' : '#e8ebef'}" stroke-width="${g === 0 ? 2 : 1.5}"/>`;
+  out += `<text x="${X0 - 14}" y="${y(g) + 6}" text-anchor="end" font-size="17" fill="#8c96a3">${g}%</text>`;
+}
+// A bar with a 4px rounded data end, anchored square on the baseline.
+const bar = (x, pct, fill) => {
+  const top = y(pct), r = 4;
+  return `<path d="M${x},${YB} V${top + r} Q${x},${top} ${x + r},${top} H${x + BW - r} Q${x + BW},${top} ${x + BW},${top + r} V${YB} Z" fill="${fill}"/>`;
+};
+data.forEach((d, i) => {
+  const c = X0 + groupW * i + groupW / 2;
+  if (d.type === 'Overall') out += `<line x1="${X0 + groupW * i}" x2="${X0 + groupW * i}" y1="${YT - 10}" y2="${YB + 70}" stroke="#d5dae1" stroke-width="1.5" stroke-dasharray="5 5"/>`;
+  const kx = c - BW - GAP / 2, vx = c + GAP / 2;
+  out += bar(kx, d.k, '#2a78d6') + bar(vx, d.v, '#eb6834');
+  out += `<text x="${kx + BW / 2}" y="${y(d.k) - 12}" text-anchor="middle" font-size="22" font-weight="700" fill="#11161d">${d.k}%</text>`;
+  out += `<text x="${vx + BW / 2}" y="${y(d.v) - 12}" text-anchor="middle" font-size="22" font-weight="700" fill="#11161d">${d.v}%</text>`;
+  // the hindsight reference: a black tick across the group, ringed in white so it reads over the bars
+  out += `<line x1="${kx - 14}" x2="${vx + BW + 14}" y1="${y(d.h)}" y2="${y(d.h)}" stroke="#fff" stroke-width="9" stroke-linecap="round"/>`;
+  out += `<line x1="${kx - 14}" x2="${vx + BW + 14}" y1="${y(d.h)}" y2="${y(d.h)}" stroke="#11161d" stroke-width="4" stroke-linecap="round"/>`;
+  out += `<text x="${vx + BW + 22}" y="${y(d.h) + 6}" font-size="18" font-weight="600" fill="#11161d" style="paint-order:stroke;stroke:#fff;stroke-width:6px">${d.h}%</text>`;
+  out += `<text x="${c}" y="${YB + 36}" text-anchor="middle" font-size="21" font-weight="700" fill="#11161d">${d.type}</text>`;
+  out += `<text x="${c}" y="${YB + 62}" text-anchor="middle" font-size="16" fill="#8c96a3">n = ${d.n}</text>`;
+});
+svg.innerHTML = out;
+</script>
+</body></html>

@@ -169,7 +169,7 @@ export function LiveUpdate() {
       {/* ── Presets ────────────────────────────────────────── */}
       <div className="mt-6">
         <p className="section-label mb-2">Start from an example</p>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {PRESETS.map((preset, i) => (
             <PresetCard
               key={preset.label}
@@ -342,7 +342,7 @@ function ToolbarField({ label, className, children }: { label: string; className
  */
 function AdminTokenField({ value, invalid, onChange }: { value: string; invalid: boolean; onChange: (value: string) => void }) {
   return (
-    <span className="relative mr-1 block">
+    <span className="relative mr-1 block min-w-0 flex-1 sm:flex-none">
       <Input
         type="password"
         value={value}
@@ -352,7 +352,7 @@ function AdminTokenField({ value, invalid, onChange }: { value: string; invalid:
         aria-label="Admin token"
         aria-required
         aria-invalid={invalid || undefined}
-        className="h-7 w-32 pr-5 text-xs sm:w-40 md:text-xs"
+        className="h-7 w-full pr-5 text-xs sm:w-40 md:text-xs"
       />
       <span aria-hidden className="pointer-events-none absolute top-1.5 right-2 text-sm leading-none font-semibold text-destructive">
         *
@@ -409,7 +409,7 @@ function StepTrack({ steps }: { steps: Partial<Record<LiveStep, StepState>> }) {
           {completed} of {order.length}
         </span>
       </div>
-      <ol className="grid gap-x-2 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
+      <ol className="grid grid-cols-2 gap-x-2 gap-y-4 sm:grid-cols-3 lg:grid-cols-6">
         {order.map((step) => {
           const state = steps[step];
           const done = state?.status === "done";

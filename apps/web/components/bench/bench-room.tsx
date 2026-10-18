@@ -49,13 +49,13 @@ function Results({ data }: { data: BenchResults }) {
   return (
     <>
       {b2 && (
-        <Panel className="space-y-6 p-5 sm:p-6">
+        <Panel className="space-y-5 p-4 sm:space-y-6 sm:p-6">
           <PanelHeading
             title="Question answering accuracy by type"
             description={`Up to ${b2.perType} questions per type (seed ${b2.seed}); n under each group is the sample size. A blinded ${data.judgeModel} judge scored the yes/no answers.`}
           />
           {b2.overall.keystone !== null && b2.overall.baseline !== null && b2.overall.keystone < 0.5 && b2.overall.baseline < 0.5 && (
-            <p className="rounded-xl border border-signal/30 bg-signal-soft px-4 py-3 text-sm leading-relaxed">
+            <p className="rounded-xl border border-signal/30 bg-signal-soft px-3.5 py-3 text-[13px] leading-relaxed sm:px-4 sm:text-sm">
               <span className="font-bold">Both systems get most of these questions wrong.</span> The differences below come from a small sample near the
               floor; read them as a direction, not a result.
             </p>
@@ -64,7 +64,7 @@ function Results({ data }: { data: BenchResults }) {
             const minTypeN = Math.min(...b2.byType.map((r) => r.n));
             return (
               minTypeN < SMALL_SAMPLE && (
-                <p className="rounded-xl border bg-surface px-4 py-3 text-sm leading-relaxed">
+                <p className="rounded-xl border bg-surface px-3.5 py-3 text-[13px] leading-relaxed sm:px-4 sm:text-sm">
                   <span className="font-bold">Small sample:</span> the smallest question type has only {minTypeN} questions ({b2.overall.n} total),
                   so one question moves that type&apos;s accuracy by about {Math.round(100 / Math.max(1, minTypeN))} points. Read the differences as a
                   direction, not a precise score — this question bank is fixed at {b2.overall.n} questions, so this will not shrink on its own.
@@ -73,7 +73,7 @@ function Results({ data }: { data: BenchResults }) {
             );
           })()}
           <AccuracyChart rows={b2.byType} />
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             <Stat
               label="Overall accuracy"
               keystone={withCi(b2.overall.keystone, b2.overall.keystoneCi)}

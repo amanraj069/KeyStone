@@ -9,12 +9,12 @@ export function StalePages({ docs, onOpenArtifact }: { docs: StaleDoc[]; onOpenA
       <PanelHeading title={<>Stale pages <span className="ml-1 font-normal text-muted-foreground tabular-nums">{docs.length}</span></>} description="These pages still state a decision that someone later replaced." />
       <ul className="mt-5 divide-y rounded-lg border">
         {docs.map((doc) => (
-          <li key={`${doc.stalePage}-${doc.outdatedId}`} className="p-4">
-            <div className="flex items-baseline gap-2">
+          <li key={`${doc.stalePage}-${doc.outdatedId}`} className="p-3 sm:p-4">
+            <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
               <EvidenceChip id={doc.stalePage} onOpen={onOpenArtifact} />
               <span className="min-w-0 truncate text-sm font-medium">{doc.pageTitle}</span>
             </div>
-            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+            <dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div>
                 <dt className="section-label">Old claim</dt>
                 <dd className="mt-1 text-muted-foreground line-through decoration-faint">{doc.outdatedClaim}</dd>
@@ -22,7 +22,7 @@ export function StalePages({ docs, onOpenArtifact }: { docs: StaleDoc[]; onOpenA
               <div>
                 <dt className="section-label">Current decision</dt>
                 <dd className="mt-1">{doc.currentDecision}</dd>
-                <dd className="mt-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <dd className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   Day {doc.decidedOn ?? "?"}
                   {doc.decidedIn && <EvidenceChip id={doc.decidedIn} onOpen={onOpenArtifact} />}
                 </dd>

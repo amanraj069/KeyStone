@@ -1,0 +1,101 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#frame { width: 1600px; }
+.legend { display: flex; gap: 36px; margin-top: 26px; font-size: 19px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 10px; }
+.legend i { display: inline-block; width: 38px; height: 0; border-top: 3px solid; }
+.board { margin-top: 26px; padding: 10px; }
+</style></head><body>
+<div id="frame">
+  <div class="eyebrow">The graph model</div>
+  <h1>One FalkorDB graph of who did what</h1>
+  <p class="sub">The edge colour says where each edge comes from. The LLM only reads documents; everything in red is computed by Cypher inside FalkorDB.</p>
+  <div class="legend">
+    <span><i style="border-color:#6b7684"></i>From document metadata, no LLM</span>
+    <span><i style="border-color:#3d68b0"></i>Read from text by an LLM, cached</span>
+    <span><i style="border-color:#d4452a;border-top-width:5px"></i>Computed by Cypher in FalkorDB</span>
+  </div>
+  <div class="card board">
+  <svg width="1450" height="780" viewBox="0 0 1450 780" style="display:block">
+    <defs>
+      <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#6b7684"/></marker>
+      <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#3d68b0"/></marker>
+      <marker id="r" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#d4452a"/></marker>
+      <filter id="halo"><feMorphology operator="dilate" radius="0"/></filter>
+    </defs>
+    <style>
+      .lbl { font-size: 17px; font-weight: 600; paint-order: stroke; stroke: #fff; stroke-width: 8px; stroke-linejoin: round; }
+      .g { fill: #4b5563; } .b { fill: #3d68b0; } .r { fill: #d4452a; }
+      .prop { font-weight: 400; font-family: 'Geist Mono'; font-size: 14.5px; }
+      .node { font-size: 24px; font-weight: 700; fill: #fff; }
+      .nsub { font-size: 14.5px; fill: #ffffffd9; }
+    </style>
+
+    <!-- KNOWS: Person -> System, computed -->
+    <path d="M330,330 C 520,70 940,70 1150,330" fill="none" stroke="#d4452a" stroke-width="6" marker-end="url(#r)"/>
+    <text x="740" y="90" text-anchor="middle" class="lbl r">KNOWS <tspan class="prop">{score, lastDay, evidence}</tspan></text>
+    <text x="740" y="116" text-anchor="middle" class="lbl r" style="font-weight:400;font-size:15px">authored 3 · reviewed 2 · assigned 1 · participated ≤ 0.5 · × exp(−age / 30)</text>
+
+    <!-- COLLAB: Person <-> Person, computed -->
+    <path d="M200,452 C 90,560 40,380 196,372" fill="none" stroke="#d4452a" stroke-width="4" stroke-dasharray="10 7" marker-end="url(#r)"/>
+    <text x="40" y="545" class="lbl r">COLLAB <tspan class="prop">{weight}</tspan></text>
+
+    <!-- MEMBER_OF -->
+    <line x1="232" y1="330" x2="160" y2="150" stroke="#6b7684" stroke-width="2.5" marker-end="url(#g)"/>
+    <text x="210" y="240" class="lbl g">MEMBER_OF</text>
+
+    <!-- Person -> Artifact roles -->
+    <line x1="350" y1="410" x2="560" y2="410" stroke="#6b7684" stroke-width="2.5" marker-end="url(#g)"/>
+    <text x="455" y="384" text-anchor="middle" class="lbl g">AUTHORED · REVIEWED</text>
+    <text x="455" y="444" text-anchor="middle" class="lbl g">ASSIGNED · PARTICIPATED</text>
+    <text x="455" y="468" text-anchor="middle" class="lbl g prop" style="fill:#4b5563">{day, messages}</text>
+
+    <!-- Artifact -> Artifact -->
+    <path d="M820,320 C 860,240 940,250 900,322" fill="none" stroke="#6b7684" stroke-width="2.5" marker-end="url(#g)"/>
+    <text x="930" y="262" class="lbl g">REFERENCES · FIXES</text>
+
+    <!-- Artifact -> System MENTIONS -->
+    <line x1="900" y1="410" x2="1120" y2="410" stroke="#3d68b0" stroke-width="2.5" marker-end="url(#b)"/>
+    <text x="1010" y="392" text-anchor="middle" class="lbl b">MENTIONS</text>
+    <text x="1010" y="436" text-anchor="middle" class="lbl b prop" style="fill:#3d68b0">{weight, hits}</text>
+
+    <!-- Chunk -> Artifact PART_OF -->
+    <line x1="470" y1="640" x2="610" y2="510" stroke="#6b7684" stroke-width="2.5" marker-end="url(#g)"/>
+    <text x="420" y="580" class="lbl g">PART_OF</text>
+
+    <!-- Decision edges -->
+    <line x1="900" y1="642" x2="800" y2="512" stroke="#3d68b0" stroke-width="2.5" marker-end="url(#b)"/>
+    <text x="845" y="604" text-anchor="end" class="lbl b">DECIDED_IN</text>
+    <line x1="850" y1="510" x2="950" y2="640" stroke="#3d68b0" stroke-width="2.5" marker-end="url(#b)"/>
+    <text x="925" y="560" class="lbl b">ASSERTS <tspan style="font-weight:400">(pages)</tspan></text>
+    <line x1="1060" y1="650" x2="1175" y2="475" stroke="#3d68b0" stroke-width="2.5" marker-end="url(#b)"/>
+    <text x="1140" y="590" class="lbl b">ABOUT</text>
+    <path d="M1060,700 C 1150,700 1160,770 1050,742" fill="none" stroke="#3d68b0" stroke-width="2.5" marker-end="url(#b)"/>
+    <text x="1145" y="752" class="lbl b">SUPERSEDES <tspan class="prop">{day}</tspan></text>
+
+    <!-- Nodes -->
+    <rect x="80" y="80" width="150" height="66" rx="14" fill="#5a6574"/>
+    <text x="155" y="122" text-anchor="middle" class="node">Dept</text>
+
+    <circle cx="270" cy="410" r="80" fill="#1d3557"/>
+    <text x="270" y="418" text-anchor="middle" class="node">Person</text>
+
+    <rect x="570" y="320" width="330" height="190" rx="18" fill="#5b8aa6"/>
+    <text x="735" y="390" text-anchor="middle" class="node">Artifact</text>
+    <text x="735" y="424" text-anchor="middle" class="nsub">+ a label for its type:</text>
+    <text x="735" y="450" text-anchor="middle" class="nsub">Page · Ticket · Thread · PR · Email</text>
+    <text x="735" y="474" text-anchor="middle" class="nsub">Meeting · Alert · Record</text>
+
+    <circle cx="1200" cy="410" r="80" fill="#4f7f6e"/>
+    <text x="1200" y="418" text-anchor="middle" class="node">System</text>
+
+    <rect x="290" y="640" width="230" height="96" rx="14" fill="#95a0ab"/>
+    <text x="405" y="682" text-anchor="middle" class="node">Chunk</text>
+    <text x="405" y="712" text-anchor="middle" class="nsub">vecf32 embedding</text>
+
+    <rect x="860" y="650" width="200" height="96" rx="14" fill="#8a6a3d"/>
+    <text x="960" y="705" text-anchor="middle" class="node">Decision</text>
+  </svg>
+  </div>
+</div>
+</body></html>

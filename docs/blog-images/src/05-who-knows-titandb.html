@@ -1,0 +1,62 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#frame { width: 1600px; }
+.stage { position: relative; height: 760px; margin-top: -60px; }
+.stage svg { position: absolute; inset: 0; }
+.p { position: absolute; width: 270px; transform: translate(-50%, -100%); padding: 16px 18px 14px; }
+.p .top { display: flex; align-items: baseline; justify-content: space-between; }
+.p .name { font-size: 25px; font-weight: 700; }
+.p .score { font-family: 'Geist Mono', monospace; font-size: 22px; font-weight: 500; }
+.p .dept { font-size: 17px; color: var(--muted); margin-top: 2px; }
+.p .dept.flag { color: var(--signal); font-weight: 600; }
+.p .ev { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
+.p .ev .chip { font-size: 13px; padding: 2px 6px; }
+.p.top1 { border: 2px solid var(--signal); }
+.note { position: absolute; left: 0; bottom: 6px; font-size: 17px; color: var(--muted); max-width: 520px; line-height: 1.45; }
+</style></head><body>
+<div id="frame">
+  <div class="eyebrow">The org chart lies</div>
+  <h1>Who knows TitanDB? Not who the org chart says</h1>
+  <p class="sub">TitanDB is the company's database. Its top expert, by the graph, sits in <b style="color:var(--signal);font-weight:600">Design</b>. These are the KNOWS edges from the live graph, scored relative to the top expert (1.00), each with the documents behind it.</p>
+  <div class="stage">
+    <svg width="1472" height="760" viewBox="0 0 1472 760">
+      <g stroke-linecap="round" fill="none">
+        <line x1="736" y1="650" x2="736" y2="250" stroke="#d4452a" stroke-width="18"/>
+        <line x1="736" y1="650" x2="400" y2="330" stroke="#4f7f6e" stroke-width="12.5"/>
+        <line x1="736" y1="650" x2="1072" y2="330" stroke="#4f7f6e" stroke-width="10"/>
+        <line x1="736" y1="650" x2="250" y2="560" stroke="#4f7f6e" stroke-width="8.5"/>
+        <line x1="736" y1="650" x2="1222" y2="560" stroke="#4f7f6e" stroke-width="7"/>
+      </g>
+      <circle cx="736" cy="660" r="64" fill="#4f7f6e"/>
+      <text x="736" y="668" text-anchor="middle" font-size="24" font-weight="700" fill="#fff">TitanDB</text>
+    </svg>
+
+    <div class="card p top1" style="left:736px; top:262px">
+      <div class="top"><span class="name">Priya</span><span class="score" style="color:var(--signal)">1.00</span></div>
+      <div class="dept flag">Design</div>
+      <div class="ev"><span class="chip">CONF-ENG-443</span><span class="chip">CONF-ENG-440</span><span class="chip">+3</span></div>
+    </div>
+    <div class="card p" style="left:400px; top:342px">
+      <div class="top"><span class="name">Jax</span><span class="score">0.68</span></div>
+      <div class="dept">Engineering Backend</div>
+      <div class="ev"><span class="chip">CONF-ENG-187</span><span class="chip">ENG-165</span><span class="chip">+3</span></div>
+    </div>
+    <div class="card p" style="left:1072px; top:342px">
+      <div class="top"><span class="name">Deepa</span><span class="score">0.54</span></div>
+      <div class="dept">Engineering Backend</div>
+      <div class="ev"><span class="chip">CONF-ENG-318</span><span class="chip">CONF-ENG-375</span><span class="chip">+3</span></div>
+    </div>
+    <div class="card p" style="left:250px; top:572px">
+      <div class="top"><span class="name">Nadia</span><span class="score">0.46</span></div>
+      <div class="dept flag">QA Support</div>
+      <div class="ev"><span class="chip">CONF-QA-001</span><span class="chip">CONF-QA-003</span><span class="chip">+3</span></div>
+    </div>
+    <div class="card p" style="left:1222px; top:572px">
+      <div class="top"><span class="name">Marcus</span><span class="score">0.38</span></div>
+      <div class="dept flag">Sales Marketing</div>
+      <div class="ev"><span class="chip">CONF-ENG-423</span><span class="chip">CONF-ENG-178</span><span class="chip">+3</span></div>
+    </div>
+  </div>
+  <div class="brand">GET /systems/TitanDB/experts · Keystone, Day 60</div>
+</div>
+</body></html>
