@@ -29,7 +29,7 @@ export function SearchField({ value, onChange, placeholder, className }: SearchF
         onKeyDown={(e) => e.key === "Escape" && onChange("")}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="min-w-0 flex-1 bg-transparent text-sm placeholder:text-faint focus:outline-none focus-visible:outline-none"
+        className="min-w-0 flex-1 bg-transparent text-base placeholder:text-faint sm:text-sm focus:outline-none focus-visible:outline-none"
       />
       {value && (
         <button

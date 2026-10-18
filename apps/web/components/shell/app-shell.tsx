@@ -128,7 +128,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 /** A normal page: the shared column, scrolling with the window. */
 export function PageContainer({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn(GUTTER, "py-8 lg:py-10")}>
+    <div className={cn(GUTTER, "py-6 sm:py-8 lg:py-10")}>
       <div className={cn(COLUMN, "space-y-6 pb-16 sm:space-y-8", className)}>{children}</div>
     </div>
   );
