@@ -442,6 +442,25 @@ then calls `https://API_DOMAIN/health` and fails loudly unless it says `up` or `
 lives in the FalkorDB volume, so a redeploy does not re-seed. (Add `IdentityFile ~/.ssh/keystone.pem`
 for the host to `~/.ssh/config` to skip `DEPLOY_SSH_KEY`.)
 
+### Automatic deploys (GitHub Actions)
+
+`.github/workflows/deploy.yml` runs `scripts/deploy.sh` on every push to `main` (and from the
+*Run workflow* button in the Actions tab), so the run turns red if the type check, the build, `/health`
+or any container fails. One-time setup:
+
+1. **Secrets** (GitHub → repo → *Settings → Secrets and variables → Actions*, or from the laptop):
+
+   ```bash
+   gh secret set EC2_HOST --body "$EIP"
+   gh secret set EC2_USER --body ubuntu          # ec2-user on Amazon Linux
+   gh secret set EC2_SSH_KEY < ~/.ssh/keystone.pem
+   ```
+
+2. **Security group:** GitHub's runners have no fixed IP, so the SSH rule must allow `0.0.0.0/0` on
+   port 22. Login stays key-only (password login is off on the Ubuntu and Amazon Linux images).
+3. The server's checkout must be on `main` with saved git credentials, so `git pull` works unattended
+   (step 4).
+
 ## Troubleshooting
 
 | Symptom | Check |
