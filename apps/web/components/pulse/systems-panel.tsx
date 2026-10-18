@@ -34,16 +34,16 @@ export function SystemsPanel({ rows, onOpen }: SystemsPanelProps) {
         description={RISK_COPY[level].blurb}
         action={<OptionPills label="Risk level" options={options} value={level} onChange={setLevel} className="hidden md:inline-flex" />}
       />
-      <OptionPills label="Risk level" options={options} value={level} onChange={setLevel} className="mt-4 max-w-full overflow-x-auto md:hidden" />
-      <div className="mt-6">
+      <OptionPills label="Risk level" options={options} value={level} onChange={setLevel} className="mt-4 md:hidden" />
+      <div className="mt-4 sm:mt-6">
         {!rows ? (
-          <SkeletonRows count={6} rowClassName="h-[3.75rem]" className="grid gap-2.5 space-y-0 sm:grid-cols-2 lg:grid-cols-3" />
+          <SkeletonRows count={6} rowClassName="h-[3.75rem]" className="grid grid-cols-1 gap-2.5 space-y-0 sm:grid-cols-2 lg:grid-cols-3" />
         ) : rows.length === 0 ? (
           <EmptyState description="No core systems yet. They appear once enough artifacts mention them." />
         ) : shown.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">No systems at this level.</p>
         ) : (
-          <ul key={level} className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <ul key={level} className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {shown.map((row, index) => (
               <li key={row.system} className="animate-rise" style={{ "--i": index } as CSSProperties}>
                 <SystemRow row={row} onOpen={onOpen} />

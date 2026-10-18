@@ -12,7 +12,7 @@ import { RISK_BAR, RISK_COPY, RISK_ORDER } from "./risk";
 export function RiskOverview({ summary }: { summary: AnalyticsSummary | null }) {
   return (
     <Panel className="p-5 sm:p-8 lg:p-10">
-      <div className="grid items-center gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-14">
+      <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[1.15fr_0.85fr] lg:gap-14">
         <div className="lg:border-r lg:pr-14">{summary ? <RiskHeadline summary={summary} /> : <HeadlineSkeleton />}</div>
         <div>
           <p className="section-label mb-2">The company</p>

@@ -38,16 +38,16 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
         <SheetContent side="right" className={cn(SHEET_PANEL_WIDTH, "gap-0 overflow-y-auto")}>
           {row && (
             <>
-              <SheetHeader className="gap-1 border-b px-8 pt-7 pb-5">
+              <SheetHeader className="gap-1 border-b px-5 pt-6 pr-12 pb-5 sm:px-8 sm:pt-7 sm:pr-12">
                 <p className="text-xs font-semibold text-muted-foreground">{RISK_COPY[row.riskLevel].title}</p>
-                <SheetTitle className="text-2xl font-semibold tracking-tight">{row.system}</SheetTitle>
+                <SheetTitle className="text-xl font-semibold tracking-tight break-words sm:text-2xl">{row.system}</SheetTitle>
                 <SheetDescription className="font-light">
                   {row.experts === 0 ? "No active expert." : `${row.experts} active expert${row.experts === 1 ? "" : "s"}.`}
                   {shown?.evidencePath && ` The graph shows ${shown.evidencePath.person}'s most recent work on it.`}
                 </SheetDescription>
               </SheetHeader>
-              <div className="px-8 pt-6">
-                <div className="h-80 overflow-hidden rounded-xl border bg-surface">
+              <div className="px-5 pt-5 sm:px-8 sm:pt-6">
+                <div className="h-64 sm:h-80 overflow-hidden rounded-xl border bg-surface">
                   <GraphCanvas
                     className="h-full"
                     nodes={canvas.nodes}
@@ -57,7 +57,7 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
                   />
                 </div>
               </div>
-              <div className="px-8 pt-7 pb-8">
+              <div className="px-5 pt-6 pb-8 sm:px-8 sm:pt-7">
                 <p className="section-label mb-4">Who knows it</p>
                 {experts.error && <ErrorState message={experts.error} />}
                 {experts.loading && !shown && <SkeletonRows count={3} rowClassName="h-16" />}
@@ -65,7 +65,7 @@ export function SystemSheet({ row, graph, revision, onClose }: SystemSheetProps)
                 <ol className="space-y-5">
                   {top.map((expert) => (
                     <li key={expert.person}>
-                      <div className="flex items-baseline justify-between gap-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
                         <span className="text-sm font-semibold">{expert.person}</span>
                         <span className="text-xs text-muted-foreground tabular-nums">
                           {expert.relativeScore >= 1 ? "top expert" : `${Math.round(expert.relativeScore * 100)}% of the top`} · last

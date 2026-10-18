@@ -139,7 +139,7 @@ function Scoreboard({ sections }: { sections: SectionSpec[] }) {
           >
             <span
               className={cn(
-                "block text-2xl font-semibold tracking-tight tabular-nums",
+                "block text-xl font-semibold tracking-tight tabular-nums sm:text-2xl",
                 count === 0 ? "text-faint" : section.risk && "text-signal",
               )}
             >
@@ -185,8 +185,8 @@ interface ItemProps {
 
 function Item({ title, detail, aside, id, onOpen, children }: ItemProps) {
   return (
-    <li className="rounded-lg border bg-surface px-3.5 py-2.5 text-sm">
-      <div className="flex items-baseline gap-2">
+    <li className="rounded-lg border bg-surface px-3 py-2.5 text-sm sm:px-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         {id && onOpen && <EvidenceChip id={id} onOpen={onOpen} />}
         <span className="min-w-0 flex-1 truncate font-medium" title={title}>
           {title}

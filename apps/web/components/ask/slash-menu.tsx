@@ -38,7 +38,7 @@ export function SlashMenu({ title, items, highlighted, emptyText, onPick, onHigh
       {items.length === 0 ? (
         <p className="px-4 py-3 text-sm text-muted-foreground">{emptyText}</p>
       ) : (
-        <ul ref={list} id={SLASH_MENU_ID} role="listbox" aria-label={title} className="max-h-72 overflow-y-auto p-1.5">
+        <ul ref={list} id={SLASH_MENU_ID} role="listbox" aria-label={title} className="max-h-[min(18rem,40dvh)] overflow-y-auto p-1.5">
           {items.map((item, index) => (
             <li
               key={item.key}
@@ -59,12 +59,12 @@ export function SlashMenu({ title, items, highlighted, emptyText, onPick, onHigh
                 {item.icon}
               </span>
               <span className="min-w-0 flex-1 truncate font-medium">{item.label}</span>
-              {item.detail && <span className="shrink-0 truncate text-xs text-muted-foreground">{item.detail}</span>}
+              {item.detail && <span className="max-w-[45%] truncate text-xs text-muted-foreground">{item.detail}</span>}
             </li>
           ))}
         </ul>
       )}
-      <p className="flex gap-3 border-t px-4 py-1.5 text-[11px] text-faint">
+      <p className="hidden gap-3 border-t px-4 py-1.5 text-[11px] text-faint sm:flex">
         <span>
           <kbd className="kbd">↑</kbd> <kbd className="kbd">↓</kbd> to move
         </span>

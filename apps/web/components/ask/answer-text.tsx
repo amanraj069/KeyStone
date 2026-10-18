@@ -92,7 +92,7 @@ export function answerBlocks(text: string): Block[] {
 export function AnswerText({ text, cited, numbers, sources, activeId, onCite }: AnswerTextProps) {
   const inline = (value: string) => withBold(value, (part) => withMarkers(part, cited, numbers, sources, activeId, onCite));
   return (
-    <div className="space-y-3 text-[15px] leading-7 text-foreground/90">
+    <div className="space-y-3 text-sm leading-6 break-words text-foreground/90 sm:text-[15px] sm:leading-7">
       {answerBlocks(text).map((block, index) =>
         block.kind === "p" ? (
           <p key={index} className={cn("whitespace-pre-wrap", block.heading && "font-semibold text-foreground")}>

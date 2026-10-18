@@ -22,24 +22,33 @@ interface ActionTableProps {
   onOpenArtifact: (id: string) => void;
 }
 
-/** Actions newest first; a row expands to its reason, evidence, decision and evidence graph. */
+/**
+ * Actions newest first; a row expands to its reason, evidence, decision and evidence graph.
+ * On phones the Action and Sources columns shrink to zero width with their text hidden; the
+ * cells stay in the DOM (a display:none cell would shift the others into the wrong column),
+ * and the kind is shown under the line instead.
+ */
 export function ActionTable({ actions, expanded, onToggle, onDecided, onOpenArtifact }: ActionTableProps) {
   return (
     <table className="w-full table-fixed text-sm">
       <colgroup>
-        <col className="w-10" />
-        <col className="w-36" />
+        <col className="w-9 sm:w-10" />
+        <col className="w-0 sm:w-36" />
         <col />
-        <col className="w-28" />
-        <col className="w-20" />
+        <col className="w-24 sm:w-28" />
+        <col className="w-0 sm:w-20" />
       </colgroup>
       <thead>
         <tr className="border-b bg-surface text-left text-xs text-muted-foreground">
           <th className="py-3" />
-          <th className="py-3 font-medium">Action</th>
+          <th className="py-3 font-medium">
+            <span className="hidden sm:inline">Action</span>
+          </th>
           <th className="py-3 font-medium">What and who</th>
           <th className="py-3 font-medium">Status</th>
-          <th className="py-3 pr-5 text-right font-medium">Sources</th>
+          <th className="py-3 text-right font-medium sm:pr-5">
+            <span className="hidden sm:inline">Sources</span>
+          </th>
         </tr>
       </thead>
       <tbody>
@@ -48,21 +57,26 @@ export function ActionTable({ actions, expanded, onToggle, onDecided, onOpenArti
           return (
             <Fragment key={action.id}>
               <tr className={cn("cursor-pointer border-b transition-colors hover:bg-hover", open && "bg-surface")} onClick={() => onToggle(action.id)} aria-expanded={open}>
-                <td className="py-3.5 pl-4">
+                <td className="py-3.5 pl-3 sm:pl-4">
                   <ChevronRight className={cn("size-4 text-muted-foreground transition-transform duration-200", open && "rotate-90")} />
                 </td>
-                <td className="py-3.5 pr-3 text-xs font-medium text-muted-foreground">{KIND_LABEL[action.kind]}</td>
+                <td className="py-3.5 text-xs font-medium text-muted-foreground sm:pr-3">
+                  <span className="hidden sm:inline">{KIND_LABEL[action.kind]}</span>
+                </td>
                 <td className="py-3.5 pr-3">
                   <ActionLine action={action} />
+                  <p className="mt-0.5 text-xs text-muted-foreground sm:hidden">{KIND_LABEL[action.kind]}</p>
                 </td>
-                <td className="py-3.5">
+                <td className="py-3.5 pr-3 sm:pr-0">
                   <StatusPill action={action} />
                 </td>
-                <td className="py-3.5 pr-5 text-right text-xs text-muted-foreground tabular-nums">{action.evidence.length}</td>
+                <td className="py-3.5 text-right text-xs text-muted-foreground tabular-nums sm:pr-5">
+                  <span className="hidden sm:inline">{action.evidence.length}</span>
+                </td>
               </tr>
               {open && (
                 <tr className="border-b bg-surface">
-                  <td colSpan={5} className="px-5 pt-1 pb-5">
+                  <td colSpan={5} className="px-3 pt-1 pb-4 sm:px-5 sm:pb-5">
                     <ExpandedAction action={action} onDecided={onDecided} onOpenArtifact={onOpenArtifact} />
                   </td>
                 </tr>
@@ -94,13 +108,13 @@ function ExpandedAction({ action, onDecided, onOpenArtifact }: { action: ActionR
   const highlighted = useMemo(() => action.evidence.map((e) => e.id), [action.evidence]);
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
       <div className="flex flex-col pt-2">
         <div className="space-y-4">
           <div className="space-y-1.5">
             <p className="text-sm leading-relaxed">{action.reason}</p>
             {action.summary && <p className="text-sm leading-relaxed text-muted-foreground">{action.summary}</p>}
-            <p className="text-xs text-faint">
+            <p className="text-xs break-words text-faint">
               <span className="code-id">{action.id}</span> · day {action.day} · proposed by {action.createdBy}
               {action.planId && (
                 <>
@@ -117,9 +131,12 @@ function ExpandedAction({ action, onDecided, onOpenArtifact }: { action: ActionR
             ) : (
               <ul className="space-y-1.5">
                 {action.evidence.slice(0, 6).map((e) => (
-                  <li key={e.id} className="flex items-baseline gap-2 text-xs">
-                    <EvidenceChip id={e.id} onOpen={onOpenArtifact} />
-                    <span className="min-w-0 truncate text-muted-foreground">{e.title && e.title !== e.id ? e.title : (e.type ?? "")}</span>
+                  <li key={e.id} className="flex min-w-0 items-baseline gap-2 text-xs">
+                    {/* The id keeps its width (up to 60%); the title takes what is left. */}
+                    <span className="flex max-w-[60%] min-w-0 shrink-0">
+                      <EvidenceChip id={e.id} onOpen={onOpenArtifact} />
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">{e.title && e.title !== e.id ? e.title : (e.type ?? "")}</span>
                   </li>
                 ))}
                 {action.evidence.length > 6 && <li className="text-xs text-faint">+{action.evidence.length - 6} more</li>}
@@ -131,7 +148,7 @@ function ExpandedAction({ action, onDecided, onOpenArtifact }: { action: ActionR
           <ActionDecision action={action} onDecided={onDecided} />
         </div>
       </div>
-      <div className="h-72 overflow-hidden rounded-lg border bg-card">
+      <div className="h-60 overflow-hidden rounded-lg border bg-card sm:h-72">
         {graph.error ? (
           <ErrorState className="m-3" message={graph.error} onRetry={graph.reload} />
         ) : (
