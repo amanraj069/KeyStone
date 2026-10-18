@@ -32,6 +32,7 @@ export default function AskPage() {
     turns,
     ask,
     stop,
+    rate,
     busy,
     loaded,
     chatId,
@@ -125,6 +126,8 @@ export default function AskPage() {
   };
 
   const onCite = (turnId: string, id: string) => {
+    // A colleague's note is not a document: its text is the source's title, there is nothing to open.
+    if (id.startsWith("NOTE-")) return;
     const target = turns.find((t) => t.id === turnId);
     const inGraph = target ? toCanvasGraph(target.paths).nodes.some((n) => n.artifactId === id) : false;
     setActiveTurnId(turnId);
@@ -195,6 +198,7 @@ export default function AskPage() {
                   }}
                   onClearCitation={() => setCitation(null)}
                   onDelete={deleteMessage}
+                  onRate={rate}
                 />
               </Fragment>
             ))}

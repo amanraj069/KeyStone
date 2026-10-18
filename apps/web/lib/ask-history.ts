@@ -28,12 +28,20 @@ const StoredTurnSchema = z.object({
   answer: z.string(),
   citations: z.array(CitationSchema),
   paths: z.array(GraphPathSchema),
+  pathRoots: z.array(z.string().nullable()).default([]),
   finalPath: GraphPathSchema.nullable(),
   status: z.enum(["streaming", "done", "error"]),
   error: z.string().nullable(),
   // Turns saved before messages could be deleted one at a time have neither.
   questionDeleted: z.boolean().default(false),
   answerDeleted: z.boolean().default(false),
+  // Memory (Stage 16): turns saved before it have none of these.
+  memory: z
+    .object({ priorTurns: z.number(), notes: z.array(z.object({ id: z.string(), text: z.string() })), subjects: z.array(z.string()) })
+    .nullable()
+    .default(null),
+  turnId: z.string().nullable().default(null),
+  rating: z.enum(["up", "down"]).nullable().default(null),
 });
 
 /**

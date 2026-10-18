@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentEvent, Citation, GraphPath, QuestionLabel } from "@keystone/shared";
-import { askAgent } from "@/lib/api";
+import { api, askAgent } from "@/lib/api";
 import { loadTurns, saveTurns } from "@/lib/ask-history";
 
 /** One tool the agent used: the call, then its result once it arrives. */
@@ -25,6 +25,8 @@ export interface AgentTurn {
   citations: Citation[];
   /** Graph paths of the tool results, in order (drawn while the answer streams). */
   paths: GraphPath[];
+  /** For each path, the system or person its tool was asked about (where its colouring starts). */
+  pathRoots: (string | null)[];
   /** The union of every path, sent with "done": highlighted when the answer is complete. */
   finalPath: GraphPath | null;
   status: "streaming" | "done" | "error";
@@ -32,6 +34,12 @@ export interface AgentTurn {
   /** Deleted on its own, like a message in Intake; the turn goes once both are. */
   questionDeleted: boolean;
   answerDeleted: boolean;
+  /** What the agent recalled before answering: earlier turns of this chat and approved notes. */
+  memory: { priorTurns: number; notes: { id: string; text: string }[]; subjects: string[] } | null;
+  /** The Turn the API stored this answer as (for feedback); null without memory. */
+  turnId: string | null;
+  /** The rating given to this answer, if any. */
+  rating: "up" | "down" | null;
 }
 
 /** The two messages of a turn: your question, and Keystone's answer. */
@@ -44,6 +52,8 @@ export function applyEvent(turn: AgentTurn, event: AgentEvent): AgentTurn {
   switch (event.type) {
     case "classified":
       return { ...turn, label: event.label };
+    case "memory":
+      return { ...turn, memory: { priorTurns: event.priorTurns, notes: event.notes, subjects: event.subjects } };
     case "tool_call":
       return { ...turn, steps: [...turn.steps, { name: event.name, args: event.args, result: null }] };
     case "tool_result": {
@@ -52,15 +62,22 @@ export function applyEvent(turn: AgentTurn, event: AgentEvent): AgentTurn {
       const steps = turn.steps.map((step, i) =>
         i === index ? { ...step, result: { summary: event.summary, evidenceCount: event.evidenceCount } } : step,
       );
-      return { ...turn, steps, paths: event.graphPath ? [...turn.paths, event.graphPath] : turn.paths };
+      if (!event.graphPath) return { ...turn, steps };
+      return { ...turn, steps, paths: [...turn.paths, event.graphPath], pathRoots: [...turn.pathRoots, rootOf(turn.steps[index]?.args)] };
     }
     case "answer_delta":
       return { ...turn, answer: turn.answer + event.text };
     case "done":
-      return { ...turn, citations: event.citations, finalPath: event.graphPath, status: "done" };
+      return { ...turn, citations: event.citations, finalPath: event.graphPath, status: "done", turnId: event.turnId ?? null };
     case "error":
       return { ...turn, status: "error", error: event.message };
   }
+}
+
+/** What a tool was asked about: its system or person argument (the start of its part of the path). */
+function rootOf(args: Record<string, unknown> | undefined): string | null {
+  const value = args?.system ?? args?.person ?? args?.from;
+  return typeof value === "string" ? value : null;
 }
 
 /** Earlier exchanges open this many at a time: on request, then each time the thread is scrolled to the top. */
@@ -109,11 +126,15 @@ export function useAsk() {
         answer: "",
         citations: [],
         paths: [],
+        pathRoots: [],
         finalPath: null,
         status: "streaming",
         error: null,
         questionDeleted: false,
         answerDeleted: false,
+        memory: null,
+        turnId: null,
+        rating: null,
       };
       setTurns((current) => [...current, turn]);
       controller.current?.abort();
@@ -136,6 +157,21 @@ export function useAsk() {
   );
 
   const stop = useCallback(() => controller.current?.abort(), []);
+
+  /**
+   * Rates an answer. A thumbs-down with a correction proposes a Note that a person
+   * approves on the Audit page; from then on the agent uses it. Returns the note id.
+   */
+  const rate = useCallback(
+    async (id: string, rating: "up" | "down", correction?: string): Promise<string | null> => {
+      const turn = turns.find((t) => t.id === id);
+      if (!turn?.turnId) return null;
+      const result = await api.feedback(turn.turnId, { rating, ...(correction ? { correction } : {}) });
+      update(id, (t) => ({ ...t, rating }));
+      return result.noteId;
+    },
+    [turns, update],
+  );
 
   /**
    * The most recently deleted message: its turn as it was just before, and where that
@@ -201,6 +237,7 @@ export function useAsk() {
     turns: visibleTurns,
     ask,
     stop,
+    rate,
     busy,
     /** False until the stored history has been read. */
     loaded,

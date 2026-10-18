@@ -92,3 +92,48 @@ export function orphanedKeys(paths: readonly (GraphPath | null | undefined)[]): 
   }
   return keys;
 }
+
+/**
+ * When the agent found each node, 0 (first) to 1 (last), for colouring its path.
+ * Tools count in call order: a node first returned by an earlier tool is earlier.
+ * Within one tool's graph, nodes nearer its subject (the system or person the tool
+ * was asked about, `roots[i]`) come first, by hops, then in the order the tool
+ * returned them. Every node gets its own place, so even one tool's path runs from
+ * whitish orange to orange.
+ */
+export function discoveryOrder(paths: readonly (GraphPath | GraphView | null | undefined)[], roots: readonly (string | null)[] = []): Map<string, number> {
+  const found: { key: string; tool: number; hops: number; position: number }[] = [];
+  const seen = new Set<string>();
+  paths.forEach((path, tool) => {
+    if (!path) return;
+    const single = toCanvasGraph([path]);
+    if (single.nodes.length === 0) return;
+    const neighbours = new Map<string, string[]>(single.nodes.map((n) => [n.key, []]));
+    for (const edge of single.edges) {
+      neighbours.get(edge.source)?.push(edge.target);
+      neighbours.get(edge.target)?.push(edge.source);
+    }
+    const root = roots[tool];
+    const start = single.nodes.find((n) => root !== null && root !== undefined && n.name === root && (n.label === "Person" || n.label === "System")) ?? single.nodes[0];
+    // Breadth-first from the subject: hops are the order within this tool.
+    const hops = new Map<string, number>([[start.key, 0]]);
+    const queue = [start.key];
+    while (queue.length > 0) {
+      const key = queue.shift()!;
+      for (const next of neighbours.get(key) ?? []) {
+        if (!hops.has(next)) {
+          hops.set(next, hops.get(key)! + 1);
+          queue.push(next);
+        }
+      }
+    }
+    const unreachable = Math.max(...hops.values()) + 1;
+    single.nodes.forEach((node, position) => {
+      if (seen.has(node.key)) return;
+      seen.add(node.key);
+      found.push({ key: node.key, tool, hops: hops.get(node.key) ?? unreachable, position });
+    });
+  });
+  found.sort((a, b) => a.tool - b.tool || a.hops - b.hops || a.position - b.position);
+  return new Map(found.map((node, i) => [node.key, found.length === 1 ? 1 : i / (found.length - 1)]));
+}

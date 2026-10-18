@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods, type LinkObject, type NodeObject } from "react-force-graph-2d";
 import { useTheme } from "@/contexts/theme-context";
 import type { CanvasEdge, CanvasNode } from "@/lib/graph";
-import { type Palette, colorForLabel, isAnchor, radiusForLabel, readPalette, rgba } from "./palette";
+import { type Palette, colorForLabel, isAnchor, pathColor, radiusForLabel, readPalette, rgba } from "./palette";
 
 export interface GraphCanvasViewProps {
   nodes: CanvasNode[];
@@ -18,6 +18,11 @@ export interface GraphCanvasViewProps {
   animationMs: number;
   /** Whether the wheel zooms and the background pans (off inside a scrolling page). */
   interactive: boolean;
+  /**
+   * When each node of the agent's path was found, 0 (first) to 1 (last): its ring and
+   * the path's edges go from whitish orange to orange. Nodes without one are drawn as last.
+   */
+  pathOrder?: ReadonlyMap<string, number>;
   onArtifactClick: (artifactId: string) => void;
 }
 
@@ -59,7 +64,7 @@ const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
 /** The force-directed canvas. Loaded only in the browser (see graph-canvas.tsx). */
 export default function GraphCanvasView(props: GraphCanvasViewProps) {
-  const { nodes, edges, highlightedIds, fadedIds, redIds, pulseIds, animationMs, interactive, onArtifactClick } = props;
+  const { nodes, edges, highlightedIds, fadedIds, redIds, pulseIds, animationMs, interactive, onArtifactClick, pathOrder } = props;
   const { theme } = useTheme();
   const container = useRef<HTMLDivElement>(null);
   const graph = useRef<ForceGraphMethods<GNode, GLink> | undefined>(undefined);
@@ -171,6 +176,7 @@ export default function GraphCanvasView(props: GraphCanvasViewProps) {
   if (!palette) return <div ref={container} className="size-full" />;
 
   const lookOf = (key: string) => currentLook(looks.current, key, performance.now());
+  const orderOf = (key: string) => pathOrder?.get(key) ?? 1;
 
   const drawNode = (node: GNode, ctx: CanvasRenderingContext2D, scale: number) => {
     const look = lookOf(node.key);
@@ -196,7 +202,7 @@ export default function GraphCanvasView(props: GraphCanvasViewProps) {
     if (look.ring > 0) {
       ctx.globalAlpha = look.ring;
       ctx.lineWidth = 1.75 / scale;
-      ctx.strokeStyle = rgba(palette.signal);
+      ctx.strokeStyle = rgba(pathColor(palette, orderOf(node.key)));
       ctx.beginPath();
       ctx.arc(x, y, radius + 2.5 / scale + 0.6, 0, 2 * Math.PI);
       ctx.stroke();
@@ -244,7 +250,9 @@ export default function GraphCanvasView(props: GraphCanvasViewProps) {
     const touchesHover = hovered !== null && (endKey(link.source) === hovered || endKey(link.target) === hovered);
     if (touchesHover && !onPath) return { color: rgba(palette.label, 0.4), width: 1.1 };
     const alpha = Math.min(a.alpha, b.alpha) * (onPath ? 0.85 : 0.6);
-    return { color: rgba(onPath ? palette.signal : palette.edge, alpha), width: onPath ? 1.4 : 0.8 };
+    // A path edge takes the colour of its later end: the step that walked it.
+    const when = Math.max(orderOf(endKey(link.source)), orderOf(endKey(link.target)));
+    return { color: rgba(onPath ? pathColor(palette, when) : palette.edge, alpha), width: onPath ? 1.4 : 0.8 };
   };
 
   return (

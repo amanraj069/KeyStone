@@ -40,6 +40,19 @@ export const colorForLabel = (palette: Palette, label: string, alpha = 1) =>
 
 export const rgba = ([r, g, b]: Rgb, alpha = 1) => `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(3)})`;
 
+/** a at t = 0, b at t = 1. */
+export const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [0, 1, 2].map((i) => Math.round(a[i] + (b[i] - a[i]) * t)) as unknown as Rgb;
+
+/** How far the agent's path starts towards white: its first steps are a whitish orange. */
+const PATH_START_WHITE = 0.62;
+
+/**
+ * The colour of the agent's path at a point in time: whitish orange for what it found
+ * first (t = 0), full signal orange for what it found last (t = 1).
+ */
+export const pathColor = (palette: Palette, t: number): Rgb =>
+  mixRgb(mixRgb(palette.signal, [255, 255, 255], PATH_START_WHITE), palette.signal, Math.min(1, Math.max(0, t)));
+
 /**
  * Reads the theme's CSS variables and resolves each to RGB by painting it on a
  * 1x1 canvas (the variables are oklch, which canvas accepts but cannot mix).

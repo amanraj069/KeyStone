@@ -5,6 +5,7 @@ import type { BusFactorRow } from "@keystone/shared";
 import { ArtifactSheet } from "@/components/artifact-sheet";
 import { PageHeader } from "@/components/page-header";
 import { BridgesPanel } from "@/components/pulse/bridge-list";
+import { LiveUpdate } from "@/components/pulse/live-update";
 import { ReplayControl } from "@/components/pulse/replay-control";
 import { RiskOverview } from "@/components/pulse/risk-overview";
 import { SystemSheet } from "@/components/pulse/system-sheet";
@@ -26,6 +27,7 @@ export default function OrgPulsePage() {
   const { graph, setGraph, summary, summaryError, revision, replay } = useLiveGraph();
   const busFactor = useApi((signal) => api.busFactor(graph, signal), [graph, revision]);
   const bridges = useApi((signal) => api.bridges(graph, signal), [graph, revision]);
+  const central = useApi((signal) => api.centralPeople(graph, signal), [graph, revision]);
   const [open, setOpen] = useState<BusFactorRow | null>(null);
   const [openArtifact, setOpenArtifact] = useState<string | null>(null);
 
@@ -50,8 +52,10 @@ export default function OrgPulsePage() {
       ) : (
         <>
           <RiskOverview summary={summary} />
+          {/* Live updates change the full company graph, not the replay. */}
+          {!replayView && <LiveUpdate />}
           {busFactor.error && !busFactor.data ? <ErrorState message={busFactor.error} onRetry={busFactor.reload} /> : <SystemsPanel rows={busFactor.data} onOpen={setOpen} />}
-          <BridgesPanel bridges={bridges.data} error={bridges.error} onOpenArtifact={setOpenArtifact} />
+          <BridgesPanel bridges={bridges.data} central={central.data} error={bridges.error} onOpenArtifact={setOpenArtifact} />
         </>
       )}
 
